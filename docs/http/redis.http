@@ -1,0 +1,28 @@
+@baseUrl = http://localhost:8082
+@token = replace-with-login-access-token
+
+@productID = 1
+
+### 1. 查询商品详情 - 第一次，预期 Redis miss 后写入缓存
+GET {{baseUrl}}/api/v1/products/{{productID}}
+Authorization: Bearer {{token}}
+
+### 2. 查询商品详情 - 第二次，预期 Redis hit
+GET {{baseUrl}}/api/v1/products/{{productID}}
+Authorization: Bearer {{token}}
+
+### 3. 商品上架 - 预期删除商品详情缓存
+PATCH {{baseUrl}}/api/v1/products/{{productID}}/on-sale
+Authorization: Bearer {{token}}
+
+### 4. 再次查询商品详情 - 预期 Redis miss 后重新写入缓存
+GET {{baseUrl}}/api/v1/products/{{productID}}
+Authorization: Bearer {{token}}
+
+### 5. 商品下架 - 预期删除商品详情缓存
+PATCH {{baseUrl}}/api/v1/products/{{productID}}/off-sale
+Authorization: Bearer {{token}}
+
+### 6. 再次查询商品详情 - 预期 Redis miss 后重新写入缓存
+GET {{baseUrl}}/api/v1/products/{{productID}}
+Authorization: Bearer {{token}}

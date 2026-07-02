@@ -1,0 +1,81 @@
+@baseUrl = http://127.0.0.1:8082
+@token = replace-with-login-access-token
+@productId = 1
+@orderId = 1
+
+## 一、项目启动前检查
+### 0. 服务健康测试
+GET {{baseUrl}}/ping
+
+## 二、商品模块正常流程
+### 1. 创建商品（记录返回的 data.id，回填到 @productId）
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "演示商品-流程测试",
+  "description": "用于 demo_flow 正常链路",
+  "price_fen": 1999
+}
+
+### 2. 商品上架
+PATCH {{baseUrl}}/api/v1/products/{{productId}}/on-sale
+Authorization: Bearer {{token}}
+
+### 3. 查询商品详情
+GET {{baseUrl}}/api/v1/products/{{productId}}
+Authorization: Bearer {{token}}
+
+## 三、库存模块正常流程
+### 4. 初始化库存
+POST {{baseUrl}}/api/v1/inventory/init
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": {{productId}},
+  "stock_quantity": 100
+}
+
+### 5. 增加库存
+POST {{baseUrl}}/api/v1/inventory/add
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": {{productId}},
+  "quantity": 20
+}
+
+### 6. 查询库存
+GET {{baseUrl}}/api/v1/inventory/products/{{productId}}
+Authorization: Bearer {{token}}
+
+## 四、订单模块正常流程
+### 7. 创建订单（记录返回的 data.id，回填到 @orderId）
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "idempotency_key": "demo-order-{{$guid}}",
+  "items": [
+    {
+      "product_id": {{productId}},
+      "quantity": 999
+    }
+  ]
+}
+
+### 8. 支付订单
+PATCH {{baseUrl}}/api/v1/orders/{{orderId}}/pay
+Authorization: Bearer {{token}}
+
+### 9. 完成订单
+PATCH {{baseUrl}}/api/v1/orders/{{orderId}}/finish
+Authorization: Bearer {{token}}
+
+### 10. 查询订单详情
+GET {{baseUrl}}/api/v1/orders/{{orderId}}
+Authorization: Bearer {{token}}

@@ -1,0 +1,107 @@
+@baseUrl = http://localhost:8082
+@token = replace-with-login-access-token
+
+### 使用方法:
+### 1.安装VScode REST Client 插件
+### 2.启动服务
+###	3.点击每个请求上方的 Send Request
+
+### 1. 健康检查
+GET {{baseUrl}}/ping
+
+### 2. 创建商品 - 正常
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "测试商品F",
+  "description": "用于测试商品创建接口",
+  "price_fen": 2026
+}
+
+### 3. 创建商品 - 缺少 name，应返回参数错误
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "description": "缺少商品名称",
+  "price_fen": 2026
+}
+
+### 4. 创建商品 - price_fen 为 0，应返回参数错误
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "价格为0的商品",
+  "description": "价格非法",
+  "price_fen": 0
+}
+
+### 5. 创建商品 - price_fen 为负数，应返回参数错误
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "负数价格商品",
+  "description": "价格非法",
+  "price_fen": -100
+}
+
+### 6. 创建商品 - name 为空字符串，应返回参数错误
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "",
+  "description": "名称为空",
+  "price_fen": 1999
+}
+
+### 7. 创建商品 - name 只有空格，应返回业务校验错误
+POST {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "   ",
+  "description": "名称只有空格",
+  "price_fen": 1999
+}
+
+### 8. 查询商品列表 - 默认查询下架的商品
+GET {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+
+### 9. 查询商品详情 - 正常
+GET {{baseUrl}}/api/v1/products/1
+Authorization: Bearer {{token}}
+
+### 10. 查询商品详情 - 非法 ID
+GET {{baseUrl}}/api/v1/products/abc
+Authorization: Bearer {{token}}
+
+### 11. 查询商品详情 - 不存在
+GET {{baseUrl}}/api/v1/products/999999
+Authorization: Bearer {{token}}
+
+### 12. 商品上架
+PATCH {{baseUrl}}/api/v1/products/1/on-sale
+Authorization: Bearer {{token}}
+
+### 13. 商品下架
+PATCH {{baseUrl}}/api/v1/products/1/off-sale
+Authorization: Bearer {{token}}
+
+### 14. 商品下架 - 非法 ID 
+PATCH {{baseUrl}}/api/v1/products/0/off-sale
+Authorization: Bearer {{token}}
+
+### 15. 商品下架 - 不存在
+PATCH {{baseUrl}}/api/v1/products/999999/off-sale
+Authorization: Bearer {{token}}

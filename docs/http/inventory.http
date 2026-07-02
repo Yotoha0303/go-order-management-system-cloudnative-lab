@@ -1,0 +1,74 @@
+@baseUrl = http://localhost:8082
+@token = replace-with-login-access-token
+
+### 1. 初始化库存 - 正常
+POST {{baseUrl}}/api/v1/inventory/init
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 1,
+  "stock_quantity": 100
+}
+
+### 2. 初始化库存 - 不存在
+POST {{baseUrl}}/api/v1/inventory/init
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 999,
+  "stock_quantity": 100
+}
+
+### 3. 初始化库存 - `stock_quantity = 0` 可以初始化
+POST {{baseUrl}}/api/v1/inventory/init
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 1,
+  "stock_quantity": 0
+}
+
+### 4. 增加库存 - 正常
+POST {{baseUrl}}/api/v1/inventory/add
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 1,
+  "quantity": 20
+}
+
+### 5. 增加库存 - 未初始化库存，应失败
+POST {{baseUrl}}/api/v1/inventory/add
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 2,
+  "quantity": 0
+}
+
+### 6. 增加库存 - quantity <= 0,应失败
+POST {{baseUrl}}/api/v1/inventory/add
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "product_id": 1,
+  "quantity": -1
+}
+
+### 7. 查询商品库存
+GET {{baseUrl}}/api/v1/inventory/products/1
+Authorization: Bearer {{token}}
+
+### 8. 查询商品库存 - 非法 product_id
+GET {{baseUrl}}/api/v1/inventory/products/abc
+Authorization: Bearer {{token}}
+
+### 9. 查询商品库存 - 不存在
+GET {{baseUrl}}/api/v1/inventory/products/999999
+Authorization: Bearer {{token}}

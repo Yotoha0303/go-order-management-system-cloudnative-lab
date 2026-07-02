@@ -1,0 +1,7 @@
+.git
+.github
+.env
+fronted/node_modules
+fronted/dist
+fronted/coverage
+**/*.log

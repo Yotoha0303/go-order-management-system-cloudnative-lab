@@ -1,0 +1,30 @@
+server:
+  port: 8082
+
+mysql:
+  user: root
+  host: 127.0.0.1
+  port: "3306"
+  database: go_order_management_system
+
+  maxOpenConns: 10
+  maxIdleConns: 5
+  connMaxLifeTime: 30m
+  connMaxIdleTime: 5m
+  pingTimeout: 3s
+
+redis:
+  addr: 127.0.0.1:6379
+  db: 0
+
+jwt:
+  expireHours: 24
+
+http:
+  server:
+    readTimeout: 5s
+    writeTimeout: 10s
+    idleTimeout: 60s
+    readHeaderTimeout: 2s
+    maxHeaderBytesKib: 128
+    timeout: 5s

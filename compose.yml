@@ -1,0 +1,91 @@
+services:
+  app:
+    image: go-order-management-system:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-order-management-system-app
+    ports:
+      - "8082:8082"
+    environment:
+      APP_PORT: 8082
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_NAME: ${DB_NAME:-go_order_inventory}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+      REDIS_ADDR: redis:6379
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    container_name: go-order-management-system-mysql
+    ports:
+      - "${MYSQL_HOST_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_DATABASE: ${DB_NAME:-go_order_inventory}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: go-order-management-system-redis
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    image: go-order-management-system:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    working_dir: /app
+    environment:
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_NAME: ${DB_NAME:-go_order_inventory}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
+
+volumes:
+  mysql_data:
+  redis_data:

@@ -1,0 +1,8 @@
+.env
+AGENTS.md
+.gocache
+.tmp
+tools
+bin/
+coverage.*
+docs/evidence

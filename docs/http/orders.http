@@ -1,0 +1,118 @@
+@baseUrl = http://localhost:8082
+@token = replace-with-login-access-token
+
+### 1. 创建订单 - 正常
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "idempotency_key": "orders-{{$guid}}",
+  "items": [
+    {
+      "product_id": 1,
+      "quantity": 2
+    }
+  ]
+}
+
+### 2. 创建订单 - 多商品
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "idempotency_key": "orders-{{$guid}}",
+  "items": [
+    {
+      "product_id": 1,
+      "quantity": 2
+    },
+    {
+      "product_id": 2,
+      "quantity": 1
+    }
+  ]
+}
+
+### 3. 创建订单 - 库存不足
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "idempotency_key": "orders-{{$guid}}",
+  "items": [
+    {
+      "product_id": 1,
+      "quantity": 999999
+    }
+  ]
+}
+
+### 4. 创建订单 - 商品不存在
+POST {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "idempotency_key": "orders-{{$guid}}",
+  "items": [
+    {
+      "product_id": 999999,
+      "quantity": 1
+    }
+  ]
+}
+
+### 5. 查询订单详情
+GET {{baseUrl}}/api/v1/orders/1
+Authorization: Bearer {{token}}
+
+### 6. 查询订单列表
+GET {{baseUrl}}/api/v1/orders
+Authorization: Bearer {{token}}
+
+### 7.支付订单
+PATCH {{baseUrl}}/api/v1/orders/1/pay
+Authorization: Bearer {{token}}
+
+### 8.取消订单
+PATCH {{baseUrl}}/api/v1/orders/1/cancel
+Authorization: Bearer {{token}}
+
+### 9.完成订单
+PATCH {{baseUrl}}/api/v1/orders/1/finish
+Authorization: Bearer {{token}}
+
+### 10. 支付订单 - 不存在
+PATCH {{baseUrl}}/api/v1/orders/999999/pay
+Authorization: Bearer {{token}}
+
+### 11. 支付订单 - 非法 ID
+PATCH {{baseUrl}}/api/v1/orders/0/pay
+Authorization: Bearer {{token}}
+
+### 12. 完成订单 - 未支付订单，应失败
+PATCH {{baseUrl}}/api/v1/orders/1/finish
+Authorization: Bearer {{token}}
+
+### 13. 取消订单 - 已支付订单，应失败
+PATCH {{baseUrl}}/api/v1/orders/1/cancel
+Authorization: Bearer {{token}}
+
+### 14. 取消订单 - 不存在
+PATCH {{baseUrl}}/api/v1/orders/999999/cancel
+Authorization: Bearer {{token}}
+
+### 15. 完成订单 - 不存在
+PATCH {{baseUrl}}/api/v1/orders/999999/finish
+Authorization: Bearer {{token}}
+
+### 16. 取消订单 - 第一次取消
+PATCH {{baseUrl}}/api/v1/orders/1/cancel
+Authorization: Bearer {{token}}
+
+### 17. 取消订单 - 重复取消，应直接成功，不重复回滚库存
+PATCH {{baseUrl}}/api/v1/orders/1/cancel
+Authorization: Bearer {{token}}
