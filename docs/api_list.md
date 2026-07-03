@@ -4,7 +4,9 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /ping | 健康检查 |
+| GET | /ping | 基础连通性检查 |
+| GET | /live | 进程存活检查 |
+| GET | /readyz | 数据库就绪检查；未就绪时返回 503 / 5001 |
 
 除健康检查、注册和登录外，以下业务接口均要求请求头：`Authorization: Bearer <access_token>`。
 

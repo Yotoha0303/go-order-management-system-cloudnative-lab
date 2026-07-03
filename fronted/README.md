@@ -1,119 +1,95 @@
-# Shadcn Admin Dashboard
+# 订单库存管理系统前端
 
-Admin Dashboard UI crafted with Shadcn and Vite. Built with responsiveness and accessibility in mind.
+本目录是 `go-order-management-system` 的 React 管理台，基于 Shadcn Admin 模板改造，并已接入项目 Go 后端的认证、用户、商品、库存、库存流水和订单接口。
 
-![alt text](public/images/shadcn-admin.png)
+## 已接入功能
 
-[![Sponsored by Clerk](https://img.shields.io/badge/Sponsored%20by-Clerk-5b6ee1?logo=clerk)](https://go.clerk.com/GttUAaK)
+- 用户注册、登录和登录状态保存
+- 查询当前用户、修改昵称和修改密码
+- 侧边栏与顶部菜单动态展示用户昵称和用户名
+- 业务仪表盘与后端 `/ping` 连通状态
+- 商品创建、列表、详情、上架和下架
+- 库存初始化、增加和按商品查询
+- 库存流水列表与商品 ID 过滤
+- 订单创建、列表、详情、支付、完成和取消
 
-I've been creating dashboard UIs at work and for my personal projects. I always wanted to make a reusable collection of dashboard UI for future projects; and here it is now. While I've created a few custom components, some of the code is directly adapted from ShadcnUI examples.
+GitHub、Facebook 等第三方登录入口目前已隐藏，因为后端尚未实现 OAuth。模板中保留的 Users、Tasks、Chats 等演示页面没有对应后端接口，不属于当前业务闭环。
 
-> This is not a starter project (template) though. I'll probably make one in the future.
+## 技术栈
 
-## Features
+- React 19 + TypeScript
+- Vite
+- TanStack Router + TanStack Query
+- Axios + Zustand
+- Tailwind CSS + Shadcn UI
+- React Hook Form + Zod
+- Vitest Browser + Playwright
 
-- Light/dark mode
-- Responsive
-- Accessible
-- With built-in Sidebar component
-- Global search command
-- 10+ pages
-- Extra custom components
-- RTL support
+## 后端接口约定
 
-<details>
-<summary>Customized Components (click to expand)</summary>
+默认 API 根路径为 `/api/v1`。登录成功后，访问令牌保存在认证状态中，Axios 请求拦截器会为受保护接口添加：
 
-This project uses Shadcn UI components, but some have been slightly modified for better RTL (Right-to-Left) support and other improvements. These customized components differ from the original Shadcn UI versions.
-
-If you want to update components using the Shadcn CLI (e.g., `npx shadcn@latest add <component>`), it's generally safe for non-customized components. For the listed customized ones, you may need to manually merge changes to preserve the project's modifications and avoid overwriting RTL support or other updates.
-
-> If you don't require RTL support, you can safely update the 'RTL Updated Components' via the Shadcn CLI, as these changes are primarily for RTL compatibility. The 'Modified Components' may have other customizations to consider.
-
-### Modified Components
-
-- scroll-area
-- sonner
-- separator
-
-### RTL Updated Components
-
-- alert-dialog
-- calendar
-- command
-- dialog
-- dropdown-menu
-- select
-- table
-- sheet
-- sidebar
-- switch
-
-**Notes:**
-
-- **Modified Components**: These have general updates, potentially including RTL adjustments.
-- **RTL Updated Components**: These have specific changes for RTL language support (e.g., layout, positioning).
-- For implementation details, check the source files in `src/components/ui/`.
-- All other Shadcn UI components in the project are standard and can be safely updated via the CLI.
-
-</details>
-
-## Tech Stack
-
-**UI:** [ShadcnUI](https://ui.shadcn.com) (TailwindCSS + RadixUI)
-
-**Build Tool:** [Vite](https://vitejs.dev/)
-
-**Routing:** [TanStack Router](https://tanstack.com/router/latest)
-
-**Type Checking:** [TypeScript](https://www.typescriptlang.org/)
-
-**Linting/Formatting:** [ESLint](https://eslint.org/) & [Prettier](https://prettier.io/)
-
-**Icons:** [Lucide Icons](https://lucide.dev/icons/), [Tabler Icons](https://tabler.io/icons) (Brand icons only)
-
-**Auth (partial):** [Clerk](https://go.clerk.com/GttUAaK)
-
-## Run Locally
-
-Clone the project
-
-```bash
-  git clone https://github.com/satnaing/shadcn-admin.git
+```http
+Authorization: Bearer <access_token>
 ```
 
-Go to the project directory
+后端统一响应格式：
 
-```bash
-  cd shadcn-admin
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {}
+}
 ```
 
-Install dependencies
+主要 API 适配层：
 
-```bash
-  pnpm install
+```text
+src/lib/api-client.ts                 Axios 实例、Token 和统一响应解包
+src/features/auth/api.ts              注册、登录和当前用户接口
+src/features/order-inventory/api.ts   商品、库存、流水、订单和健康检查接口
+src/stores/auth-store.ts              用户与访问令牌状态
 ```
 
-Start the server
+## 本地运行
 
-```bash
-  pnpm run dev
+先确保 Go 后端运行在 `http://localhost:8082`，然后执行：
+
+```powershell
+npm install
+npm run dev
 ```
 
-## Sponsoring this project ❤️
+前端默认地址为 `http://127.0.0.1:8880`。开发服务器会将 `/api` 和 `/ping` 代理到后端。
 
-If you find this project helpful or use this in your own work, consider [sponsoring me](https://github.com/sponsors/satnaing) to support development and maintenance. You can [buy me a coffee](https://buymeacoffee.com/satnaing) as well. Don’t worry, every penny helps. Thank you! 🙏
+如需修改部署后的 API 前缀，可设置：
 
-For questions or sponsorship inquiries, feel free to reach out at [satnaingdev@gmail.com](mailto:satnaingdev@gmail.com).
+```env
+VITE_API_BASE_URL=/api/v1
+```
 
-### Current Sponsor
+生产环境建议通过同源反向代理连接 Go 服务；跨域直连需要后端额外配置 CORS。
 
-- [Clerk](https://go.clerk.com/GttUAaK) - authentication and user management for the modern web
+## 质量检查
 
-## Author
+```powershell
+npm run lint
+npm run build
+npm test
+npm run format:check
+```
 
-Crafted with 🤍 by [@satnaing](https://github.com/satnaing)
+## 目录说明
 
-## License
+```text
+src/components/                  通用 UI 与布局组件
+src/features/auth/               登录、注册和认证 API
+src/features/order-inventory/    核心业务页面与 API
+src/features/settings/           昵称和密码设置页面
+src/routes/                      TanStack Router 文件路由
+src/stores/                      Zustand 状态
+src/lib/                         API 客户端和通用工具
+```
 
-Licensed under the [MIT License](https://choosealicense.com/licenses/mit/)
+项目整体说明、后端启动方式和业务规则请查看根目录 [README](../README.md)。原始 UI 模板遵循本目录 [LICENSE](LICENSE) 中的 MIT License。

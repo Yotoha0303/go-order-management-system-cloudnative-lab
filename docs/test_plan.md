@@ -22,6 +22,8 @@
 测试文件位置：
 
 ```text
+docs/http/auth.http
+docs/http/demo_flow.http
 docs/http/products.http
 docs/http/inventory.http
 docs/http/stock_logs.http
@@ -37,7 +39,17 @@ docs/http/redis.http
 4. 点击每个请求上方的 `Send Request`
 5. 对比响应结果和数据库变化
 
-### 3.1 商品模块自测
+### 3.1 用户与鉴权模块自测
+
+- [x] 用户注册成功
+- [x] 用户登录成功并返回 access_token
+- [x] 携带 Bearer Token 可以查询当前用户
+- [ ] 修改当前用户昵称
+- [ ] 修改当前用户密码
+- [ ] 未携带 Token 访问受保护接口返回 401
+- [ ] 使用两个账号手动验证订单数据隔离
+
+### 3.2 商品模块自测
 
 - [x] 创建商品成功
 - [x] 创建商品后 `status = 2`
@@ -49,7 +61,7 @@ docs/http/redis.http
 - [x] 商品上架成功
 - [x] 商品下架成功
 
-### 3.2 库存模块自测
+### 3.3 库存模块自测
 
 - [x] 存在商品可以初始化库存
 - [x] 不存在商品不能初始化库存
@@ -63,7 +75,7 @@ docs/http/redis.http
 - [x] 增加库存后 `stock_quantity` 正确变化
 - [x] 增加库存后 `stock_logs` 有 `biz_type = 2` 记录
 
-### 3.3 库存流水自测
+### 3.4 库存流水自测
 
 - [x] 不传 `product_id` 可以查询全部流水
 - [x] 传 `product_id` 可以查询指定商品流水
@@ -74,7 +86,7 @@ docs/http/redis.http
 - [x] 取消订单后能查到 `biz_type = 4`
 - [x] `before_quantity / change_quantity / after_quantity` 正确
 
-### 3.4 订单状态机测试
+### 3.5 订单状态机测试
 
 创建订单
 
@@ -119,7 +131,7 @@ docs/http/redis.http
 - [x] 已取消订单再次取消直接成功
 - [x] 已取消订单再次取消不会重复回滚库存
 
-### 3.5 Redis 缓存接口自测
+### 3.6 Redis 缓存接口自测
 
 - [x] 商品详情缓存 key 是否正确
 - [x] Redis 为空时，缓存函数不会影响主流程

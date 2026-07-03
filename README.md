@@ -34,6 +34,9 @@
 - Go 1.25.7
 - Gin + GORM
 - MySQL 8.4 + Redis 7.2
+- React 19 + TypeScript + Vite
+- TanStack Router / Query + Axios + Zustand
+- Tailwind CSS + Shadcn UI
 - Goose 数据库迁移
 - YAML + godotenv 配置
 - Docker + Docker Compose
@@ -58,6 +61,8 @@
 - 并发下单防超卖和多商品事务回滚测试
 - 用户注册、登录、个人信息和修改密码
 - JWT 鉴权以及当前用户订单的数据隔离
+- React 管理台已接入商品、库存、库存流水、订单和用户资料接口
+- 登录用户昵称在侧边栏与顶部菜单中动态展示
 
 未实现，作为后续演进：
 
@@ -99,6 +104,16 @@
 - HS256 JWT 签发、过期校验和 Bearer 鉴权
 - 除健康检查、注册和登录外，所有业务接口统一要求 JWT
 - 未登录订单请求返回 401，跨用户订单访问按不存在处理并返回 404
+- 前端支持注册、登录、查询当前用户、修改昵称和修改密码
+- GitHub、Facebook 等第三方登录入口暂时隐藏，后端尚未实现 OAuth
+
+### 前端管理台
+
+- 业务仪表盘展示后端健康状态、商品、订单和库存流水摘要
+- 商品页面覆盖创建、列表、详情、上架和下架
+- 库存页面覆盖初始化、增加和按商品查询库存
+- 订单页面覆盖创建、列表、详情、支付、完成和取消
+- Profile / Account 页面分别对接昵称修改和密码修改
 
 ### Redis缓存
 
@@ -123,6 +138,7 @@ internal/model/           GORM 数据模型
 internal/request/         请求参数和校验规则
 internal/response/        统一响应结构
 internal/service/         业务规则、状态机和事务
+fronted/                  React 管理台、认证状态和后端 API 适配层
 migrations/               Goose SQL 迁移
 pkg/database/             MySQL 初始化与连接池
 pkg/redis/                Redis 客户端初始化
@@ -435,11 +451,27 @@ make docker-up
 | `make migrate-redo` | 重做最近一条迁移 |
 | `make migrate-create NAME=add_sku` | 创建顺序编号的 SQL 迁移 |
 
-默认访问地址为 `http://localhost:8082`，健康检查为：
+默认访问地址为 `http://localhost:8082`，健康检查接口为：
 
 ```bash
 curl http://localhost:8082/ping
+curl http://localhost:8082/live
+curl http://localhost:8082/readyz
 ```
+
+- `/ping`：基础连通性检查
+- `/live`：进程存活检查
+- `/readyz`：数据库就绪检查
+
+### 15.4 本地运行前端
+
+```powershell
+Set-Location fronted
+npm install
+npm run dev
+```
+
+前端默认运行在 `http://127.0.0.1:8880`，Vite 会把 `/api` 和 `/ping` 代理到 `http://localhost:8082`。生产环境建议通过同源反向代理暴露后端；可使用 `VITE_API_BASE_URL` 修改 API 根路径，默认值为 `/api/v1`。跨域直连需要后端额外配置 CORS。
 
 ## 16. 测试方式
 
@@ -523,11 +555,12 @@ Redis 集成测试前需保证 Redis 已启动，可先执行 `make infra-up`。
 - HTTP Server 配置超时、请求 ID、访问日志、panic 恢复和优雅退出
 - Docker 使用多阶段构建、非 root 用户、健康检查和 Compose 依赖编排
 - Goose 管理数据库版本，CI 自动执行 lint、test、race、vet、build 和迁移校验
+- React 管理台通过统一 Axios 客户端和 TanStack Query 对接全部业务接口
 
 ## 19. 后续演进方向
 
 - 增加 handler 业务接口测试和 DAO 测试
-- 在 Compose 或部署流水线中加入独立 migration job
+- 在生产部署流水线中加入独立 migration job
 - 增加指标、链路追踪和结构化日志字段规范
 - 优化错误码文档和接口返回示例
 - 评估使用雪花 ID 替代当前 UUID orderNo
