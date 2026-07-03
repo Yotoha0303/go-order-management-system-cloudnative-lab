@@ -5,7 +5,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Loader2, LogIn } from 'lucide-react'
 import { toast } from 'sonner'
-import { IconFacebook, IconGithub } from '@/assets/brand-icons'
 import { useAuthStore } from '@/stores/auth-store'
 import { getErrorMessage } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
@@ -121,6 +120,7 @@ export function UserAuthForm({
           Sign in
         </Button>
 
+        {/* 第三方登录暂未接入后端 OAuth 接口，先隐藏入口。
         <div className='relative my-2'>
           <div className='absolute inset-0 flex items-center'>
             <span className='w-full border-t' />
@@ -140,6 +140,7 @@ export function UserAuthForm({
             <IconFacebook className='h-4 w-4' /> Facebook
           </Button>
         </div>
+        */}
       </form>
     </Form>
   )

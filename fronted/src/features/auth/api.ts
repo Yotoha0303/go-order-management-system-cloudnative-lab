@@ -13,10 +13,24 @@ export type LoginResult = {
   user: AuthUser
 }
 
+export type UpdatePasswordParams = {
+  oldPassword: string
+  newPassword: string
+}
+
 export const authApi = {
   register: (username: string, password: string) =>
     unwrap<void>(api.post('/auth/register', { username, password })),
   login: (username: string, password: string) =>
     unwrap<LoginResult>(api.post('/auth/login', { username, password })),
   me: () => unwrap<AuthUser>(api.get('/users/me')),
+  updateProfile: (nickname: string) =>
+    unwrap<void>(api.put('/users/me/profile', { nickname })),
+  updatePassword: ({ oldPassword, newPassword }: UpdatePasswordParams) =>
+    unwrap<void>(
+      api.patch('/users/me/password', {
+        old_password: oldPassword,
+        new_password: newPassword,
+      })
+    ),
 }
