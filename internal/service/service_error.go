@@ -111,10 +111,22 @@ var (
 		response.CodeOrderIdempotencyStateError,
 		"订单幂等记录状态异常",
 	)
+
+	ErrDuplicateOrderItem = apperror.New(
+		http.StatusBadRequest,
+		response.CodeParameterError,
+		"订单中的商品重复",
+	)
 )
 
 // order err
 var (
+	ErrInvalidOrderPagination = apperror.New(
+		http.StatusBadRequest,
+		response.CodeOrderParameterError,
+		"分页参数无效",
+	)
+
 	ErrProductOffSale = apperror.New(
 		http.StatusConflict,
 		response.CodeProductAlreadyOffSale,

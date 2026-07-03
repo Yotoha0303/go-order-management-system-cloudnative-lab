@@ -190,6 +190,7 @@ func TestCreateProduct_DescriptionExactly500(t *testing.T) {
 
 	if product == nil {
 		t.Fatal("expected product not nil")
+		return
 	}
 
 	if product.ID <= 0 {

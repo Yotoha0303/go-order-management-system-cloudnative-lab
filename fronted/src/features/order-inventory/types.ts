@@ -62,6 +62,13 @@ export type OrderDetail = {
   items: OrderItem[]
 }
 
+export type OrderList = {
+  orders: Order[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export type CreateProductPayload = {
   name: string
   description: string

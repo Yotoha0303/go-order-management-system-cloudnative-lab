@@ -4,9 +4,9 @@ APP_NAME := go-order-management-system
 BIN_DIR := bin
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
-COMPOSE ?= docker compose
 GOOSE ?= goose
-PACKAGES := ./...
+COMPOSE ?= docker compose
+GO_PACKAGES := ./cmd/... ./config/... ./internal/... ./pkg/... ./router/...
 TEST_FLAGS ?= -count=1
 LINT_FLAGS ?=
 MIGRATIONS_DIR ?= migrations
@@ -103,10 +103,10 @@ else
 endif
 
 fmt:
-	$(GO) fmt $(PACKAGES)
+	$(GO) fmt $(GO_PACKAGES)
 
 vet:
-	$(GO) vet $(PACKAGES)
+	$(GO) vet $(GO_PACKAGES)
 
 lint:
 ifeq ($(OS),Windows_NT)
@@ -114,7 +114,7 @@ ifeq ($(OS),Windows_NT)
 else
 	@command -v "$(GOLANGCI_LINT)" >/dev/null 2>&1 || { echo "golangci-lint is not installed"; exit 1; }
 endif
-	$(GOLANGCI_LINT) run $(LINT_FLAGS) $(PACKAGES)
+	$(GOLANGCI_LINT) run $(LINT_FLAGS) $(GO_PACKAGES)
 
 tidy:
 	$(GO) mod tidy
@@ -126,10 +126,10 @@ mod-verify:
 	$(GO) mod verify
 
 test:
-	$(GO) test $(TEST_FLAGS) $(PACKAGES)
+	$(GO) test $(TEST_FLAGS) $(GO_PACKAGES)
 
 test-verbose:
-	$(GO) test -v $(TEST_FLAGS) $(PACKAGES)
+	$(GO) test -v $(TEST_FLAGS) $(GO_PACKAGES)
 
 test-service: export RUN_MYSQL_TEST := 1
 test-service:
@@ -142,10 +142,10 @@ test-redis:
 test-all: test test-service test-redis
 
 test-race:
-	$(GO) test -race $(TEST_FLAGS) $(PACKAGES)
+	$(GO) test -race $(TEST_FLAGS) $(GO_PACKAGES)
 
 coverage:
-	$(GO) test $(TEST_FLAGS) -covermode=atomic -coverprofile=coverage.out $(PACKAGES)
+	$(GO) test $(TEST_FLAGS) -covermode=atomic -coverprofile=coverage.out $(GO_PACKAGES)
 
 coverage-html: coverage
 	$(GO) tool cover -html=coverage.out -o coverage.html

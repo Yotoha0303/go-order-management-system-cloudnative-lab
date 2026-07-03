@@ -14,6 +14,7 @@ import type {
   Inventory,
   Order,
   OrderDetail,
+  OrderList,
   Product,
   StockLog,
 } from './types'
@@ -28,7 +29,9 @@ export const queryKeys = {
   stockLogsRoot: ['stock-logs'] as const,
   stockLogs: (productId?: number) =>
     ['stock-logs', { productId: productId ?? null }] as const,
-  orders: ['orders'] as const,
+  ordersRoot: ['orders'] as const,
+  orders: (page: number, pageSize: number) =>
+    ['orders', { page, pageSize }] as const,
   order: (id: number) => ['orders', id] as const,
 }
 
@@ -79,7 +82,12 @@ export const orderApi = {
         idempotency_key: crypto.randomUUID(),
       })
     ),
-  list: () => unwrap<Order[]>(api.get<ApiResponse<Order[]>>('/orders')),
+  list: (page: number, pageSize: number) =>
+    unwrap<OrderList>(
+      api.get<ApiResponse<OrderList>>('/orders', {
+        params: { page, page_size: pageSize },
+      })
+    ),
   detail: (id: number) =>
     unwrap<OrderDetail>(api.get<ApiResponse<OrderDetail>>(`/orders/${id}`)),
   pay: (id: number) =>

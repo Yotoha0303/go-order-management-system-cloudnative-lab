@@ -217,12 +217,70 @@ func TestOrdersAreIsolatedByUserAndIdempotencyKey(t *testing.T) {
 	if _, _, err := orderSvc.GetOrderByID(context.Background(), otherTestUserID, first.ID); !errors.Is(err, service.ErrOrderNotFound) {
 		t.Fatalf("other user must not read order, got %v", err)
 	}
-	orders, err := orderSvc.ListOrders(context.Background(), testUserID)
+
+	reqListOrder := request.ListOrderRequest{
+		Page:     1,
+		PageSize: 20,
+	}
+	orders, total, err := orderSvc.ListOrders(context.Background(), testUserID, reqListOrder.Page, reqListOrder.PageSize)
 	if err != nil {
 		t.Fatalf("list first user orders: %v", err)
 	}
 	if len(orders) != 1 || orders[0].ID != first.ID {
 		t.Fatalf("expected only first user's order, got %+v", orders)
+	}
+	if total != 1 {
+		t.Fatalf("expected first user's total=1, got %d", total)
+	}
+}
+
+func TestListOrders_PaginatesNewestFirst(t *testing.T) {
+	testDB, orderSvc := newOrderService(t)
+	first := seedPendingOrder(t, testDB)
+	second := seedPendingOrder(t, testDB)
+	third := seedPendingOrder(t, testDB)
+
+	firstPage, firstTotal, err := orderSvc.ListOrders(context.Background(), testUserID, 1, 2)
+	if err != nil {
+		t.Fatalf("list first page: %v", err)
+	}
+	if len(firstPage) != 2 || firstPage[0].ID != third.ID || firstPage[1].ID != second.ID {
+		t.Fatalf("unexpected first page: %+v", firstPage)
+	}
+	if firstTotal != 3 {
+		t.Fatalf("expected first page total=3, got %d", firstTotal)
+	}
+
+	secondPage, secondTotal, err := orderSvc.ListOrders(context.Background(), testUserID, 2, 2)
+	if err != nil {
+		t.Fatalf("list second page: %v", err)
+	}
+	if len(secondPage) != 1 || secondPage[0].ID != first.ID {
+		t.Fatalf("unexpected second page: %+v", secondPage)
+	}
+	if secondTotal != 3 {
+		t.Fatalf("expected second page total=3, got %d", secondTotal)
+	}
+}
+
+func TestListOrders_RejectsInvalidPagination(t *testing.T) {
+	orderSvc := service.NewOrderService(nil)
+
+	for _, tt := range []struct {
+		name     string
+		page     int
+		pageSize int
+	}{
+		{name: "zero page", page: 0, pageSize: 20},
+		{name: "zero page size", page: 1, pageSize: 0},
+		{name: "page size too large", page: 1, pageSize: 101},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := orderSvc.ListOrders(context.Background(), testUserID, tt.page, tt.pageSize)
+			if !errors.Is(err, service.ErrInvalidOrderPagination) {
+				t.Fatalf("expected ErrInvalidOrderPagination, got %v", err)
+			}
+		})
 	}
 }
 

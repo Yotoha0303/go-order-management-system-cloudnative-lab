@@ -1,7 +1,3 @@
-import { useState, type FormEvent } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Trash2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -19,8 +15,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import type { CreateOrderPayload, Order } from './types'
-import { formatDateTime, formatFen, ORDER_STATUS } from './format'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, Trash2 } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { toast } from 'sonner'
 import { getErrorMessage, orderApi, queryKeys } from './api'
 import {
   ApiErrorPanel,
@@ -30,6 +28,8 @@ import {
   LoadingRow,
   OrderStatusBadge,
 } from './components'
+import { formatDateTime, formatFen, ORDER_STATUS } from './format'
+import type { CreateOrderPayload, Order } from './types'
 
 type DraftOrderItem = {
   product_id: string
@@ -44,6 +44,8 @@ const actionText: Record<OrderAction, string> = {
   cancel: '取消',
 }
 
+const orderPageSize = 10
+
 export function OrdersPage() {
   const queryClient = useQueryClient()
   const [items, setItems] = useState<DraftOrderItem[]>([
@@ -51,10 +53,12 @@ export function OrdersPage() {
   ])
   const [detailOrderId, setDetailOrderId] = useState('')
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
+  const [page, setPage] = useState(1)
 
   const ordersQuery = useQuery({
-    queryKey: queryKeys.orders,
-    queryFn: orderApi.list,
+    queryKey: queryKeys.orders(page, orderPageSize),
+    queryFn: () => orderApi.list(page, orderPageSize),
+    placeholderData: (previousData) => previousData,
   })
 
   const orderDetailQuery = useQuery({
@@ -70,8 +74,9 @@ export function OrdersPage() {
       setItems([{ product_id: '', quantity: '1' }])
       setSelectedOrderId(order.id)
       setDetailOrderId(String(order.id))
+      setPage(1)
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.orders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.ordersRoot }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stockLogsRoot }),
       ])
     },
@@ -79,13 +84,7 @@ export function OrdersPage() {
   })
 
   const orderActionMutation = useMutation({
-    mutationFn: async ({
-      id,
-      action,
-    }: {
-      id: number
-      action: OrderAction
-    }) => {
+    mutationFn: async ({ id, action }: { id: number; action: OrderAction }) => {
       if (action === 'pay') return orderApi.pay(id)
       if (action === 'finish') return orderApi.finish(id)
       return orderApi.cancel(id)
@@ -93,7 +92,7 @@ export function OrdersPage() {
     onSuccess: async (_data, variables) => {
       toast.success(`订单${actionText[variables.action]}成功`)
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.orders }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.ordersRoot }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stockLogsRoot }),
       ])
       if (selectedOrderId) {
@@ -156,7 +155,9 @@ export function OrdersPage() {
     setSelectedOrderId(id)
   }
 
-  const orders = ordersQuery.data ?? []
+  const orders = ordersQuery.data?.orders ?? []
+  const total = ordersQuery.data?.total ?? 0
+  const totalPages = Math.ceil(total / orderPageSize)
   const orderDetail = orderDetailQuery.data
 
   return (
@@ -255,7 +256,11 @@ export function OrdersPage() {
                   inputMode='numeric'
                   placeholder='订单 ID'
                 />
-                <Button type='submit' size='icon' disabled={orderDetailQuery.isFetching}>
+                <Button
+                  type='submit'
+                  size='icon'
+                  disabled={orderDetailQuery.isFetching}
+                >
                   <Search />
                   <span className='sr-only'>查询订单</span>
                 </Button>
@@ -290,7 +295,9 @@ export function OrdersPage() {
                           <TableCell className='max-w-[180px] whitespace-normal'>
                             #{item.product_id} {item.product_name}
                           </TableCell>
-                          <TableCell>{formatFen(item.product_price_fen)}</TableCell>
+                          <TableCell>
+                            {formatFen(item.product_price_fen)}
+                          </TableCell>
                           <TableCell>{item.quantity}</TableCell>
                           <TableCell>{formatFen(item.subtotal_fen)}</TableCell>
                         </TableRow>
@@ -317,7 +324,9 @@ export function OrdersPage() {
         <Card>
           <CardHeader>
             <CardTitle>订单列表</CardTitle>
-            <CardDescription>按后端返回顺序展示订单，支持状态流转操作。</CardDescription>
+            <CardDescription>
+              按后端返回顺序展示订单，支持状态流转操作。
+            </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
             <ApiErrorPanel error={ordersQuery.error} />
@@ -338,7 +347,9 @@ export function OrdersPage() {
                   orders.map((order) => (
                     <TableRow key={order.id}>
                       <TableCell>#{order.id}</TableCell>
-                      <TableCell className='font-medium'>{order.order_no}</TableCell>
+                      <TableCell className='font-medium'>
+                        {order.order_no}
+                      </TableCell>
                       <TableCell>{formatFen(order.total_amount_fen)}</TableCell>
                       <TableCell>
                         <OrderStatusBadge status={order.status} />
@@ -376,6 +387,31 @@ export function OrdersPage() {
                 )}
               </TableBody>
             </Table>
+            <div className='flex items-center justify-between gap-3'>
+              <p className='text-sm text-muted-foreground'>
+                共 {total} 条，第 {page} / {Math.max(totalPages, 1)} 页
+              </p>
+              <div className='flex gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={page === 1 || ordersQuery.isFetching}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  上一页
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={page >= totalPages || ordersQuery.isFetching}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

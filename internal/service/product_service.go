@@ -42,7 +42,7 @@ func (p *ProductService) CreateProduct(ctx context.Context, req request.CreatePr
 }
 
 func (p *ProductService) ListProducts(ctx context.Context) ([]*model.Product, error) {
-	return dao.ListProducts(ctx, p.db, model.ProductStatusOffSale)
+	return dao.ListProducts(ctx, p.db)
 }
 
 func (p *ProductService) GetProductByID(ctx context.Context, id int64) (*model.Product, error) {

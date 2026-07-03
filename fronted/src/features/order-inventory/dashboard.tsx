@@ -22,6 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { healthApi, orderApi, productApi, queryKeys, stockLogApi } from './api'
 import {
   BusinessPage,
   EmptyRow,
@@ -29,7 +30,8 @@ import {
   StockBizTypeBadge,
 } from './components'
 import { formatDateTime, formatFen, ORDER_STATUS } from './format'
-import { healthApi, orderApi, productApi, queryKeys, stockLogApi } from './api'
+
+const dashboardOrderPageSize = 100
 
 export function OrderInventoryDashboard() {
   const healthQuery = useQuery({
@@ -42,8 +44,8 @@ export function OrderInventoryDashboard() {
     queryFn: productApi.list,
   })
   const ordersQuery = useQuery({
-    queryKey: queryKeys.orders,
-    queryFn: orderApi.list,
+    queryKey: queryKeys.orders(1, dashboardOrderPageSize),
+    queryFn: () => orderApi.list(1, dashboardOrderPageSize),
   })
   const stockLogsQuery = useQuery({
     queryKey: queryKeys.stockLogs(),
@@ -51,7 +53,8 @@ export function OrderInventoryDashboard() {
   })
 
   const products = productsQuery.data ?? []
-  const orders = ordersQuery.data ?? []
+  const orders = ordersQuery.data?.orders ?? []
+  const orderTotal = ordersQuery.data?.total ?? 0
   const stockLogs = stockLogsQuery.data ?? []
   const pendingOrders = orders.filter(
     (order) => order.status === ORDER_STATUS.PENDING
@@ -91,13 +94,13 @@ export function OrderInventoryDashboard() {
         <MetricCard
           title='待支付订单'
           value={pendingOrders.length.toString()}
-          description={`订单总数 ${orders.length}`}
+          description={`最近 ${orders.length} 笔订单，共 ${orderTotal} 笔`}
           icon={ShoppingCart}
         />
         <MetricCard
           title='已支付金额'
           value={formatFen(paidAmountFen)}
-          description='统计已支付和已完成订单'
+          description='统计最近 100 笔中的已支付和已完成订单'
           icon={ClipboardList}
         />
       </div>
@@ -121,7 +124,9 @@ export function OrderInventoryDashboard() {
               <TableBody>
                 {orders.slice(0, 5).map((order) => (
                   <TableRow key={order.id}>
-                    <TableCell className='font-medium'>{order.order_no}</TableCell>
+                    <TableCell className='font-medium'>
+                      {order.order_no}
+                    </TableCell>
                     <TableCell>{formatFen(order.total_amount_fen)}</TableCell>
                     <TableCell>
                       <OrderStatusBadge status={order.status} />
@@ -192,7 +197,12 @@ type MetricCardProps = {
   icon: ElementType
 }
 
-function MetricCard({ title, value, description, icon: Icon }: MetricCardProps) {
+function MetricCard({
+  title,
+  value,
+  description,
+  icon: Icon,
+}: MetricCardProps) {
   return (
     <Card>
       <CardHeader className='flex flex-row items-center justify-between space-y-0 pb-2'>

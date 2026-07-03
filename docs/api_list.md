@@ -49,10 +49,12 @@
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
 | POST | /api/v1/orders | Bearer JWT | 创建当前用户订单（idempotency_key 幂等） |
-| GET | /api/v1/orders | Bearer JWT | 查询当前用户订单列表 |
+| GET | /api/v1/orders?page=1&page_size=20 | Bearer JWT | 分页查询当前用户订单列表；默认 1/20，page_size 最大 100 |
 | GET | /api/v1/orders/:id | Bearer JWT | 查询当前用户订单详情 |
 | PATCH | /api/v1/orders/:id/pay | Bearer JWT | 支付当前用户订单 |
 | PATCH | /api/v1/orders/:id/finish | Bearer JWT | 完成当前用户订单 |
 | PATCH | /api/v1/orders/:id/cancel | Bearer JWT | 取消当前用户订单 |
+
+订单列表响应的 `data` 结构为：`{"orders":[],"total":0,"page":1,"page_size":20}`。`total` 仅统计当前登录用户的订单。
 
 鉴权请求头：`Authorization: Bearer <access_token>`。未登录返回 401；访问其他用户订单返回 404，避免暴露订单是否存在。

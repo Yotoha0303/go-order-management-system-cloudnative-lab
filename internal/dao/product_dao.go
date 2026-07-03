@@ -11,9 +11,9 @@ func CreateProduct(ctx context.Context, db *gorm.DB, product *model.Product) err
 	return db.WithContext(ctx).Create(product).Error
 }
 
-func ListProducts(ctx context.Context, db *gorm.DB, status int8) ([]*model.Product, error) {
+func ListProducts(ctx context.Context, db *gorm.DB) ([]*model.Product, error) {
 	var products []*model.Product
-	return products, db.WithContext(ctx).Model(&model.Product{}).Where("status = ?", status).Order("id DESC").Find(&products).Error
+	return products, db.WithContext(ctx).Model(&model.Product{}).Where("status = ?", model.ProductStatusOffSale).Order("id DESC").Find(&products).Error
 }
 
 func GetProductByID(ctx context.Context, db *gorm.DB, id int64) (*model.Product, error) {

@@ -1,6 +1,31 @@
-# go-order-management-system
+# Go 订单库存管理系统
 
-一个带用户认证和订单归属隔离的轻量级订单库存管理系统，重点展示 Go 后端业务分层、事务一致性、库存扣减、订单状态机、Redis 缓存和测试能力。
+> 带认证、库存扣减、订单状态机和幂等控制的 Go 订单库存管理系统
+
+这是一个面向 Go 后端求职展示的业务项目。系统围绕“用户登录后提交订单”这一主链路，解决重复请求、并发扣库存、跨用户数据访问和非法订单状态流转等真实工程问题，并提供 React 管理台用于完整演示。
+
+## 核心业务闭环
+
+```mermaid
+flowchart LR
+    A[JWT 认证] --> B[用户级幂等校验]
+    B --> C[事务创建订单]
+    C --> D[行锁与条件更新扣库存]
+    D --> E[记录订单明细与库存流水]
+    E --> F{订单状态机}
+    F -->|支付| G[已支付]
+    G -->|完成| H[已完成]
+    F -->|取消| I[已取消并回滚库存]
+```
+
+| 核心能力 | 实现方式 | 解决的问题 |
+| --- | --- | --- |
+| 认证与数据隔离 | HS256 JWT、Gin 中间件、订单查询强制携带 `user_id` | 未认证访问和跨用户读取、修改订单 |
+| 库存一致性 | MySQL 事务、`SELECT ... FOR UPDATE`、带库存下限的条件更新、库存流水 | 超卖、部分扣减和库存变化不可追踪 |
+| 订单状态机 | 条件状态更新，只允许待支付→已支付→已完成或待支付→已取消 | 重复操作和非法状态跳转 |
+| 创建订单幂等 | `(user_id, idempotency_key)` 唯一索引、SHA-256 请求摘要、幂等记录与订单同事务 | 网络重试或重复点击导致重复订单、重复扣库存 |
+
+项目演示、简历写法和面试讲解见 [docs/interview_guide.md](docs/interview_guide.md)。
 
 ## 1. 项目简介
 
@@ -521,6 +546,7 @@ Redis 集成测试前需保证 Redis 已启动，可先执行 `make infra-up`。
 - [docs/test_plan.md](docs/test_plan.md)：测试计划
 - [docs/test_result.md](docs/test_result.md)：测试结果记录
 - [docs/project_evolution.md](docs/project_evolution.md)：后续演进
+- [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
 - [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
 
 ### 17.1 项目证据链（docs/evidence/）

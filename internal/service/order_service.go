@@ -17,7 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
-const orderNoPrefix = "ORD"
+const (
+	orderNoPrefix    = "ORD"
+	maxOrderPage     = 1_000_000
+	maxOrderPageSize = 100
+)
 
 func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req request.CreateOrderRequest) (*model.Order, error) {
 	if userID <= 0 {
@@ -76,6 +80,10 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			return err
 		}
 
+		if err := validateDuplicateItems(req.Items); err != nil {
+			return err
+		}
+
 		for _, itemReq := range req.Items {
 			product, err := dao.GetProductByID(ctx, tx, itemReq.ProductID)
 			if err != nil {
@@ -121,7 +129,7 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 				Quantity:        itemReq.Quantity,
 				SubtotalFen:     subtotalFen,
 			}
-			if err := dao.CreateOrderItems(ctx, tx, orderItem); err != nil {
+			if err := dao.CreateOrderItem(ctx, tx, orderItem); err != nil {
 				return err
 			}
 
@@ -139,7 +147,7 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 			}
 		}
 
-		if err := dao.PatchOrderTotalPriceFen(ctx, tx, order.ID, totalAmountFen); err != nil {
+		if err := dao.PatchOrderTotalPriceFen(ctx, tx, order.ID, totalAmountFen, userID); err != nil {
 			return err
 		}
 
@@ -157,6 +165,18 @@ func (p *OrderService) CreateOrder(ctx context.Context, userID int64, req reques
 	}
 
 	return createOrder, nil
+}
+
+func validateDuplicateItems(items []request.CreateOrderItemRequest) error {
+	seen := make(map[int64]struct{}, len(items))
+
+	for _, item := range items {
+		if _, ok := seen[item.ProductID]; ok {
+			return ErrDuplicateOrderItem
+		}
+		seen[item.ProductID] = struct{}{}
+	}
+	return nil
 }
 
 func buildCreateOrderRequestHash(req request.CreateOrderRequest) (string, error) {
@@ -206,8 +226,16 @@ func (p *OrderService) GetOrderByID(ctx context.Context, userID, id int64) (*mod
 	return order, items, nil
 }
 
-func (p *OrderService) ListOrders(ctx context.Context, userID int64) ([]*model.Order, error) {
-	return dao.ListOrders(ctx, p.db, userID)
+func (p *OrderService) ListOrders(ctx context.Context, userID int64, page, pageSize int) ([]*model.Order, int64, error) {
+	if userID <= 0 {
+		return nil, 0, ErrInvalidUserID
+	}
+	if page <= 0 || page > maxOrderPage || pageSize <= 0 || pageSize > maxOrderPageSize {
+		return nil, 0, ErrInvalidOrderPagination
+	}
+
+	offset := (page - 1) * pageSize
+	return dao.ListOrders(ctx, p.db, userID, pageSize, offset)
 }
 
 func (p *OrderService) CancelOrder(ctx context.Context, userID, orderID int64) error {
