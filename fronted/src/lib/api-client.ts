@@ -17,11 +17,32 @@ const rootBaseURL = apiBaseURL.replace(/\/api\/v1$/, '') || '/'
 export const api = axios.create({ baseURL: apiBaseURL, timeout: 10000 })
 export const rootApi = axios.create({ baseURL: rootBaseURL, timeout: 10000 })
 
+let unauthorizedHandler: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler?: () => void) {
+  unauthorizedHandler = handler
+}
+
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().auth.accessToken
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
+
+api.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    if (
+      error instanceof AxiosError &&
+      error.response?.status === 401 &&
+      useAuthStore.getState().auth.accessToken
+    ) {
+      useAuthStore.getState().auth.reset()
+      unauthorizedHandler?.()
+    }
+    return Promise.reject(error)
+  }
+)
 
 export class BusinessApiError extends Error {
   code: number

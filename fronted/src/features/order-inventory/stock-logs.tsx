@@ -1,8 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Search, X } from 'lucide-react'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -10,7 +7,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -19,8 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { formatDateTime } from './format'
-import { queryKeys, stockLogApi } from './api'
+import { productApi, queryKeys, stockLogApi } from './api'
 import {
   ApiErrorPanel,
   BusinessPage,
@@ -28,31 +30,20 @@ import {
   LoadingRow,
   StockBizTypeBadge,
 } from './components'
+import { formatDateTime } from './format'
 
 export function StockLogsPage() {
-  const [productId, setProductId] = useState('')
   const [activeProductId, setActiveProductId] = useState<number | undefined>()
+
+  const productsQuery = useQuery({
+    queryKey: queryKeys.products('all'),
+    queryFn: () => productApi.list('all'),
+  })
 
   const stockLogsQuery = useQuery({
     queryKey: queryKeys.stockLogs(activeProductId),
     queryFn: () => stockLogApi.list(activeProductId),
   })
-
-  function handleFilter(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!productId.trim()) {
-      setActiveProductId(undefined)
-      return
-    }
-
-    const id = Number(productId)
-    if (!Number.isInteger(id) || id <= 0) {
-      toast.error('请输入有效商品 ID')
-      return
-    }
-
-    setActiveProductId(id)
-  }
 
   const stockLogs = stockLogsQuery.data ?? []
 
@@ -67,32 +58,27 @@ export function StockLogsPage() {
           <CardDescription>不输入商品 ID 时查询全部库存流水。</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
-          <form className='flex flex-col gap-2 sm:flex-row' onSubmit={handleFilter}>
-            <Input
-              value={productId}
-              onChange={(event) => setProductId(event.target.value)}
-              inputMode='numeric'
-              placeholder='按商品 ID 过滤'
-              className='sm:max-w-xs'
-            />
-            <div className='flex gap-2'>
-              <Button type='submit' disabled={stockLogsQuery.isFetching}>
-                <Search />
-                查询
-              </Button>
-              <Button
-                type='button'
-                variant='outline'
-                onClick={() => {
-                  setProductId('')
-                  setActiveProductId(undefined)
-                }}
-              >
-                <X />
-                全部
-              </Button>
-            </div>
-          </form>
+          <Select
+            value={activeProductId ? String(activeProductId) : 'all'}
+            onValueChange={(value) =>
+              setActiveProductId(value === 'all' ? undefined : Number(value))
+            }
+          >
+            <SelectTrigger
+              className='sm:max-w-sm'
+              disabled={productsQuery.isPending}
+            >
+              <SelectValue placeholder='按商品筛选' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部商品</SelectItem>
+              {(productsQuery.data?.products ?? []).map((product) => (
+                <SelectItem key={product.id} value={String(product.id)}>
+                  #{product.id} {product.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <ApiErrorPanel error={stockLogsQuery.error} />
           <Table>

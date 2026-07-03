@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import { Loader2, LogIn } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
@@ -25,13 +25,14 @@ const formSchema = z.object({
   username: z
     .string()
     .trim()
-    .min(1, 'Please enter your username.')
-    .min(3, 'Username must be at least 3 characters long.')
-    .max(64, 'Username must be at most 64 characters long.'),
+    .min(1, '请输入用户名')
+    .min(3, '用户名至少 3 个字符')
+    .max(64, '用户名最多 64 个字符'),
   password: z
     .string()
-    .min(1, 'Please enter your password.')
-    .min(7, 'Password must be at least 7 characters long.'),
+    .min(1, '请输入密码')
+    .min(6, '密码至少 6 个字符')
+    .max(72, '密码最多 72 个字符'),
 })
 
 interface UserAuthFormProps extends React.HTMLAttributes<HTMLFormElement> {
@@ -62,7 +63,7 @@ export function UserAuthForm({
       auth.setUser(session.user)
       auth.setAccessToken(session.access_token)
       toast.success(
-        `Welcome back, ${session.user.nickname || session.user.username}!`
+        `欢迎回来，${session.user.nickname || session.user.username}`
       )
       navigate({ to: redirectTo || '/', replace: true })
     } catch (error) {
@@ -84,7 +85,7 @@ export function UserAuthForm({
           name='username'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
+              <FormLabel>用户名</FormLabel>
               <FormControl>
                 <Input autoComplete='username' placeholder='alice' {...field} />
               </FormControl>
@@ -97,7 +98,7 @@ export function UserAuthForm({
           name='password'
           render={({ field }) => (
             <FormItem className='relative'>
-              <FormLabel>Password</FormLabel>
+              <FormLabel>密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='current-password'
@@ -106,18 +107,12 @@ export function UserAuthForm({
                 />
               </FormControl>
               <FormMessage />
-              <Link
-                to='/forgot-password'
-                className='absolute inset-e-0 -top-0.5 text-sm font-medium text-muted-foreground hover:opacity-75'
-              >
-                Forgot password?
-              </Link>
             </FormItem>
           )}
         />
         <Button className='mt-2' disabled={isLoading}>
           {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
-          Sign in
+          登录
         </Button>
 
         {/* 第三方登录暂未接入后端 OAuth 接口，先隐藏入口。

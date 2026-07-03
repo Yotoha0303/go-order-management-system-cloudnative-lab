@@ -233,7 +233,8 @@ func TestListProducts_OnlyOffSale(t *testing.T) {
 	seedProduct(t, testDB, "off-sale", 100, model.ProductStatusOffSale)
 	seedProduct(t, testDB, "on-sale", 100, model.ProductStatusOnSale)
 
-	products, err := productSvc.ListProducts(context.Background())
+	status := model.ProductStatusOffSale
+	products, _, err := productSvc.ListProducts(context.Background(), request.ListProductsRequest{Status: &status})
 	if err != nil {
 		t.Fatalf("list products failed: %v", err)
 	}
@@ -243,6 +244,38 @@ func TestListProducts_OnlyOffSale(t *testing.T) {
 	}
 	if products[0].Status != model.ProductStatusOffSale {
 		t.Fatalf("unexpected status: %d", products[0].Status)
+	}
+}
+
+func TestListProducts_AllStatuses(t *testing.T) {
+	testDB, productSvc := newProductService(t)
+
+	seedProduct(t, testDB, "off-sale", 100, model.ProductStatusOffSale)
+	seedProduct(t, testDB, "on-sale", 100, model.ProductStatusOnSale)
+
+	products, _, err := productSvc.ListProducts(context.Background(), request.ListProductsRequest{})
+	if err != nil {
+		t.Fatalf("list all products failed: %v", err)
+	}
+	if len(products) != 2 {
+		t.Fatalf("expected 2 products, got %d", len(products))
+	}
+}
+
+func TestListProducts_Pagination(t *testing.T) {
+	testDB, productSvc := newProductService(t)
+	seedProduct(t, testDB, "first", 100, model.ProductStatusOffSale)
+	seedProduct(t, testDB, "second", 100, model.ProductStatusOffSale)
+	seedProduct(t, testDB, "third", 100, model.ProductStatusOffSale)
+
+	products, total, err := productSvc.ListProducts(context.Background(), request.ListProductsRequest{
+		Page: 2, PageSize: 2,
+	})
+	if err != nil {
+		t.Fatalf("list paginated products failed: %v", err)
+	}
+	if total != 3 || len(products) != 1 {
+		t.Fatalf("expected total=3 and one product on page 2, got total=%d len=%d", total, len(products))
 	}
 }
 

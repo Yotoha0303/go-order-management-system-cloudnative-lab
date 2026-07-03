@@ -8,6 +8,34 @@ import { playwright } from '@vitest/browser-playwright'
 
 // https://vite.dev/config/
 export default defineConfig({
+  optimizeDeps: {
+    include: [
+      '@hookform/resolvers/zod',
+      '@radix-ui/react-alert-dialog',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-direction',
+      '@radix-ui/react-label',
+      '@radix-ui/react-radio-group',
+      '@radix-ui/react-scroll-area',
+      '@radix-ui/react-separator',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-tooltip',
+      '@tanstack/react-router',
+      'axios',
+      'class-variance-authority',
+      'clsx',
+      'cmdk',
+      'lucide-react',
+      'react',
+      'react-dom',
+      'react-hook-form',
+      'sonner',
+      'tailwind-merge',
+      'vitest-browser-react',
+      'zod',
+      'zustand',
+    ],
+  },
   server: {
     host: '127.0.0.1',
     port: 8880,

@@ -1,32 +1,13 @@
 import {
-  ClipboardList,
   History,
   LayoutDashboard,
   Package,
-  PackageCheck,
   ShoppingCart,
   Warehouse,
 } from 'lucide-react'
 import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
-  teams: [
-    {
-      name: '订单库存系统',
-      logo: PackageCheck,
-      plan: 'Go + React',
-    },
-    {
-      name: '业务后台',
-      logo: Warehouse,
-      plan: '本地环境',
-    },
-    {
-      name: '接口联调',
-      logo: ClipboardList,
-      plan: 'API v1',
-    },
-  ],
   navGroups: [
     {
       title: '业务模块',

@@ -5,3 +5,9 @@ type CreateProductRequest struct {
 	Description string `json:"description" binding:"max=500"`
 	PriceFen    int64  `json:"price_fen" binding:"required,gt=0"`
 }
+
+type ListProductsRequest struct {
+	Status   *int8
+	Page     int
+	PageSize int
+}

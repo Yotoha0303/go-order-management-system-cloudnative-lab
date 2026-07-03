@@ -4,10 +4,10 @@ import { type Locator, userEvent } from 'vitest/browser'
 import { SignUpForm } from './sign-up-form'
 
 const FORM_MESSAGES = {
-  usernameEmpty: 'Please enter your username.',
-  passwordEmpty: 'Please enter your password.',
-  confirmPasswordEmpty: 'Please confirm your password.',
-  passwordMismatch: "Passwords don't match.",
+  usernameEmpty: '请输入用户名',
+  passwordEmpty: '请输入密码',
+  confirmPasswordEmpty: '请再次输入密码',
+  passwordMismatch: '两次输入的密码不一致',
 } as const
 
 const registerMock = vi.hoisted(() => vi.fn())
@@ -38,10 +38,10 @@ describe('SignUpForm', () => {
     registerMock.mockResolvedValue(undefined)
 
     screen = await render(<SignUpForm />)
-    usernameInput = screen.getByRole('textbox', { name: /^Username$/i })
-    passwordInput = screen.getByLabelText(/^Password$/i)
-    confirmPasswordInput = screen.getByLabelText(/^Confirm Password$/i)
-    submitButton = screen.getByRole('button', { name: /^Create Account$/i })
+    usernameInput = screen.getByRole('textbox', { name: '用户名' })
+    passwordInput = screen.getByLabelText('密码', { exact: true })
+    confirmPasswordInput = screen.getByLabelText('确认密码')
+    submitButton = screen.getByRole('button', { name: '创建账号' })
   })
 
   it('renders fields and submit button', async () => {

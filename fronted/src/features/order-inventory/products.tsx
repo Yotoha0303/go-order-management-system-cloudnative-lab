@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -20,8 +19,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import type { Product } from './types'
-import { formatDateTime, formatFen, PRODUCT_STATUS } from './format'
 import { getErrorMessage, productApi, queryKeys } from './api'
 import {
   ApiErrorPanel,
@@ -31,18 +28,23 @@ import {
   LoadingRow,
   ProductStatusBadge,
 } from './components'
+import { formatDateTime, formatFen, PRODUCT_STATUS } from './format'
+import { parseYuanToFen } from './money'
+import type { Product } from './types'
 
 export function ProductsPage() {
   const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [priceYuan, setPriceYuan] = useState('')
-  const [detailProductId, setDetailProductId] = useState('')
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [page, setPage] = useState(1)
+  const pageSize = 10
 
   const productsQuery = useQuery({
-    queryKey: queryKeys.products,
-    queryFn: productApi.list,
+    queryKey: queryKeys.products('all', page, pageSize),
+    queryFn: () => productApi.list('all', page, pageSize),
+    placeholderData: (previousData) => previousData,
   })
 
   const productDetailMutation = useMutation({
@@ -61,7 +63,8 @@ export function ProductsPage() {
       setName('')
       setDescription('')
       setPriceYuan('')
-      await queryClient.invalidateQueries({ queryKey: queryKeys.products })
+      setPage(1)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.productsRoot })
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -78,8 +81,10 @@ export function ProductsPage() {
       return productApi.offSale(id)
     },
     onSuccess: async (_data, variables) => {
-      toast.success(variables.action === 'on-sale' ? '商品已上架' : '商品已下架')
-      await queryClient.invalidateQueries({ queryKey: queryKeys.products })
+      toast.success(
+        variables.action === 'on-sale' ? '商品已上架' : '商品已下架'
+      )
+      await queryClient.invalidateQueries({ queryKey: queryKeys.productsRoot })
       if (selectedProduct?.id === variables.id) {
         productDetailMutation.mutate(variables.id)
       }
@@ -90,13 +95,13 @@ export function ProductsPage() {
   function handleCreateProduct(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    const priceFen = Math.round(Number(priceYuan) * 100)
     if (!name.trim()) {
       toast.error('商品名称不能为空')
       return
     }
-    if (!Number.isFinite(priceFen) || priceFen <= 0) {
-      toast.error('商品价格必须大于 0')
+    const priceFen = parseYuanToFen(priceYuan)
+    if (priceFen === null) {
+      toast.error('商品价格必须是最多两位小数的正数')
       return
     }
 
@@ -107,29 +112,23 @@ export function ProductsPage() {
     })
   }
 
-  function handleSearchProduct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const id = Number(detailProductId)
-    if (!Number.isInteger(id) || id <= 0) {
-      toast.error('请输入有效商品 ID')
-      return
-    }
-    productDetailMutation.mutate(id)
-  }
-
-  const products = productsQuery.data ?? []
+  const products = productsQuery.data?.products ?? []
+  const total = productsQuery.data?.total ?? 0
+  const totalPages = Math.ceil(total / pageSize)
 
   return (
     <BusinessPage
       title='商品管理'
-      description='覆盖创建、列表、详情、上架和下架接口；列表接口当前展示下架商品。'
+      description='创建商品并完成库存准备、上架和下架管理。'
     >
       <div className='grid gap-4 xl:grid-cols-[minmax(320px,420px)_1fr]'>
         <div className='space-y-4'>
           <Card>
             <CardHeader>
               <CardTitle>创建商品</CardTitle>
-              <CardDescription>新商品默认下架，完成库存初始化后再上架。</CardDescription>
+              <CardDescription>
+                新商品默认下架，完成库存初始化后再上架。
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form className='space-y-4' onSubmit={handleCreateProduct}>
@@ -157,7 +156,10 @@ export function ProductsPage() {
                     placeholder='可选，最多 500 字'
                   />
                 </Field>
-                <Button className='w-full' disabled={createProductMutation.isPending}>
+                <Button
+                  className='w-full'
+                  disabled={createProductMutation.isPending}
+                >
                   创建商品
                 </Button>
               </form>
@@ -166,27 +168,12 @@ export function ProductsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>商品详情查询</CardTitle>
-              <CardDescription>用于查询已上架商品，或按 ID 执行上下架。</CardDescription>
+              <CardTitle>商品详情</CardTitle>
+              <CardDescription>
+                从右侧列表选择商品后查看并执行状态操作。
+              </CardDescription>
             </CardHeader>
             <CardContent className='space-y-4'>
-              <form className='flex gap-2' onSubmit={handleSearchProduct}>
-                <Input
-                  value={detailProductId}
-                  onChange={(event) => setDetailProductId(event.target.value)}
-                  inputMode='numeric'
-                  placeholder='商品 ID'
-                />
-                <Button
-                  type='submit'
-                  size='icon'
-                  disabled={productDetailMutation.isPending}
-                >
-                  <Search />
-                  <span className='sr-only'>查询商品</span>
-                </Button>
-              </form>
-
               {selectedProduct && (
                 <div className='rounded-md border p-4 text-sm'>
                   <div className='flex items-start justify-between gap-3'>
@@ -208,7 +195,8 @@ export function ProductsPage() {
                       size='sm'
                       disabled={
                         selectedProduct.status === PRODUCT_STATUS.ON_SALE ||
-                        statusMutation.isPending
+                        (statusMutation.isPending &&
+                          statusMutation.variables?.id === selectedProduct.id)
                       }
                       onClick={() =>
                         statusMutation.mutate({
@@ -224,7 +212,8 @@ export function ProductsPage() {
                       variant='outline'
                       disabled={
                         selectedProduct.status === PRODUCT_STATUS.OFF_SALE ||
-                        statusMutation.isPending
+                        (statusMutation.isPending &&
+                          statusMutation.variables?.id === selectedProduct.id)
                       }
                       onClick={() =>
                         statusMutation.mutate({
@@ -238,6 +227,11 @@ export function ProductsPage() {
                   </div>
                 </div>
               )}
+              {!selectedProduct && (
+                <div className='rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground'>
+                  请从商品列表选择一项。
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -245,7 +239,9 @@ export function ProductsPage() {
         <Card>
           <CardHeader>
             <CardTitle>商品列表</CardTitle>
-            <CardDescription>后端当前按下架状态查询，可用于库存初始化前准备。</CardDescription>
+            <CardDescription>
+              展示全部商品，可直接查看详情或调整上下架状态。
+            </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
             <ApiErrorPanel error={productsQuery.error} />
@@ -276,14 +272,15 @@ export function ProductsPage() {
                       <TableCell>
                         <ProductStatusBadge status={product.status} />
                       </TableCell>
-                      <TableCell>{formatDateTime(product.updated_at)}</TableCell>
+                      <TableCell>
+                        {formatDateTime(product.updated_at)}
+                      </TableCell>
                       <TableCell>
                         <div className='flex justify-end gap-2'>
                           <Button
                             size='sm'
                             variant='outline'
                             onClick={() => {
-                              setDetailProductId(String(product.id))
                               productDetailMutation.mutate(product.id)
                             }}
                           >
@@ -293,7 +290,8 @@ export function ProductsPage() {
                             size='sm'
                             disabled={
                               product.status === PRODUCT_STATUS.ON_SALE ||
-                              statusMutation.isPending
+                              (statusMutation.isPending &&
+                                statusMutation.variables?.id === product.id)
                             }
                             onClick={() =>
                               statusMutation.mutate({
@@ -304,15 +302,57 @@ export function ProductsPage() {
                           >
                             上架
                           </Button>
+                          <Button
+                            size='sm'
+                            variant='outline'
+                            disabled={
+                              product.status === PRODUCT_STATUS.OFF_SALE ||
+                              (statusMutation.isPending &&
+                                statusMutation.variables?.id === product.id)
+                            }
+                            onClick={() =>
+                              statusMutation.mutate({
+                                id: product.id,
+                                action: 'off-sale',
+                              })
+                            }
+                          >
+                            下架
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
                   ))}
                 {!productsQuery.isLoading && products.length === 0 && (
-                  <EmptyRow colSpan={6} message='暂无下架商品' />
+                  <EmptyRow colSpan={6} message='暂无商品' />
                 )}
               </TableBody>
             </Table>
+            <div className='flex items-center justify-between gap-3'>
+              <p className='text-sm text-muted-foreground'>
+                共 {total} 条，第 {page} / {Math.max(totalPages, 1)} 页
+              </p>
+              <div className='flex gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={page === 1 || productsQuery.isFetching}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  上一页
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={page >= totalPages || productsQuery.isFetching}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

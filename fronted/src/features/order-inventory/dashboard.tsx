@@ -1,12 +1,3 @@
-import type { ElementType } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import {
-  Activity,
-  ClipboardList,
-  History,
-  Package,
-  ShoppingCart,
-} from 'lucide-react'
 import {
   Card,
   CardContent,
@@ -22,10 +13,21 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Activity,
+  ClipboardList,
+  History,
+  Package,
+  ShoppingCart,
+} from 'lucide-react'
+import type { ElementType } from 'react'
 import { healthApi, orderApi, productApi, queryKeys, stockLogApi } from './api'
 import {
+  ApiErrorPanel,
   BusinessPage,
   EmptyRow,
+  LoadingRow,
   OrderStatusBadge,
   StockBizTypeBadge,
 } from './components'
@@ -40,8 +42,8 @@ export function OrderInventoryDashboard() {
     retry: false,
   })
   const productsQuery = useQuery({
-    queryKey: queryKeys.products,
-    queryFn: productApi.list,
+    queryKey: queryKeys.products(),
+    queryFn: () => productApi.list(),
   })
   const ordersQuery = useQuery({
     queryKey: queryKeys.orders(1, dashboardOrderPageSize),
@@ -52,7 +54,7 @@ export function OrderInventoryDashboard() {
     queryFn: () => stockLogApi.list(),
   })
 
-  const products = productsQuery.data ?? []
+  const products = productsQuery.data?.products ?? []
   const orders = ordersQuery.data?.orders ?? []
   const orderTotal = ordersQuery.data?.total ?? 0
   const stockLogs = stockLogsQuery.data ?? []
@@ -71,13 +73,24 @@ export function OrderInventoryDashboard() {
 
   return (
     <BusinessPage
-      title='业务仪表盘'
+      title='订单库存一致性管理服务'
       description='汇总商品、库存流水和订单状态，快速判断系统是否可用。'
     >
+      <div className='mb-4 space-y-2'>
+        <ApiErrorPanel error={productsQuery.error} />
+        <ApiErrorPanel error={ordersQuery.error} />
+        <ApiErrorPanel error={stockLogsQuery.error} />
+      </div>
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
         <MetricCard
           title='后端健康'
-          value={healthQuery.isSuccess ? '正常' : '待确认'}
+          value={
+            healthQuery.isPending
+              ? '检查中'
+              : healthQuery.isSuccess
+                ? '正常'
+                : '异常'
+          }
           description={
             healthQuery.isError
               ? '请确认 Go 服务是否运行在 8082'
@@ -87,19 +100,23 @@ export function OrderInventoryDashboard() {
         />
         <MetricCard
           title='待上架商品'
-          value={products.length.toString()}
+          value={
+            productsQuery.isPending
+              ? '—'
+              : (productsQuery.data?.total ?? products.length).toString()
+          }
           description='当前商品列表接口返回下架商品'
           icon={Package}
         />
         <MetricCard
           title='待支付订单'
-          value={pendingOrders.length.toString()}
+          value={ordersQuery.isPending ? '—' : pendingOrders.length.toString()}
           description={`最近 ${orders.length} 笔订单，共 ${orderTotal} 笔`}
           icon={ShoppingCart}
         />
         <MetricCard
-          title='已支付金额'
-          value={formatFen(paidAmountFen)}
+          title='最近 100 笔已支付金额'
+          value={ordersQuery.isPending ? '—' : formatFen(paidAmountFen)}
           description='统计最近 100 笔中的已支付和已完成订单'
           icon={ClipboardList}
         />
@@ -122,6 +139,7 @@ export function OrderInventoryDashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {ordersQuery.isPending && <LoadingRow colSpan={4} />}
                 {orders.slice(0, 5).map((order) => (
                   <TableRow key={order.id}>
                     <TableCell className='font-medium'>
@@ -134,7 +152,7 @@ export function OrderInventoryDashboard() {
                     <TableCell>{formatDateTime(order.created_at)}</TableCell>
                   </TableRow>
                 ))}
-                {orders.length === 0 && (
+                {!ordersQuery.isPending && orders.length === 0 && (
                   <EmptyRow colSpan={4} message='暂无订单数据' />
                 )}
               </TableBody>
@@ -160,6 +178,7 @@ export function OrderInventoryDashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {stockLogsQuery.isPending && <LoadingRow colSpan={3} />}
                 {stockLogs.slice(0, 6).map((log) => (
                   <TableRow key={log.id}>
                     <TableCell>#{log.product_id}</TableCell>
@@ -178,7 +197,7 @@ export function OrderInventoryDashboard() {
                     </TableCell>
                   </TableRow>
                 ))}
-                {stockLogs.length === 0 && (
+                {!stockLogsQuery.isPending && stockLogs.length === 0 && (
                   <EmptyRow colSpan={3} message='暂无库存流水' />
                 )}
               </TableBody>

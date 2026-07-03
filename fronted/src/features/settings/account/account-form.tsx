@@ -19,19 +19,19 @@ import { authApi } from '@/features/auth/api'
 
 const accountFormSchema = z
   .object({
-    oldPassword: z.string().min(1, 'Please enter your current password.'),
+    oldPassword: z.string().min(1, '请输入当前密码'),
     newPassword: z
       .string()
-      .min(6, 'New password must be at least 6 characters long.')
-      .max(72, 'New password must be at most 72 characters long.'),
-    confirmPassword: z.string().min(1, 'Please confirm your new password.'),
+      .min(6, '新密码至少 6 个字符')
+      .max(72, '新密码最多 72 个字符'),
+    confirmPassword: z.string().min(1, '请再次输入新密码'),
   })
   .refine((data) => data.oldPassword !== data.newPassword, {
-    message: 'New password must be different from the current password.',
+    message: '新密码不能与当前密码相同',
     path: ['newPassword'],
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
-    message: "Passwords don't match.",
+    message: '两次输入的新密码不一致',
     path: ['confirmPassword'],
   })
 
@@ -56,7 +56,7 @@ export function AccountForm() {
         newPassword: data.newPassword,
       })
       form.reset()
-      toast.success('Password updated successfully.')
+      toast.success('密码修改成功')
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -72,7 +72,7 @@ export function AccountForm() {
           name='oldPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Current password</FormLabel>
+              <FormLabel>当前密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='current-password'
@@ -80,9 +80,7 @@ export function AccountForm() {
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                Enter your current password to confirm this change.
-              </FormDescription>
+              <FormDescription>输入当前密码以确认本次修改。</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -92,7 +90,7 @@ export function AccountForm() {
           name='newPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>New password</FormLabel>
+              <FormLabel>新密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='new-password'
@@ -100,9 +98,7 @@ export function AccountForm() {
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                Use between 6 and 72 characters.
-              </FormDescription>
+              <FormDescription>密码长度为 6 到 72 个字符。</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -112,7 +108,7 @@ export function AccountForm() {
           name='confirmPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Confirm new password</FormLabel>
+              <FormLabel>确认新密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='new-password'
@@ -125,7 +121,7 @@ export function AccountForm() {
           )}
         />
         <Button type='submit' disabled={isSubmitting}>
-          Update password
+          修改密码
         </Button>
       </form>
     </Form>

@@ -15,10 +15,16 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | /api/v1/products | 创建商品 |
-| GET | /api/v1/products | 查询商品列表，当前默认查询下架商品 |
+| GET | /api/v1/products | 查询商品列表；`status` 支持 `1`、`2`、`all`，默认 `2`；可选 `page/page_size`，page_size 最大 100 |
 | GET | /api/v1/products/:id | 查询商品详情 |
 | PATCH | /api/v1/products/:id/on-sale | 商品上架 |
 | PATCH | /api/v1/products/:id/off-sale | 商品下架 |
+
+兼容说明：不传 `page` 和 `page_size` 时，商品列表的 `data` 仍为数组。传任一分页参数时，`data` 为：
+
+```json
+{"products":[],"total":0,"page":1,"page_size":20}
+```
 
 ## 3. 库存模块（需要鉴权）
 

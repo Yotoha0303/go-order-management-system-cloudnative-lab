@@ -1,3 +1,7 @@
+import { useState, type FormEvent } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Loader2, Plus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -8,6 +12,13 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -15,11 +26,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Trash2 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
-import { toast } from 'sonner'
-import { getErrorMessage, orderApi, queryKeys } from './api'
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { getErrorMessage, orderApi, productApi, queryKeys } from './api'
 import {
   ApiErrorPanel,
   BusinessPage,
@@ -28,15 +36,22 @@ import {
   LoadingRow,
   OrderStatusBadge,
 } from './components'
-import { formatDateTime, formatFen, ORDER_STATUS } from './format'
+import { formatDateTime, formatFen } from './format'
+import {
+  isOrderActionAllowed,
+  requiresOrderActionConfirmation,
+  type OrderAction,
+} from './order-actions'
+import {
+  prepareOrderSubmission,
+  type PendingOrderSubmission,
+} from './order-submission'
 import type { CreateOrderPayload, Order } from './types'
 
 type DraftOrderItem = {
   product_id: string
   quantity: string
 }
-
-type OrderAction = 'pay' | 'finish' | 'cancel'
 
 const actionText: Record<OrderAction, string> = {
   pay: '支付',
@@ -51,14 +66,23 @@ export function OrdersPage() {
   const [items, setItems] = useState<DraftOrderItem[]>([
     { product_id: '', quantity: '1' },
   ])
-  const [detailOrderId, setDetailOrderId] = useState('')
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
   const [page, setPage] = useState(1)
+  const [pendingSubmission, setPendingSubmission] =
+    useState<PendingOrderSubmission | null>(null)
+  const [actionConfirmation, setActionConfirmation] = useState<{
+    order: Order
+    action: Exclude<OrderAction, 'pay'>
+  } | null>(null)
 
   const ordersQuery = useQuery({
     queryKey: queryKeys.orders(page, orderPageSize),
     queryFn: () => orderApi.list(page, orderPageSize),
     placeholderData: (previousData) => previousData,
+  })
+  const productsQuery = useQuery({
+    queryKey: queryKeys.products(1),
+    queryFn: () => productApi.list(1),
   })
 
   const orderDetailQuery = useQuery({
@@ -68,12 +92,18 @@ export function OrdersPage() {
   })
 
   const createOrderMutation = useMutation({
-    mutationFn: orderApi.create,
+    mutationFn: ({
+      payload,
+      idempotencyKey,
+    }: {
+      payload: CreateOrderPayload
+      idempotencyKey: string
+    }) => orderApi.create(payload, idempotencyKey),
     onSuccess: async (order) => {
       toast.success(`订单创建成功：${order.order_no}`)
       setItems([{ product_id: '', quantity: '1' }])
+      setPendingSubmission(null)
       setSelectedOrderId(order.id)
-      setDetailOrderId(String(order.id))
       setPage(1)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.ordersRoot }),
@@ -91,6 +121,7 @@ export function OrdersPage() {
     },
     onSuccess: async (_data, variables) => {
       toast.success(`订单${actionText[variables.action]}成功`)
+      setActionConfirmation(null)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.ordersRoot }),
         queryClient.invalidateQueries({ queryKey: queryKeys.stockLogsRoot }),
@@ -112,6 +143,14 @@ export function OrdersPage() {
     )
   }
 
+  function requestOrderAction(order: Order, action: OrderAction) {
+    if (!requiresOrderActionConfirmation(action)) {
+      orderActionMutation.mutate({ id: order.id, action })
+      return
+    }
+    setActionConfirmation({ order, action })
+  }
+
   function removeItem(index: number) {
     setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))
   }
@@ -131,7 +170,12 @@ export function OrdersPage() {
     )
 
     if (hasInvalidItem) {
-      toast.error('商品 ID 和数量都必须是大于 0 的整数')
+      toast.error('请选择商品并填写正整数数量')
+      return null
+    }
+
+    if (new Set(parsed.map((item) => item.product_id)).size !== parsed.length) {
+      toast.error('同一商品请合并为一行')
       return null
     }
 
@@ -142,23 +186,27 @@ export function OrdersPage() {
     event.preventDefault()
     const payload = parseCreateOrderPayload()
     if (!payload) return
-    createOrderMutation.mutate(payload)
-  }
-
-  function handleSearchOrder(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const id = Number(detailOrderId)
-    if (!Number.isInteger(id) || id <= 0) {
-      toast.error('请输入有效订单 ID')
-      return
-    }
-    setSelectedOrderId(id)
+    const submission = prepareOrderSubmission(payload, pendingSubmission)
+    setPendingSubmission(submission)
+    createOrderMutation.mutate({
+      payload,
+      idempotencyKey: submission.idempotencyKey,
+    })
   }
 
   const orders = ordersQuery.data?.orders ?? []
   const total = ordersQuery.data?.total ?? 0
   const totalPages = Math.ceil(total / orderPageSize)
   const orderDetail = orderDetailQuery.data
+  const onSaleProducts = productsQuery.data?.products ?? []
+  const estimatedAmountFen = items.reduce((total, item) => {
+    const product = onSaleProducts.find(
+      (candidate) => candidate.id === Number(item.product_id)
+    )
+    const quantity = Number(item.quantity)
+    if (!product || !Number.isInteger(quantity) || quantity <= 0) return total
+    return total + product.price_fen * quantity
+  }, 0)
 
   return (
     <BusinessPage
@@ -171,7 +219,7 @@ export function OrdersPage() {
             <CardHeader>
               <CardTitle>创建订单</CardTitle>
               <CardDescription>
-                商品必须已上架且库存充足；商品 ID 可从商品详情查询获得。
+                仅可选择已上架商品，最终金额和库存以服务端校验为准。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -182,17 +230,29 @@ export function OrdersPage() {
                       key={index}
                       className='grid grid-cols-[1fr_110px_auto] items-end gap-2'
                     >
-                      <Field label={index === 0 ? '商品 ID' : ' '}>
-                        <Input
+                      <Field label={index === 0 ? '商品' : ' '}>
+                        <Select
                           value={item.product_id}
-                          onChange={(event) =>
+                          onValueChange={(value) =>
                             updateItem(index, {
-                              product_id: event.target.value,
+                              product_id: value,
                             })
                           }
-                          inputMode='numeric'
-                          placeholder='1'
-                        />
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder='请选择商品' />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {onSaleProducts.map((product) => (
+                              <SelectItem
+                                key={product.id}
+                                value={String(product.id)}
+                              >
+                                {product.name} · {formatFen(product.price_fen)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </Field>
                       <Field label={index === 0 ? '数量' : ' '}>
                         <Input
@@ -217,6 +277,12 @@ export function OrdersPage() {
                     </div>
                   ))}
                 </div>
+                <p className='text-end text-sm text-muted-foreground'>
+                  预计金额：
+                  <span className='ms-1 font-medium text-foreground'>
+                    {formatFen(estimatedAmountFen)}
+                  </span>
+                </p>
                 <div className='flex flex-col gap-2 sm:flex-row'>
                   <Button
                     type='button'
@@ -246,26 +312,11 @@ export function OrdersPage() {
           <Card>
             <CardHeader>
               <CardTitle>订单详情</CardTitle>
-              <CardDescription>按订单 ID 查询明细和订单项。</CardDescription>
+              <CardDescription>
+                从订单列表选择后查看商品快照和状态。
+              </CardDescription>
             </CardHeader>
             <CardContent className='space-y-4'>
-              <form className='flex gap-2' onSubmit={handleSearchOrder}>
-                <Input
-                  value={detailOrderId}
-                  onChange={(event) => setDetailOrderId(event.target.value)}
-                  inputMode='numeric'
-                  placeholder='订单 ID'
-                />
-                <Button
-                  type='submit'
-                  size='icon'
-                  disabled={orderDetailQuery.isFetching}
-                >
-                  <Search />
-                  <span className='sr-only'>查询订单</span>
-                </Button>
-              </form>
-
               {orderDetail && (
                 <div className='space-y-4 rounded-md border p-4'>
                   <div className='flex items-start justify-between gap-3'>
@@ -307,14 +358,23 @@ export function OrdersPage() {
 
                   <OrderActions
                     order={orderDetail.order}
-                    pending={orderActionMutation.isPending}
+                    pendingAction={
+                      orderActionMutation.isPending &&
+                      orderActionMutation.variables?.id === orderDetail.order.id
+                        ? orderActionMutation.variables.action
+                        : undefined
+                    }
                     onAction={(action) =>
-                      orderActionMutation.mutate({
-                        id: orderDetail.order.id,
-                        action,
-                      })
+                      requestOrderAction(orderDetail.order, action)
                     }
                   />
+                </div>
+              )}
+              {!orderDetail && (
+                <div className='rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground'>
+                  {orderDetailQuery.isFetching
+                    ? '正在加载订单详情…'
+                    : '请从订单列表选择订单。'}
                 </div>
               )}
             </CardContent>
@@ -362,7 +422,6 @@ export function OrdersPage() {
                             variant='outline'
                             onClick={() => {
                               setSelectedOrderId(order.id)
-                              setDetailOrderId(String(order.id))
                             }}
                           >
                             详情
@@ -370,12 +429,14 @@ export function OrdersPage() {
                           <OrderActions
                             compact
                             order={order}
-                            pending={orderActionMutation.isPending}
+                            pendingAction={
+                              orderActionMutation.isPending &&
+                              orderActionMutation.variables?.id === order.id
+                                ? orderActionMutation.variables.action
+                                : undefined
+                            }
                             onAction={(action) =>
-                              orderActionMutation.mutate({
-                                id: order.id,
-                                action,
-                              })
+                              requestOrderAction(order, action)
                             }
                           />
                         </div>
@@ -415,46 +476,77 @@ export function OrdersPage() {
           </CardContent>
         </Card>
       </div>
+      <ConfirmDialog
+        open={actionConfirmation !== null}
+        onOpenChange={(open) => !open && setActionConfirmation(null)}
+        title={
+          actionConfirmation?.action === 'cancel'
+            ? '确认取消订单'
+            : '确认完成订单'
+        }
+        desc={
+          actionConfirmation?.action === 'cancel'
+            ? `取消订单 ${actionConfirmation.order.order_no} 后将回滚对应库存。`
+            : `订单 ${actionConfirmation?.order.order_no ?? ''} 完成后不能再变更状态。`
+        }
+        cancelBtnText='返回'
+        confirmText={
+          actionConfirmation?.action === 'cancel' ? '确认取消' : '确认完成'
+        }
+        destructive={actionConfirmation?.action === 'cancel'}
+        isLoading={orderActionMutation.isPending}
+        handleConfirm={() => {
+          if (!actionConfirmation) return
+          orderActionMutation.mutate({
+            id: actionConfirmation.order.id,
+            action: actionConfirmation.action,
+          })
+        }}
+      />
     </BusinessPage>
   )
 }
 
 function OrderActions({
   order,
-  pending,
+  pendingAction,
   compact,
   onAction,
 }: {
   order: Order
-  pending: boolean
+  pendingAction?: OrderAction
   compact?: boolean
   onAction: (action: OrderAction) => void
 }) {
   const size = compact ? 'sm' : 'default'
+  const pending = pendingAction !== undefined
 
   return (
     <div className='flex flex-wrap gap-2'>
       <Button
         size={size}
-        disabled={pending || order.status !== ORDER_STATUS.PENDING}
+        disabled={pending || !isOrderActionAllowed(order.status, 'pay')}
         onClick={() => onAction('pay')}
       >
+        {pendingAction === 'pay' && <Loader2 className='animate-spin' />}
         支付
       </Button>
       <Button
         size={size}
         variant='outline'
-        disabled={pending || order.status !== ORDER_STATUS.PAID}
+        disabled={pending || !isOrderActionAllowed(order.status, 'finish')}
         onClick={() => onAction('finish')}
       >
+        {pendingAction === 'finish' && <Loader2 className='animate-spin' />}
         完成
       </Button>
       <Button
         size={size}
         variant='outline'
-        disabled={pending || order.status !== ORDER_STATUS.PENDING}
+        disabled={pending || !isOrderActionAllowed(order.status, 'cancel')}
         onClick={() => onAction('cancel')}
       >
+        {pendingAction === 'cancel' && <Loader2 className='animate-spin' />}
         取消
       </Button>
     </div>

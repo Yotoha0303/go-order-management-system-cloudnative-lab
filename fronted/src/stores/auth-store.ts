@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 import type { AuthUser } from '@/features/auth/api'
 
-export const ACCESS_TOKEN_COOKIE = 'order_management_access_token'
+const ACCESS_TOKEN_COOKIE = 'order_management_access_token'
 
 interface AuthState {
   auth: {
@@ -17,7 +17,15 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()((set) => {
   const cookieState = getCookie(ACCESS_TOKEN_COOKIE)
-  const initToken = cookieState ? JSON.parse(cookieState) : ''
+  let initToken = ''
+  if (cookieState) {
+    try {
+      const parsed = JSON.parse(cookieState)
+      initToken = typeof parsed === 'string' ? parsed : ''
+    } catch {
+      removeCookie(ACCESS_TOKEN_COOKIE)
+    }
+  }
   return {
     auth: {
       user: null,

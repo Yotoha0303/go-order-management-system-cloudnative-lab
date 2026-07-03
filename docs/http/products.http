@@ -78,6 +78,18 @@ Content-Type: application/json
 GET {{baseUrl}}/api/v1/products
 Authorization: Bearer {{token}}
 
+### 8.1 查询已上架商品并分页
+GET {{baseUrl}}/api/v1/products?status=1&page=1&page_size=20
+Authorization: Bearer {{token}}
+
+### 8.2 查询全部商品并分页
+GET {{baseUrl}}/api/v1/products?status=all&page=1&page_size=20
+Authorization: Bearer {{token}}
+
+### 8.3 非法分页参数，应返回参数错误
+GET {{baseUrl}}/api/v1/products?status=all&page=1&page_size=101
+Authorization: Bearer {{token}}
+
 ### 9. 查询商品详情 - 正常
 GET {{baseUrl}}/api/v1/products/1
 Authorization: Bearer {{token}}

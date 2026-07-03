@@ -23,8 +23,8 @@ const profileFormSchema = z.object({
   nickname: z
     .string()
     .trim()
-    .min(1, 'Please enter your nickname.')
-    .max(64, 'Nickname must be at most 64 characters long.'),
+    .min(1, '请输入昵称')
+    .max(64, '昵称最多 64 个字符'),
 })
 
 type ProfileFormValues = z.infer<typeof profileFormSchema>
@@ -62,7 +62,7 @@ export function ProfileForm() {
         setUser(updatedUser)
         form.reset({ nickname: updatedUser.nickname })
       }
-      toast.success('Profile updated successfully.')
+      toast.success('个人资料更新成功')
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -78,23 +78,23 @@ export function ProfileForm() {
           name='nickname'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Nickname</FormLabel>
+              <FormLabel>昵称</FormLabel>
               <FormControl>
                 <Input
-                  placeholder='Your nickname'
+                  placeholder='请输入昵称'
                   disabled={profileQuery.isPending || isSubmitting}
                   {...field}
                 />
               </FormControl>
               <FormDescription>
-                This is the display name shown in the order management system.
+                该昵称会显示在订单库存管理系统中。
               </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
         <Button type='submit' disabled={profileQuery.isPending || isSubmitting}>
-          Update profile
+          保存资料
         </Button>
       </form>
     </Form>

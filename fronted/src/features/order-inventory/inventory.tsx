@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -11,22 +11,33 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import type { Inventory } from './types'
-import { formatDateTime } from './format'
-import { getErrorMessage, inventoryApi, queryKeys } from './api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { getErrorMessage, inventoryApi, productApi, queryKeys } from './api'
 import { BusinessPage, Field } from './components'
+import { formatDateTime } from './format'
+import type { Inventory } from './types'
 
 export function InventoryPage() {
   const queryClient = useQueryClient()
-  const [initProductId, setInitProductId] = useState('')
+  const [selectedProductId, setSelectedProductId] = useState('')
   const [initQuantity, setInitQuantity] = useState('')
-  const [addProductId, setAddProductId] = useState('')
   const [addQuantity, setAddQuantity] = useState('')
-  const [lookupProductId, setLookupProductId] = useState('')
   const [inventory, setInventory] = useState<Inventory | null>(null)
+
+  const productsQuery = useQuery({
+    queryKey: queryKeys.products('all'),
+    queryFn: () => productApi.list('all'),
+  })
 
   const lookupMutation = useMutation({
     mutationFn: inventoryApi.detailByProductId,
+    onMutate: () => setInventory(null),
     onSuccess: (data) => {
       setInventory(data)
       toast.success('库存信息已更新')
@@ -75,9 +86,14 @@ export function InventoryPage() {
     return number
   }
 
+  function selectProduct(value: string) {
+    setSelectedProductId(value)
+    setInventory(null)
+  }
+
   function handleInitInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const productId = parsePositiveInteger(initProductId, '商品 ID')
+    const productId = parsePositiveInteger(selectedProductId, '商品')
     const stockQuantity = Number(initQuantity)
 
     if (productId === null) return
@@ -94,7 +110,7 @@ export function InventoryPage() {
 
   function handleAddInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const productId = parsePositiveInteger(addProductId, '商品 ID')
+    const productId = parsePositiveInteger(selectedProductId, '商品')
     const quantity = parsePositiveInteger(addQuantity, '入库数量')
 
     if (productId === null || quantity === null) return
@@ -107,7 +123,7 @@ export function InventoryPage() {
 
   function handleLookupInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const productId = parsePositiveInteger(lookupProductId, '商品 ID')
+    const productId = parsePositiveInteger(selectedProductId, '商品')
     if (productId === null) return
     lookupMutation.mutate(productId)
   }
@@ -115,7 +131,7 @@ export function InventoryPage() {
   return (
     <BusinessPage
       title='库存管理'
-      description='覆盖库存初始化、手动入库和按商品查询库存接口。'
+      description='选择商品后初始化或增加库存，并即时查看库存结果。'
     >
       <div className='grid gap-4 xl:grid-cols-[minmax(320px,420px)_1fr]'>
         <div className='space-y-4'>
@@ -127,11 +143,10 @@ export function InventoryPage() {
             <CardContent>
               <form className='space-y-4' onSubmit={handleInitInventory}>
                 <Field label='商品 ID'>
-                  <Input
-                    value={initProductId}
-                    onChange={(event) => setInitProductId(event.target.value)}
-                    inputMode='numeric'
-                    placeholder='1'
+                  <ProductSelect
+                    products={productsQuery.data?.products ?? []}
+                    value={selectedProductId}
+                    onValueChange={selectProduct}
                   />
                 </Field>
                 <Field label='初始库存'>
@@ -157,11 +172,10 @@ export function InventoryPage() {
             <CardContent>
               <form className='space-y-4' onSubmit={handleAddInventory}>
                 <Field label='商品 ID'>
-                  <Input
-                    value={addProductId}
-                    onChange={(event) => setAddProductId(event.target.value)}
-                    inputMode='numeric'
-                    placeholder='1'
+                  <ProductSelect
+                    products={productsQuery.data?.products ?? []}
+                    value={selectedProductId}
+                    onValueChange={selectProduct}
                   />
                 </Field>
                 <Field label='入库数量'>
@@ -183,17 +197,20 @@ export function InventoryPage() {
         <Card>
           <CardHeader>
             <CardTitle>库存查询</CardTitle>
-            <CardDescription>后端当前提供按商品 ID 查询库存。</CardDescription>
+            <CardDescription>选择商品后查询当前库存。</CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
             <form className='flex gap-2' onSubmit={handleLookupInventory}>
-              <Input
-                value={lookupProductId}
-                onChange={(event) => setLookupProductId(event.target.value)}
-                inputMode='numeric'
-                placeholder='商品 ID'
+              <ProductSelect
+                products={productsQuery.data?.products ?? []}
+                value={selectedProductId}
+                onValueChange={selectProduct}
               />
-              <Button type='submit' size='icon' disabled={lookupMutation.isPending}>
+              <Button
+                type='submit'
+                size='icon'
+                disabled={lookupMutation.isPending}
+              >
                 <Search />
                 <span className='sr-only'>查询库存</span>
               </Button>
@@ -203,7 +220,9 @@ export function InventoryPage() {
               <div className='grid gap-4 sm:grid-cols-3'>
                 <div className='rounded-md border p-4'>
                   <p className='text-sm text-muted-foreground'>商品 ID</p>
-                  <p className='mt-2 text-2xl font-bold'>#{inventory.product_id}</p>
+                  <p className='mt-2 text-2xl font-bold'>
+                    #{inventory.product_id}
+                  </p>
                 </div>
                 <div className='rounded-md border p-4'>
                   <p className='text-sm text-muted-foreground'>当前库存</p>
@@ -227,5 +246,30 @@ export function InventoryPage() {
         </Card>
       </div>
     </BusinessPage>
+  )
+}
+
+function ProductSelect({
+  products,
+  value,
+  onValueChange,
+}: {
+  products: { id: number; name: string }[]
+  value: string
+  onValueChange: (value: string) => void
+}) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger>
+        <SelectValue placeholder='请选择商品' />
+      </SelectTrigger>
+      <SelectContent>
+        {products.map((product) => (
+          <SelectItem key={product.id} value={String(product.id)}>
+            #{product.id} {product.name}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

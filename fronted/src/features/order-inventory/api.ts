@@ -1,6 +1,5 @@
 import {
   api,
-  BusinessApiError,
   getErrorMessage,
   rootApi,
   unwrap,
@@ -16,14 +15,18 @@ import type {
   OrderDetail,
   OrderList,
   Product,
+  ProductList,
+  ProductListStatus,
   StockLog,
 } from './types'
 
-export { BusinessApiError, getErrorMessage }
+export { getErrorMessage }
 
 export const queryKeys = {
   health: ['health'] as const,
-  products: ['products'] as const,
+  productsRoot: ['products'] as const,
+  products: (status?: ProductListStatus, page = 1, pageSize = 100) =>
+    ['products', { status: status ?? 2, page, pageSize }] as const,
   product: (id: number) => ['products', id] as const,
   inventory: (productId: number) => ['inventory', productId] as const,
   stockLogsRoot: ['stock-logs'] as const,
@@ -43,7 +46,16 @@ export const healthApi = {
 }
 
 export const productApi = {
-  list: () => unwrap<Product[]>(api.get<ApiResponse<Product[]>>('/products')),
+  list: (status?: ProductListStatus, page = 1, pageSize = 100) =>
+    unwrap<ProductList>(
+      api.get<ApiResponse<ProductList>>('/products', {
+        params: {
+          status,
+          page,
+          page_size: pageSize,
+        },
+      })
+    ),
   create: (payload: CreateProductPayload) =>
     unwrap<Product>(api.post<ApiResponse<Product>>('/products', payload)),
   detail: (id: number) =>
@@ -75,11 +87,11 @@ export const stockLogApi = {
 }
 
 export const orderApi = {
-  create: (payload: CreateOrderPayload) =>
+  create: (payload: CreateOrderPayload, idempotencyKey: string) =>
     unwrap<Order>(
       api.post<ApiResponse<Order>>('/orders', {
         ...payload,
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: idempotencyKey,
       })
     ),
   list: (page: number, pageSize: number) =>

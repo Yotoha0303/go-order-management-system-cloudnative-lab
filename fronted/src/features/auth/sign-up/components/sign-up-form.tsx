@@ -25,17 +25,18 @@ const formSchema = z
     username: z
       .string()
       .trim()
-      .min(1, 'Please enter your username.')
-      .min(3, 'Username must be at least 3 characters long.')
-      .max(64, 'Username must be at most 64 characters long.'),
+      .min(1, '请输入用户名')
+      .min(3, '用户名至少 3 个字符')
+      .max(64, '用户名最多 64 个字符'),
     password: z
       .string()
-      .min(1, 'Please enter your password.')
-      .min(7, 'Password must be at least 7 characters long.'),
-    confirmPassword: z.string().min(1, 'Please confirm your password.'),
+      .min(1, '请输入密码')
+      .min(6, '密码至少 6 个字符')
+      .max(72, '密码最多 72 个字符'),
+    confirmPassword: z.string().min(1, '请再次输入密码'),
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords don't match.",
+    message: '两次输入的密码不一致',
     path: ['confirmPassword'],
   })
 
@@ -59,7 +60,7 @@ export function SignUpForm({
     setIsLoading(true)
     try {
       await authApi.register(data.username, data.password)
-      toast.success('Account created. Please sign in.')
+      toast.success('账号创建成功，请登录')
       navigate({ to: '/sign-in', replace: true })
     } catch (error) {
       toast.error(getErrorMessage(error))
@@ -80,7 +81,7 @@ export function SignUpForm({
           name='username'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
+              <FormLabel>用户名</FormLabel>
               <FormControl>
                 <Input autoComplete='username' placeholder='alice' {...field} />
               </FormControl>
@@ -93,7 +94,7 @@ export function SignUpForm({
           name='password'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Password</FormLabel>
+              <FormLabel>密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='new-password'
@@ -110,7 +111,7 @@ export function SignUpForm({
           name='confirmPassword'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Confirm Password</FormLabel>
+              <FormLabel>确认密码</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='new-password'
@@ -124,7 +125,7 @@ export function SignUpForm({
         />
         <Button className='mt-2' disabled={isLoading}>
           {isLoading ? <Loader2 className='animate-spin' /> : <UserPlus />}
-          Create Account
+          创建账号
         </Button>
 
         {/* 第三方注册暂未接入后端 OAuth 接口，先隐藏入口。

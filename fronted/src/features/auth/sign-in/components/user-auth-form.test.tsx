@@ -4,9 +4,8 @@ import { type Locator, userEvent } from 'vitest/browser'
 import { UserAuthForm } from './user-auth-form'
 
 const FORM_MESSAGES = {
-  usernameEmpty: 'Please enter your username.',
-  passwordEmpty: 'Please enter your password.',
-  passwordShort: 'Password must be at least 7 characters long.',
+  usernameEmpty: '请输入用户名',
+  passwordEmpty: '请输入密码',
 } as const
 
 const navigate = vi.fn()
@@ -59,7 +58,6 @@ describe('UserAuthForm', () => {
     let usernameInput: Locator
     let passwordInput: Locator
     let signInButton: Locator
-    let forgotPasswordLink: Locator
 
     beforeEach(async () => {
       vi.clearAllMocks()
@@ -68,17 +66,15 @@ describe('UserAuthForm', () => {
         user: { id: 1, username: 'alice', nickname: 'Alice', status: 1 },
       })
       screen = await render(<UserAuthForm />)
-      usernameInput = screen.getByRole('textbox', { name: /^Username$/i })
-      passwordInput = screen.getByLabelText(/^Password$/i)
-      signInButton = screen.getByRole('button', { name: /^Sign in$/i })
-      forgotPasswordLink = screen.getByText(/^Forgot password\?$/i)
+      usernameInput = screen.getByRole('textbox', { name: '用户名' })
+      passwordInput = screen.getByLabelText('密码')
+      signInButton = screen.getByRole('button', { name: '登录' })
     })
 
-    it('renders fields, submit button, and forgot password link', async () => {
+    it('renders fields and submit button', async () => {
       await expect.element(usernameInput).toBeInTheDocument()
       await expect.element(passwordInput).toBeInTheDocument()
       await expect.element(signInButton).toBeInTheDocument()
-      await expect.element(forgotPasswordLink).toBeInTheDocument()
     })
 
     it('shows validation messages when submitting empty form', async () => {
@@ -122,10 +118,10 @@ describe('UserAuthForm', () => {
       <UserAuthForm redirectTo='/settings' />
     )
 
-    await userEvent.fill(getByRole('textbox', { name: /Username/i }), 'alice')
-    await userEvent.fill(getByLabelText('Password'), '1234567')
+    await userEvent.fill(getByRole('textbox', { name: '用户名' }), 'alice')
+    await userEvent.fill(getByLabelText('密码'), '123456')
 
-    await userEvent.click(getByRole('button', { name: /Sign in/i }))
+    await userEvent.click(getByRole('button', { name: '登录' }))
 
     await vi.waitFor(() => expect(setUserMock).toHaveBeenCalledOnce())
     expect(setAccessTokenMock).toHaveBeenCalledOnce()

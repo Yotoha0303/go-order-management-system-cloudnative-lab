@@ -1,9 +1,3 @@
-export type ApiResponse<T> = {
-  code: number
-  message: string
-  data?: T
-}
-
 export type Product = {
   id: number
   name: string
@@ -12,6 +6,15 @@ export type Product = {
   status: number
   created_at: string
   updated_at: string
+}
+
+export type ProductListStatus = 1 | 2 | 'all'
+
+export type ProductList = {
+  products: Product[]
+  total: number
+  page: number
+  page_size: number
 }
 
 export type Inventory = {
@@ -46,7 +49,7 @@ export type Order = {
   updated_at: string
 }
 
-export type OrderItem = {
+type OrderItem = {
   id: number
   order_id: number
   product_id: number
