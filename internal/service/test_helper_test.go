@@ -2,14 +2,21 @@ package service_test
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"net"
+	"os"
+	"regexp"
+	"testing"
+	"time"
+
 	"go-order-management-system/config"
 	"go-order-management-system/internal/model"
 	"go-order-management-system/internal/request"
 	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
-	"os"
-	"testing"
 
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
@@ -35,6 +42,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("load config failed: %v", err)
 	}
+	ensureTestDatabase(t, cfg)
 
 	testDB, err := database.InitTestMySQL(cfg)
 	if err != nil {
@@ -47,13 +55,31 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 
-	err = testDB.AutoMigrate(&model.User{}, &model.Product{}, &model.Inventory{}, &model.StockLog{}, &model.Order{}, &model.OrderItem{}, &model.OrderIdempotencyKey{})
+	err = testDB.AutoMigrate(
+		&model.User{},
+		&model.Role{},
+		&model.UserRole{},
+		&model.Product{},
+		&model.Inventory{},
+		&model.StockLog{},
+		&model.Order{},
+		&model.OrderItem{},
+		&model.OrderIdempotencyKey{},
+		&model.OrderTimeoutOutbox{},
+	)
 
 	if err != nil {
 		t.Fatalf("migrate test MySQL failed: %v", err)
 	}
 
 	cleanTables(t, testDB)
+	roles := []*model.Role{
+		{RoleName: model.RoleAdmin, Description: "administrator"},
+		{RoleName: model.RoleUser, Description: "regular user"},
+	}
+	if err := testDB.Create(&roles).Error; err != nil {
+		t.Fatalf("seed test roles failed: %v", err)
+	}
 	users := []*model.User{
 		{ID: testUserID, Username: "order-test-user", PasswordHash: "not-used", Nickname: "order-test-user", Status: model.UserStatusActive},
 		{ID: otherTestUserID, Username: "other-order-test-user", PasswordHash: "not-used", Nickname: "other-order-test-user", Status: model.UserStatusActive},
@@ -65,17 +91,50 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	return testDB
 }
 
+var safeDatabaseName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+func ensureTestDatabase(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	databaseName := os.Getenv("MYSQL_TEST_DATABASE")
+	password := os.Getenv("MYSQL_TEST_PASSWORD")
+	if !safeDatabaseName.MatchString(databaseName) {
+		t.Fatalf("invalid MYSQL_TEST_DATABASE %q", databaseName)
+	}
+	driverConfig := mysqldriver.Config{
+		User:      cfg.MySQL.User,
+		Passwd:    password,
+		Net:       "tcp",
+		Addr:      net.JoinHostPort(cfg.MySQL.Host, cfg.MySQL.Port),
+		ParseTime: true,
+		Loc:       time.Local,
+	}
+	adminDB, err := sql.Open("mysql", driverConfig.FormatDSN())
+	if err != nil {
+		t.Fatalf("open admin MySQL failed: %v", err)
+	}
+	defer adminDB.Close()
+	if _, err := adminDB.Exec(fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+		databaseName,
+	)); err != nil {
+		t.Fatalf("create test database failed: %v", err)
+	}
+}
+
 func cleanTables(t *testing.T, db *gorm.DB) {
 	t.Helper()
 
 	tables := []string{
+		"order_timeout_outbox",
 		"order_idempotency_keys",
 		"stock_logs",
 		"order_items",
 		"orders",
 		"product_inventories",
 		"products",
+		"user_roles",
 		"users",
+		"roles",
 	}
 
 	for _, table := range tables {

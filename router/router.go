@@ -16,9 +16,15 @@ type Handlers struct {
 	Order     *handler.OrderHandler
 	Health    *handler.HealthHandler
 	User      *handler.UserHandler
+	Assistant *handler.AssistantHandler
 }
 
-func SetupRouters(logger *slog.Logger, handlers Handlers, tokenManager *auth.TokenManager) *gin.Engine {
+func SetupRouters(
+	logger *slog.Logger,
+	handlers Handlers,
+	tokenManager *auth.TokenManager,
+	roleChecker middleware.RoleChecker,
+) *gin.Engine {
 	r := gin.New()
 
 	r.Use(
@@ -28,7 +34,7 @@ func SetupRouters(logger *slog.Logger, handlers Handlers, tokenManager *auth.Tok
 	)
 
 	registerHealthRouters(r, handlers)
-	registerAPIRouter(r, handlers, tokenManager)
+	registerAPIRouter(r, handlers, tokenManager, roleChecker)
 	return r
 }
 
@@ -41,7 +47,10 @@ func registerHealthRouters(r *gin.Engine, handlers Handlers) {
 }
 
 func registerAPIRouter(
-	rg *gin.Engine, handlers Handlers, tokenManager *auth.TokenManager,
+	rg *gin.Engine,
+	handlers Handlers,
+	tokenManager *auth.TokenManager,
+	roleChecker middleware.RoleChecker,
 ) {
 	apiV1 := rg.Group("/api/v1")
 
@@ -50,10 +59,11 @@ func registerAPIRouter(
 	protected := apiV1.Group("")
 	protected.Use(middleware.AuthMiddleware(tokenManager))
 	registerUserAPIRouter(protected, handlers.User)
-	registerProductAPIRouter(protected, handlers.Product)
-	registerInventoryAPIRouter(protected, handlers.Inventory)
-	registerStockLogAPIRouter(protected, handlers.StockLog)
+	registerProductAPIRouter(protected, handlers.Product, roleChecker)
+	registerInventoryAPIRouter(protected, handlers.Inventory, roleChecker)
+	registerStockLogAPIRouter(protected, handlers.StockLog, roleChecker)
 	registerOrderAPIRouter(protected, handlers.Order)
+	registerAssistantAPIRouter(protected, handlers.Assistant, roleChecker)
 }
 
 func registerAuthAPIRouter(rg *gin.RouterGroup, userHandler *handler.UserHandler) {
@@ -69,26 +79,46 @@ func registerUserAPIRouter(rg *gin.RouterGroup, userHandler *handler.UserHandler
 	users.PATCH("/me/password", userHandler.UpdatePassword)
 }
 
-func registerProductAPIRouter(rg *gin.RouterGroup, productHandler *handler.ProductHandler) {
+func registerProductAPIRouter(
+	rg *gin.RouterGroup,
+	productHandler *handler.ProductHandler,
+	roleChecker middleware.RoleChecker,
+) {
 
-	rg.POST("/products", productHandler.CreateProduct)
 	rg.GET("/products", productHandler.ListProducts)
 	rg.GET("/products/:id", productHandler.GetProductByID)
-	rg.PATCH("/products/:id/on-sale", productHandler.OnSaleProduct)
-	rg.PATCH("/products/:id/off-sale", productHandler.OffSaleProduct)
+
+	admin := rg.Group("")
+	admin.Use(middleware.AdminMiddleware(roleChecker))
+	admin.POST("/products", productHandler.CreateProduct)
+	admin.PATCH("/products/:id/on-sale", productHandler.OnSaleProduct)
+	admin.PATCH("/products/:id/off-sale", productHandler.OffSaleProduct)
 
 }
 
-func registerInventoryAPIRouter(rg *gin.RouterGroup, inventoryHandler *handler.InventoryHandler) {
+func registerInventoryAPIRouter(
+	rg *gin.RouterGroup,
+	inventoryHandler *handler.InventoryHandler,
+	roleChecker middleware.RoleChecker,
+) {
 
-	rg.POST("/inventory/init", inventoryHandler.InitInventory)
-	rg.POST("/inventory/add", inventoryHandler.AddInventory)
 	rg.GET("/inventory/products/:product_id", inventoryHandler.GetInventoryByProductID)
+
+	admin := rg.Group("")
+	admin.Use(middleware.AdminMiddleware(roleChecker))
+	admin.POST("/inventory/init", inventoryHandler.InitInventory)
+	admin.POST("/inventory/add", inventoryHandler.AddInventory)
 }
 
-func registerStockLogAPIRouter(rg *gin.RouterGroup, stockLogHandler *handler.StockLogHandler) {
+func registerStockLogAPIRouter(
+	rg *gin.RouterGroup,
+	stockLogHandler *handler.StockLogHandler,
+	roleChecker middleware.RoleChecker,
+) {
 
-	rg.GET("/stock-logs", stockLogHandler.ListStockLogs)
+	admin := rg.Group("")
+	admin.Use(middleware.AdminMiddleware(roleChecker))
+	admin.GET("/stock-logs", stockLogHandler.ListStockLogs)
 
 }
 
@@ -100,5 +130,14 @@ func registerOrderAPIRouter(rg *gin.RouterGroup, orderHandler *handler.OrderHand
 	rg.PATCH("/orders/:id/cancel", orderHandler.CancelOrders)
 	rg.PATCH("/orders/:id/pay", orderHandler.PayOrder)
 	rg.PATCH("/orders/:id/finish", orderHandler.FinishOrder)
+}
 
+func registerAssistantAPIRouter(
+	rg *gin.RouterGroup,
+	assistantHandler *handler.AssistantHandler,
+	roleChecker middleware.RoleChecker,
+) {
+	admin := rg.Group("/admin")
+	admin.Use(middleware.AdminMiddleware(roleChecker))
+	admin.POST("/assistant/chat", assistantHandler.Chat)
 }
