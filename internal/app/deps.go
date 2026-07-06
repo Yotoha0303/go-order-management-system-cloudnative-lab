@@ -57,15 +57,16 @@ func InitDeps(logger *slog.Logger) (*Deps, error) {
 	productService := service.NewProductService(db, productCache)
 	inventoryService := service.NewInventoryService(db)
 	stockLogService := service.NewStockLogService(db)
-	orderService := service.NewOrderServiceWithTimeout(db, cfg.OrderTimeout.Delay)
+	orderTimeoutConfig := cfg.RabbitMQ.OrderTimeout
+	orderService := service.NewOrderServiceWithTimeout(db, orderTimeoutConfig.Delay)
 	orderTimeoutWorker, err := ordertimeout.NewWorker(ordertimeout.Config{
 		URL:                cfg.RabbitMQ.URL,
 		ConnectTimeout:     cfg.RabbitMQ.ConnectTimeout,
 		ReconnectDelay:     cfg.RabbitMQ.ReconnectDelay,
-		OutboxPollInterval: cfg.OrderTimeout.OutboxPollInterval,
-		OutboxRetryDelay:   cfg.OrderTimeout.OutboxRetryDelay,
-		PublishBatchSize:   cfg.OrderTimeout.PublishBatchSize,
-		ConsumerPrefetch:   cfg.OrderTimeout.ConsumerPrefetch,
+		OutboxPollInterval: orderTimeoutConfig.OutboxPollInterval,
+		OutboxRetryDelay:   orderTimeoutConfig.OutboxRetryDelay,
+		PublishBatchSize:   orderTimeoutConfig.PublishBatchSize,
+		ConsumerPrefetch:   orderTimeoutConfig.ConsumerPrefetch,
 	}, db, orderService, logger)
 	if err != nil {
 		return nil, fmt.Errorf("build order timeout worker: %w", err)

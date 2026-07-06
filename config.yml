@@ -21,13 +21,12 @@ rabbitmq:
   url: amqp://order_app:order_dev_password@127.0.0.1:5672/
   connectTimeout: 5s
   reconnectDelay: 5s
-
-orderTimeout:
-  delay: 30m
-  outboxPollInterval: 1s
-  outboxRetryDelay: 5s
-  publishBatchSize: 100
-  consumerPrefetch: 10
+  orderTimeout:
+    delay: 30m
+    outboxPollInterval: 1s
+    outboxRetryDelay: 5s
+    publishBatchSize: 100
+    consumerPrefetch: 10
 
 jwt:
   expireHours: 24

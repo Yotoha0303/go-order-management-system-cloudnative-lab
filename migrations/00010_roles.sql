@@ -9,11 +9,14 @@ CREATE TABLE IF NOT EXISTS roles (
 
 INSERT IGNORE
     roles (role_name, description)
-VALUES ('admin', 'this is admin');
+VALUES ('admin', 'This is the admin.');
 
 INSERT IGNORE
     roles (role_name, description)
-VALUES ('user', 'this is user');
+VALUES (
+        'user',
+        'This is the user.'
+    );
 
 -- +goose Down
 DROP TABLE IF EXISTS roles;

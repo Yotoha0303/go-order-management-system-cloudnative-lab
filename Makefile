@@ -269,5 +269,6 @@ ci:
 	$(MAKE) vet
 	$(MAKE) test-race
 	$(MAKE) test-redis
+	$(MAKE) test-order-timeout
 	$(MAKE) lint
 	$(MAKE) migrate-validate
