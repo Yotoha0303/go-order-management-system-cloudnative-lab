@@ -136,3 +136,23 @@ biz_type 说明：
 1. `(user_id, idempotency_key)` 为复合唯一索引，不同用户可使用相同 Key
 2. request_hash 用于识别同一 Key 是否被不同请求内容复用
 3. order_id 关联成功创建的订单，status 区分创建中和已创建
+
+## 8. order_timeout_outbox 订单超时 Outbox 表
+
+用途：保证订单创建成功时一定留下可重试的 RabbitMQ 超时事件。
+
+核心字段：
+
+- event_id：消息唯一标识
+- order_id：订单 ID，每个订单唯一一条超时事件
+- user_id：订单所属用户
+- timeout_at：订单超时截止时间
+- published_at：RabbitMQ Confirm 后的发布时间
+- attempts / next_attempt_at / last_error：发布重试状态
+
+设计说明：
+
+1. Outbox 与订单、扣库存、库存流水在同一事务中写入
+2. `(published_at, next_attempt_at)` 索引支持发布器扫描待发送事件
+3. `order_id` 唯一约束防止幂等重放创建重复超时事件
+4. Publisher Confirm 成功后才更新 `published_at`，失败事件按时间重试

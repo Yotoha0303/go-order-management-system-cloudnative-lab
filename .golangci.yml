@@ -19,6 +19,8 @@ linters:
 
   exclusions:
     generated: strict
+    paths:
+      - ^fronted/node_modules/
     presets:
       - common-false-positives
       - std-error-handling

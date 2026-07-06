@@ -10,15 +10,15 @@
 
 除健康检查、注册和登录外，以下业务接口均要求请求头：`Authorization: Bearer <access_token>`。
 
-## 2. 商品模块（需要鉴权）
+## 2. 商品模块
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | /api/v1/products | 创建商品 |
-| GET | /api/v1/products | 查询商品列表；`status` 支持 `1`、`2`、`all`，默认 `2`；可选 `page/page_size`，page_size 最大 100 |
-| GET | /api/v1/products/:id | 查询商品详情 |
-| PATCH | /api/v1/products/:id/on-sale | 商品上架 |
-| PATCH | /api/v1/products/:id/off-sale | 商品下架 |
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | /api/v1/products | 管理员 | 创建商品 |
+| GET | /api/v1/products | 登录用户 | 查询商品列表；`status` 支持 `1`、`2`、`all`，默认 `2`；可选 `page/page_size`，page_size 最大 100 |
+| GET | /api/v1/products/:id | 登录用户 | 查询商品详情 |
+| PATCH | /api/v1/products/:id/on-sale | 管理员 | 商品上架 |
+| PATCH | /api/v1/products/:id/off-sale | 管理员 | 商品下架 |
 
 兼容说明：不传 `page` 和 `page_size` 时，商品列表的 `data` 仍为数组。传任一分页参数时，`data` 为：
 
@@ -26,19 +26,19 @@
 {"products":[],"total":0,"page":1,"page_size":20}
 ```
 
-## 3. 库存模块（需要鉴权）
+## 3. 库存模块
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | /api/v1/inventory/init | 初始化库存 |
-| POST | /api/v1/inventory/add | 增加库存 |
-| GET | /api/v1/inventory/products/:product_id | 查询商品库存 |
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| POST | /api/v1/inventory/init | 管理员 | 初始化库存 |
+| POST | /api/v1/inventory/add | 管理员 | 增加库存 |
+| GET | /api/v1/inventory/products/:product_id | 登录用户 | 查询商品库存 |
 
-## 4. 库存流水模块（需要鉴权）
+## 4. 库存流水模块
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | /api/v1/stock-logs | 查询库存流水，product_id 可选 |
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | /api/v1/stock-logs | 管理员 | 查询库存流水，product_id 可选 |
 
 ## 5. 用户与鉴权模块
 
@@ -49,6 +49,8 @@
 | GET | /api/v1/users/me | Bearer JWT | 查询当前用户 |
 | PUT | /api/v1/users/me/profile | Bearer JWT | 修改当前用户昵称 |
 | PATCH | /api/v1/users/me/password | Bearer JWT | 修改当前用户密码 |
+
+登录和当前用户接口的用户对象包含 `roles` 字段，例如 `"roles":["user"]`。前端可据此隐藏管理入口，但最终权限判断以后端为准。
 
 ## 6. 订单模块
 
@@ -64,3 +66,15 @@
 订单列表响应的 `data` 结构为：`{"orders":[],"total":0,"page":1,"page_size":20}`。`total` 仅统计当前登录用户的订单。
 
 鉴权请求头：`Authorization: Bearer <access_token>`。未登录返回 401；访问其他用户订单返回 404，避免暴露订单是否存在。
+
+## 7. 订单运营 AI 助手
+
+| 方法 | 路径 | 权限 | 说明 |
+| --- | --- | --- | --- |
+| POST | /api/v1/admin/assistant/chat | 管理员 | 自然语言查询低库存或订单状态统计 |
+
+请求：`{"message":"查询低库存商品"}`。
+
+模型只返回结构化 `intent + arguments`；数据库查询、参数校验和权限控制由 Go 后端执行。第一版禁止写操作和任意 SQL。
+
+管理员接口在角色不足时返回 403；角色查询失败时返回 500，避免把系统故障误判为无权限。

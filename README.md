@@ -1,6 +1,6 @@
 # Go 订单库存一致性管理服务
 
-> 一个面向 Go 后端求职展示的订单库存业务服务，重点演示事务一致性、并发库存扣减、用户级幂等、订单状态机、用户数据隔离、Redis 缓存和基础工程化能力。
+> 一个面向 Go 后端求职展示的订单库存业务服务，重点演示事务一致性、并发库存扣减、用户级幂等、订单状态机、RabbitMQ 延迟取消、用户数据隔离、Redis 缓存和基础工程化能力。
 
 本项目不是完整商城系统，不刻意堆购物车、支付、物流、优惠券等外围功能；项目重点是把后端开发中最容易被问到、也最能体现工程能力的订单库存主链路做扎实。
 
@@ -11,7 +11,7 @@
 | 项目定位 | Go 订单库存一致性管理服务 |
 | 适合场景 | Go 后端求职项目、事务/锁/幂等/状态机训练、业务后端项目展示 |
 | 核心主链路 | 登录用户创建订单 → 校验幂等 Key → 事务扣减库存 → 写入订单明细与库存流水 → 状态流转 |
-| 主要后端能力 | Gin、GORM、MySQL 事务、行锁、条件更新、JWT、Redis cache-aside、Docker、CI |
+| 主要后端能力 | Gin、GORM、MySQL 事务、行锁、条件更新、RabbitMQ、Outbox、JWT、Redis cache-aside、Docker、CI |
 | 展示重点 | 不是 CRUD 数量，而是业务一致性、并发安全、数据隔离和工程化完整度 |
 
 ## 核心业务闭环
@@ -42,6 +42,7 @@ flowchart LR
 | 订单越权访问 | 订单查询和状态变更同时匹配当前登录用户 `user_id` | 防止用户访问或操作他人订单 |
 | 非法订单状态流转 | service 层状态机 + DAO 条件状态更新 | 限制待支付、已支付、已完成、已取消之间的合法流转 |
 | 商品详情重复查询 | Redis cache-aside 缓存 + 商品上下架删除缓存 | 减少热点商品详情对 MySQL 的重复访问 |
+| 待支付订单长期占用库存 | 事务 Outbox + RabbitMQ TTL/DLX + 幂等消费者 | 订单创建 30 分钟后仍未支付则自动取消并回补库存 |
 
 ## 核心功能
 
@@ -78,6 +79,17 @@ flowchart LR
 - 支付、完成、取消订单
 - 取消待支付订单时回滚库存
 - 订单状态机限制非法状态流转
+- 待支付超过 30 分钟后由 RabbitMQ 触发自动取消和库存回补
+- 创建订单与超时 Outbox 同事务提交，发布使用 Publisher Confirm，消费使用手动 ACK
+
+### 订单运营 AI 助手
+
+- 管理员通过 `POST /api/v1/admin/assistant/chat` 使用自然语言查询运营数据
+- Structured Output 将模型输出限制为 `intent + arguments`
+- Go 后端使用只读白名单 ToolRegistry 执行低库存和订单状态统计
+- 复用现有 JWT 与 RBAC，普通用户不能触发 LLM 或访问运营数据
+- 记录 provider、model、token、耗时、状态和错误码，不保存请求正文和工具结果
+- `mock` 模式不访问外网；`chat_completions` 模式使用可配置的 HTTP endpoint
 
 ### 前端管理台
 
@@ -93,6 +105,7 @@ flowchart LR
 - Gin + GORM
 - MySQL 8.4
 - Redis 7.2
+- RabbitMQ 4.1
 - JWT
 - Goose 数据库迁移
 - YAML + godotenv 配置
@@ -127,6 +140,7 @@ internal/dao/             数据库访问层
 internal/handler/         HTTP 接口层
 internal/middleware/      请求 ID、日志、超时和恢复中间件
 internal/model/           GORM 数据模型
+internal/ordertimeout/    RabbitMQ 延迟拓扑、Outbox 发布和超时消费
 internal/request/         请求参数和校验规则
 internal/response/        统一响应结构
 internal/service/         业务规则、状态机和事务
@@ -135,7 +149,7 @@ migrations/               Goose SQL 迁移
 pkg/database/             MySQL 初始化与连接池
 pkg/redis/                Redis 客户端初始化
 router/                   路由注册
-compose.yml               应用、MySQL、Redis 编排
+compose.yml               应用、MySQL、Redis、RabbitMQ 编排
 Dockerfile                应用镜像多阶段构建
 Makefile                  开发、测试、Docker 和迁移命令入口
 ```
@@ -167,6 +181,8 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 | `orders` | 订单主表 | `user_id` 归属隔离、`order_no` 唯一、订单状态机 |
 | `order_items` | 订单明细表 | 保存商品名称、价格快照和数量 |
 | `order_idempotency_keys` | 订单幂等表 | `(user_id, idempotency_key)` 复合唯一索引 + `request_hash` |
+| `order_timeout_outbox` | 订单超时 Outbox | 与订单同事务写入，记录发布时间、重试次数和超时截止点 |
+| `ai_call_logs` | AI 调用审计表 | request ID 唯一、token/耗时/状态元数据，不保存敏感正文 |
 
 详细表结构见：[docs/table_design.md](docs/table_design.md)
 
@@ -185,8 +201,9 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 - 启动时使用 PingContext 检查 MySQL 连通性
 - 请求层使用 Request ID、Access Log、Recovery 和超时中间件
 - Redis 不可用时商品详情缓存自动降级，不影响主流程
+- RabbitMQ 使用 TTL + DLX 延迟投递；发布端 Confirm、消费端手动 ACK，重复消息由订单状态条件更新消解
 - Dockerfile 使用多阶段构建和非 root 用户运行应用
-- Docker Compose 编排应用、MySQL 和 Redis，并通过健康检查控制依赖启动顺序
+- Docker Compose 编排应用、MySQL、Redis 和 RabbitMQ，并通过健康检查控制依赖启动顺序
 - Goose 管理数据库版本，Makefile 统一封装开发、测试、Docker 和迁移命令
 - CI 覆盖 go test、go test -race、go vet、golangci-lint、goose validate 和 go build
 
@@ -213,7 +230,15 @@ MYSQL_PASSWORD=your-password
 JWT_SECRET=replace-with-at-least-32-random-characters
 JWT_EXPIRE_HOURS=24
 REDIS_PASSWORD=
+RABBITMQ_URL=amqp://order_app:order_dev_password@127.0.0.1:5672/
+ORDER_TIMEOUT_DELAY=30m
+ASSISTANT_TIMEOUT=4s
+LLM_MODE=mock
+LLM_PROVIDER=mock
+LLM_MAX_RESPONSE_BYTES=1048576
 ```
+
+使用真实模型时额外设置 `LLM_MODE=chat_completions`、`LLM_ENDPOINT`、`LLM_MODEL` 和 `LLM_API_KEY`。API Key 只能来自环境变量或部署 Secret。
 
 不要提交真实 `.env`，可从 [.env.example](.env.example) 复制后修改。
 
@@ -250,7 +275,7 @@ $env:JWT_SECRET = "replace-with-at-least-32-random-characters"
 make docker-up
 ```
 
-`make docker-up` 会构建应用镜像，启动 MySQL、Redis 和应用，并执行数据库迁移。
+`make docker-up` 会构建应用镜像，启动 MySQL、Redis、RabbitMQ 和应用，并执行数据库迁移。
 
 ### 本地运行前端
 
@@ -266,7 +291,7 @@ npm run dev
 
 | 命令 | 作用 |
 | --- | --- |
-| `make infra-up` | 仅启动 MySQL 和 Redis，并等待健康 |
+| `make infra-up` | 仅启动 MySQL、Redis 和 RabbitMQ，并等待健康 |
 | `make infra-down` | 停止 Compose 项目 |
 | `make migrate-validate` | 静态校验迁移文件 |
 | `make migrate-status` | 查看数据库迁移状态 |
@@ -277,8 +302,11 @@ npm run dev
 | `make docker-down` | 停止并移除容器，保留数据卷 |
 | `make test` | 运行全部 Go 测试 |
 | `make test-service` | 运行 MySQL service 集成测试 |
+| `make test-dao` | 运行关键 DAO MySQL 集成测试 |
+| `make test-migrations` | 在隔离数据库实跑迁移和回滚 |
 | `make test-redis` | 运行 Redis 集成测试 |
-| `make test-all` | 运行普通测试、MySQL service 测试和 Redis 集成测试 |
+| `make test-order-timeout` | 运行 RabbitMQ + MySQL 订单超时端到端测试 |
+| `make test-all` | 运行普通测试、MySQL service/DAO/迁移测试和 Redis 集成测试 |
 | `make test-race` | 使用 race detector 运行测试 |
 | `make check` | 执行格式化、模块校验、vet 和测试 |
 
@@ -310,6 +338,7 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - [docs/project_evolution.md](docs/project_evolution.md)：后续演进
 - [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
 - [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
+- [docs/http/assistant.http](docs/http/assistant.http)：管理员 AI 助手接口示例
 
 ## 当前边界与后续演进
 
@@ -321,6 +350,5 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - 增加订单列表分页、状态筛选和时间范围筛选
 - 增加 handler 业务接口测试和 DAO 测试
 - 增加 Prometheus 指标、结构化日志字段规范和链路追踪
-- 引入订单超时自动取消任务
 - 为幂等记录增加过期清理策略
 - 增加操作日志，记录管理员对商品与库存的变更

@@ -153,7 +153,7 @@ internal/service/*_test.go
 执行方式：
 
 ```bash
-go test -v ./...
+make test-service
 ```
 
 测试内容：
@@ -164,8 +164,86 @@ go test -v ./...
 - [x] 订单支付、完成、取消状态流转
 - [x] 已取消订单重复取消不会重复回滚库存
 - [x] 关键异常链路返回预期业务错误
+- [x] 注册用户和默认角色在同一事务内成功或回滚
+- [x] 修改密码后旧密码失效、新密码可登录
 
-## 5. Redis 缓存集成测试
+## 5. Handler 业务接口测试
+
+测试文件位置：
+
+```text
+internal/handler/*_test.go
+```
+
+执行方式：
+
+```bash
+go test -v ./internal/handler
+```
+
+最小测试内容：
+
+- [x] 创建订单时正确传递当前用户、幂等键和商品明细
+- [x] 非法请求在调用 service 前返回 400
+- [x] service 业务错误正确映射为 HTTP 状态码和业务错误码
+
+## 6. DAO MySQL 集成测试
+
+测试文件位置：
+
+```text
+internal/dao/dao_integration_test.go
+```
+
+执行方式：
+
+```bash
+make test-dao
+```
+
+测试内容：
+
+- [x] 用户角色变更后查询立即生效
+- [x] 条件扣库存不会把库存扣成负数
+- [x] 订单查询和状态修改强制校验用户归属
+- [x] AI 助手低库存查询使用真实 MySQL JOIN、阈值、排序和 limit
+- [x] AI 助手订单状态使用数据库分组和半开时间区间
+- [x] AI 调用日志写入真实 MySQL
+
+## 7. 数据库迁移集成测试
+
+执行方式：
+
+```bash
+make test-migrations
+```
+
+测试内容：
+
+- [x] 在隔离数据库执行全部迁移和回滚
+- [x] 存量用户自动回填 `user` 角色
+- [x] `user_roles` 外键完整创建
+- [x] `ai_call_logs` 字段和三个审计索引完整创建
+- [x] `order_timeout_outbox` 字段和订单外键完整创建
+
+## 8. RabbitMQ 订单超时取消测试
+
+执行方式：
+
+```bash
+make test-order-timeout
+```
+
+- [x] 创建订单与超时 Outbox 同事务提交，失败整体回滚
+- [x] 超时截止时间为订单创建时间加 30 分钟
+- [x] 超时取消回补库存并写入一条回滚流水
+- [x] 重复超时消息不重复回补库存
+- [x] 已支付订单收到超时消息保持已支付
+- [x] MySQL Outbox 截止时间作为事实源，提前投递不能取消订单
+- [x] RabbitMQ 消息 expiration 使用剩余毫秒，已过期事件最小为 1ms
+- [x] 非法或带未知字段的消息进入失败队列
+
+## 9. Redis 缓存集成测试
 
 
 测试文件位置：
@@ -188,7 +266,18 @@ RUN_REDIS_TEST=1 go test -v ./internal/bizcache
 - [x] TTL 正常  
 - [x] 接口层手动验证上下架删除缓存
 
-## 6. React 前端自动化测试
+## 10. AI 助手自动化测试
+
+测试内容：
+
+- [x] Structured Output 严格拒绝未知、重复和非对象字段
+- [x] ToolRegistry 拒绝未知意图和重名工具
+- [x] 两个只读工具覆盖默认值、边界、空数据、错误和取消
+- [x] 401/403 在 LLM 调用之前终止
+- [x] Handler 覆盖 400/401/403/422/502/504 映射
+- [x] 调用日志不保存 message、prompt、tool arguments 或 tool result
+
+## 11. React 前端自动化测试
 
 测试文件位置：
 

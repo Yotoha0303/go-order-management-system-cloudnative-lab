@@ -11,6 +11,7 @@
 - 用户重复提交同一订单请求时，不能重复创建订单或重复扣库存。
 - 用户只能查询和操作自己的订单。
 - 订单状态只能按业务规则流转，不能随意修改。
+- 待支付订单超过 30 分钟后自动取消并释放库存。
 
 ## 2. 创建订单流程
 
@@ -47,6 +48,7 @@ sequenceDiagram
         end
         S->>DB: 更新订单总金额
         S->>DB: 完成幂等记录并关联 order_id
+        S->>DB: 写入 order_timeout_outbox
         S->>DB: COMMIT
     end
     S-->>H: 返回订单
@@ -66,6 +68,7 @@ sequenceDiagram
 7. 写入库存流水。
 8. 更新订单总金额。
 9. 更新幂等记录为已创建并关联订单 ID。
+10. 写入订单超时 Outbox，截止时间为订单创建时间加 30 分钟。
 
 这样可以避免以下不一致状态：
 
@@ -141,6 +144,7 @@ stateDiagram-v2
     待支付 --> 已支付: pay
     已支付 --> 已完成: finish
     待支付 --> 已取消: cancel
+    待支付 --> 已取消: timeout 30m
     已完成 --> [*]
     已取消 --> [*]
 ```
@@ -153,7 +157,31 @@ stateDiagram-v2
 - 待支付订单不能直接完成。
 - 已完成订单不能回退到已支付。
 
-## 7. 用户数据隔离
+## 7. RabbitMQ 超时取消链路
+
+```mermaid
+sequenceDiagram
+    participant DB as MySQL Outbox
+    participant P as Outbox Publisher
+    participant MQ as RabbitMQ TTL/DLX
+    participant C as Timeout Consumer
+    participant S as OrderService
+
+    P->>DB: 轮询未发布事件
+    P->>MQ: 持久化发布，expiration=剩余毫秒
+    MQ-->>P: Publisher Confirm
+    P->>DB: 标记 published_at
+    MQ->>MQ: 到期后死信路由到 cancel queue
+    MQ->>C: 投递超时事件
+    C->>S: CancelExpiredOrder(order_id)
+    S->>DB: 条件更新 pending -> cancelled
+    S->>DB: 事务回补库存并写库存流水
+    C-->>MQ: 手动 ACK
+```
+
+RabbitMQ 不可用时订单创建不受影响，事件保留在 Outbox 中等待重试。发布确认前不会标记已发布；消费者处理成功前不会 ACK。重复发布或重复消费不会重复回补库存。
+
+## 8. 用户数据隔离
 
 订单相关读写必须绑定当前登录用户：
 
