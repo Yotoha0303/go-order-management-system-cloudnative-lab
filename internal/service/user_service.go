@@ -30,6 +30,7 @@ var (
 	ErrOldPasswordIncorrect   = apperror.New(http.StatusBadRequest, response.CodeUpdateUserPasswordFailed, "原密码错误")
 	ErrPasswordUpdateConflict = apperror.New(http.StatusConflict, response.CodeUpdateUserPasswordFailed, "密码已被其他请求修改，请重试")
 	ErrDatabaseNotInitialized = apperror.New(http.StatusInternalServerError, response.CodeDatabaseNotInitialized, "数据库未初始化")
+	ErrDefaultRoleNotFound    = apperror.New(http.StatusInternalServerError, response.CodeUserRoleNotFound, "默认用户角色未配置")
 )
 
 type UserService struct{ db *gorm.DB }
@@ -72,9 +73,30 @@ func (s *UserService) Register(ctx context.Context, req request.RegisterRequest)
 		Nickname:     username,
 		Status:       model.UserStatusActive,
 	}
-	if err := dao.CreateUser(ctx, s.db, user); err != nil {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := dao.CreateUser(ctx, tx, user); err != nil {
+			return err
+		}
+
+		role, err := dao.GetRoleByRoleName(ctx, tx, model.RoleUser)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrDefaultRoleNotFound
+			}
+			return apperror.Wrap(http.StatusInternalServerError, response.CodeUserRoleNotFound, "查询默认用户角色失败", err)
+		}
+		if err := dao.CreateUserRole(ctx, tx, user.ID, role.ID); err != nil {
+			return apperror.Wrap(http.StatusInternalServerError, response.CodeCreateUserRoleFailed, "创建用户角色失败", err)
+		}
+		return nil
+	})
+	if err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return ErrUsernameAlreadyExists
+		}
+		var appErr *apperror.AppError
+		if errors.As(err, &appErr) {
+			return err
 		}
 		return apperror.Wrap(http.StatusInternalServerError, response.CodeRegisterFailed, "注册失败", err)
 	}
@@ -103,6 +125,9 @@ func (s *UserService) Login(ctx context.Context, req request.LoginRequest) (*mod
 		return nil, apperror.Wrap(http.StatusInternalServerError, response.CodeLoginFailed, "登录失败", err)
 	}
 	user.LastLoginAt = &at
+	if err := s.loadRoles(ctx, user); err != nil {
+		return nil, err
+	}
 	return user, nil
 }
 
@@ -123,7 +148,19 @@ func (s *UserService) GetProfile(ctx context.Context, userID int64) (*model.User
 	if user.Status != model.UserStatusActive {
 		return nil, ErrUserDisabled
 	}
+	if err := s.loadRoles(ctx, user); err != nil {
+		return nil, err
+	}
 	return user, nil
+}
+
+func (s *UserService) loadRoles(ctx context.Context, user *model.User) error {
+	roles, err := dao.ListRoleNamesByUserID(ctx, s.db, user.ID)
+	if err != nil {
+		return apperror.Wrap(http.StatusInternalServerError, response.CodeUserRoleCheckFailed, "查询用户角色失败", err)
+	}
+	user.Roles = roles
+	return nil
 }
 
 func (s *UserService) UpdateNickname(ctx context.Context, userID int64, nickname string) error {

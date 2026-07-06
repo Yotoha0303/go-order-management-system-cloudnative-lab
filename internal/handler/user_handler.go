@@ -127,5 +127,6 @@ func userResponse(user *model.User) response.UserInfoResponse {
 		Nickname:    user.Nickname,
 		Status:      user.Status,
 		LastLoginAt: user.LastLoginAt,
+		Roles:       user.Roles,
 	}
 }

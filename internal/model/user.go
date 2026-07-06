@@ -21,6 +21,7 @@ type User struct {
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	LastLoginAt  *time.Time     `gorm:"column:last_login_at" json:"last_login_at,omitempty"`
 	DeletedAt    gorm.DeletedAt `gorm:"index:idx_users_deleted_at" json:"-"`
+	Roles        []string       `gorm:"-" json:"roles"`
 }
 
 func (User) TableName() string { return "users" }

@@ -8,6 +8,7 @@ type UserInfoResponse struct {
 	Nickname    string     `json:"nickname"`
 	Status      int8       `json:"status"`
 	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	Roles       []string   `json:"roles"`
 }
 
 type TokenAndUserInfoResponse struct {

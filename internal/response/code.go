@@ -76,3 +76,10 @@ const (
 	CodeTokenSignatureInvalid = 7007
 	CodeTokenUserInvalid      = 7008
 )
+
+const (
+	CodeUserRoleCheckFailed  = 8001
+	CodeUserRoleNotFound     = 8002
+	CodeCreateUserRoleFailed = 8003
+	CodePermissionDenied     = 8004
+)
