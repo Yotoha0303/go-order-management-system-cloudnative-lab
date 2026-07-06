@@ -6,6 +6,7 @@ export type AuthUser = {
   nickname: string
   status: number
   last_login_at?: string
+  roles: string[]
 }
 
 export type LoginResult = {
@@ -34,3 +35,8 @@ export const authApi = {
       })
     ),
 }
+
+export const currentUserQueryOptions = () => ({
+  queryKey: ['current-user'] as const,
+  queryFn: authApi.me,
+})

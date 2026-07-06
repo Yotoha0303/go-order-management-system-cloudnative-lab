@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { Loader2, LogIn } from 'lucide-react'
 import { toast } from 'sonner'
@@ -19,7 +20,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/password-input'
-import { authApi } from '@/features/auth/api'
+import { authApi, currentUserQueryOptions } from '@/features/auth/api'
 
 const formSchema = z.object({
   username: z
@@ -46,6 +47,7 @@ export function UserAuthForm({
 }: UserAuthFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { auth } = useAuthStore()
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -60,6 +62,7 @@ export function UserAuthForm({
     setIsLoading(true)
     try {
       const session = await authApi.login(data.username, data.password)
+      queryClient.setQueryData(currentUserQueryOptions().queryKey, session.user)
       auth.setUser(session.user)
       auth.setAccessToken(session.access_token)
       toast.success(

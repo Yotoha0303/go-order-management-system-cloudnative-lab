@@ -11,10 +11,20 @@ const FORM_MESSAGES = {
 const navigate = vi.fn()
 const setUserMock = vi.fn()
 const setAccessTokenMock = vi.fn()
+const setQueryDataMock = vi.hoisted(() => vi.fn())
 const loginMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>()
+  return {
+    ...actual,
+    useQueryClient: () => ({ setQueryData: setQueryDataMock }),
+  }
+})
 
 vi.mock('@/features/auth/api', () => ({
   authApi: { login: loginMock },
+  currentUserQueryOptions: () => ({ queryKey: ['current-user'] }),
 }))
 
 vi.mock('sonner', () => ({
@@ -63,7 +73,13 @@ describe('UserAuthForm', () => {
       vi.clearAllMocks()
       loginMock.mockResolvedValue({
         access_token: 'real-access-token',
-        user: { id: 1, username: 'alice', nickname: 'Alice', status: 1 },
+        user: {
+          id: 1,
+          username: 'alice',
+          nickname: 'Alice',
+          status: 1,
+          roles: ['user'],
+        },
       })
       screen = await render(<UserAuthForm />)
       usernameInput = screen.getByRole('textbox', { name: '用户名' })
@@ -100,6 +116,10 @@ describe('UserAuthForm', () => {
       )
       expect(setAccessTokenMock).toHaveBeenCalledOnce()
       expect(setAccessTokenMock).toHaveBeenCalledWith('real-access-token')
+      expect(setQueryDataMock).toHaveBeenCalledWith(
+        ['current-user'],
+        expect.objectContaining({ id: 1, username: 'alice' })
+      )
 
       await vi.waitFor(() =>
         expect(navigate).toHaveBeenCalledWith({ to: '/', replace: true })
@@ -111,7 +131,13 @@ describe('UserAuthForm', () => {
     vi.clearAllMocks()
     loginMock.mockResolvedValue({
       access_token: 'real-access-token',
-      user: { id: 1, username: 'alice', nickname: 'Alice', status: 1 },
+      user: {
+        id: 1,
+        username: 'alice',
+        nickname: 'Alice',
+        status: 1,
+        roles: ['user'],
+      },
     })
 
     const { getByRole, getByLabelText } = await render(

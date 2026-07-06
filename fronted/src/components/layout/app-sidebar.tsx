@@ -9,9 +9,10 @@ import {
   SidebarHeader,
   SidebarRail,
 } from '@/components/ui/sidebar'
-import { authApi } from '@/features/auth/api'
+import { currentUserQueryOptions } from '@/features/auth/api'
+import { isAdminUser } from '@/features/auth/permissions'
 import { AppTitle } from './app-title'
-import { sidebarData } from './data/sidebar-data'
+import { getSidebarData } from './data/sidebar-data'
 import { NavGroup } from './nav-group'
 import { NavUser } from './nav-user'
 
@@ -20,12 +21,12 @@ export function AppSidebar() {
   const user = useAuthStore((state) => state.auth.user)
   const setUser = useAuthStore((state) => state.auth.setUser)
   const profileQuery = useQuery({
-    queryKey: ['current-user'],
-    queryFn: authApi.me,
+    ...currentUserQueryOptions(),
     initialData: user ?? undefined,
     refetchOnMount: 'always',
   })
   const currentUser = user ?? profileQuery.data
+  const sidebarData = getSidebarData(isAdminUser(currentUser))
 
   useEffect(() => {
     if (profileQuery.data) setUser(profileQuery.data)

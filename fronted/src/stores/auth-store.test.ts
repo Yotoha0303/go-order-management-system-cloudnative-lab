@@ -11,6 +11,7 @@ const sampleUser = {
   username: 'alice',
   nickname: 'Alice',
   status: 1,
+  roles: ['user'],
 }
 
 describe('useAuthStore', () => {

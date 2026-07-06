@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { AssistantPage } from '@/features/assistant/assistant'
 import { requireAdmin } from '@/features/auth/require-admin'
-import { StockLogsPage } from '@/features/order-inventory/stock-logs'
 
-export const Route = createFileRoute('/_authenticated/stock-logs/')({
+export const Route = createFileRoute('/_authenticated/assistant/')({
   beforeLoad: ({ context }) => requireAdmin(context.queryClient),
-  component: StockLogsPage,
+  component: AssistantPage,
 })

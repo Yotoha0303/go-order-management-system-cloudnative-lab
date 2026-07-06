@@ -21,6 +21,7 @@ describe('api unauthorized handling', () => {
       username: 'alice',
       nickname: 'Alice',
       status: 1,
+      roles: ['user'],
     })
     api.defaults.adapter = async (config) => {
       throw new AxiosError(
