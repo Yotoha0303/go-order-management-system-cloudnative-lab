@@ -206,9 +206,6 @@ make test-dao
 - [x] 用户角色变更后查询立即生效
 - [x] 条件扣库存不会把库存扣成负数
 - [x] 订单查询和状态修改强制校验用户归属
-- [x] AI 助手低库存查询使用真实 MySQL JOIN、阈值、排序和 limit
-- [x] AI 助手订单状态使用数据库分组和半开时间区间
-- [x] AI 调用日志写入真实 MySQL
 
 ## 7. 数据库迁移集成测试
 
@@ -265,18 +262,7 @@ RUN_REDIS_TEST=1 go test -v ./internal/bizcache
 - [x] TTL 正常  
 - [x] 接口层手动验证上下架删除缓存
 
-## 10. AI 助手自动化测试
-
-测试内容：
-
-- [x] Structured Output 严格拒绝未知、重复和非对象字段
-- [x] ToolRegistry 拒绝未知意图和重名工具
-- [x] 两个只读工具覆盖默认值、边界、空数据、错误和取消
-- [x] 401/403 在 LLM 调用之前终止
-- [x] Handler 覆盖 400/401/403/422/502/504 映射
-- [x] 调用日志不保存 message、prompt、tool arguments 或 tool result
-
-## 11. React 前端自动化测试
+## 10. React 前端自动化测试
 
 测试文件位置：
 

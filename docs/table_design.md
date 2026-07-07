@@ -77,7 +77,38 @@ biz_type 说明：
 - status：1 正常，2 禁用
 - last_login_at / deleted_at：登录审计与软删除字段
 
-## 5. orders 订单表
+## 5. roles 角色表
+
+用途：保存系统内可分配的角色，当前内置 `admin` 和 `user`。
+
+核心字段：
+
+- id：角色 ID
+- role_name：唯一角色名
+- description：角色说明
+- created_at：创建时间
+
+设计说明：`role_name` 使用唯一索引，避免重复角色定义。
+
+## 6. user_roles 用户角色关联表
+
+用途：保存用户当前绑定的角色。
+
+核心字段：
+
+- id：关联记录 ID
+- user_id：用户 ID
+- role_id：角色 ID
+- created_at / updated_at：创建和更新时间
+
+设计说明：
+
+1. `user_id` 使用唯一索引，明确当前阶段每个用户只绑定一个角色
+2. `role_id` 使用普通索引，支持按角色查询用户
+3. 外键分别关联 `users` 和 `roles`
+4. 注册用户默认绑定 `user`，管理员由受控 SQL 提升
+
+## 7. orders 订单表
 
 用途：保存订单主信息。
 
@@ -108,7 +139,7 @@ biz_type 说明：
 4. `(user_id, created_at)` 索引支持当前用户订单列表
 5. 所有订单读取和状态更新都同时匹配 user_id，防止越权访问
 
-## 6. order_items 订单明细表
+## 8. order_items 订单明细表
 
 用途：保存订单中的商品明细。
 
@@ -127,7 +158,7 @@ biz_type 说明：
 2. order_id 加索引，方便查询订单详情
 3. product_id 加索引，方便分析商品销售情况
 
-## 7. order_idempotency_keys 订单幂等表
+## 9. order_idempotency_keys 订单幂等表
 
 用途：仲裁同一用户的并发创建订单请求。
 
@@ -137,7 +168,7 @@ biz_type 说明：
 2. request_hash 用于识别同一 Key 是否被不同请求内容复用
 3. order_id 关联成功创建的订单，status 区分创建中和已创建
 
-## 8. order_timeout_outbox 订单超时 Outbox 表
+## 10. order_timeout_outbox 订单超时 Outbox 表
 
 用途：保证订单创建成功时一定留下可重试的 RabbitMQ 超时事件。
 

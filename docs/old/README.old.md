@@ -1,5 +1,7 @@
 # Go 订单库存管理系统
 
+> 历史归档：本文件保留早期项目说明，不作为当前实现的事实来源。最新说明见[根目录 README](../../README.md)。
+
 > 带认证、库存扣减、订单状态机和幂等控制的 Go 订单库存管理系统
 
 这是一个面向 Go 后端求职展示的业务项目。系统围绕“用户登录后提交订单”这一主链路，解决重复请求、并发扣库存、跨用户数据访问和非法订单状态流转等真实工程问题，并提供 React 管理台用于完整演示。
@@ -25,7 +27,7 @@ flowchart LR
 | 订单状态机 | 条件状态更新，只允许待支付→已支付→已完成或待支付→已取消 | 重复操作和非法状态跳转 |
 | 创建订单幂等 | `(user_id, idempotency_key)` 唯一索引、SHA-256 请求摘要、幂等记录与订单同事务 | 网络重试或重复点击导致重复订单、重复扣库存 |
 
-项目演示、简历写法和面试讲解见 [docs/interview_guide.md](docs/interview_guide.md)。
+项目演示、简历写法和面试讲解见 [interview_guide.md](../interview_guide.md)。
 
 ## 1. 项目简介
 
@@ -212,7 +214,7 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 - orders 通过 user_id 关联订单所有者，所有查询和状态更新同时匹配 user_id
 - order_idempotency_keys 通过 `(user_id, idempotency_key)` 唯一索引仲裁并发请求，并通过 request_hash 检测 Key 复用冲突
 
-详细表结构见：[docs/table_design.md](docs/table_design.md)
+详细表结构见：[table_design.md](../table_design.md)
 
 ## 8. 核心业务规则
 
@@ -250,7 +252,7 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 - 查询商品详情时，设置商品缓存
 - 上架/下架 商品时，删除商品缓存
 
-详细规则见：[docs/business_rules.md](docs/business_rules.md)
+详细规则见：[business_rules.md](../business_rules.md)
 
 ## 9. 订单创建事务设计
 
@@ -373,11 +375,11 @@ product:detail:{product_id}
 
 ## 13. 接口清单
 
-接口说明详见：[docs/api_list.md](docs/api_list.md)
+接口说明详见：[api_list.md](../api_list.md)
 
 ## 14. 配置与环境变量
 
-应用启动时先加载 `.env`，再读取 [config.yml](config.yml)。环境变量会覆盖 YAML 中适合按环境变化的连接配置。
+应用启动时先加载 `.env`，再读取 [config.yml](../../config.yml)。环境变量会覆盖 YAML 中适合按环境变化的连接配置。
 
 ### 14.1 基础环境变量
 
@@ -392,7 +394,7 @@ REDIS_PASSWORD=
 - `JWT_SECRET`：必填，用于 HS256 签名，至少 32 个字符，不能提交真实值。
 - `JWT_EXPIRE_HOURS`：可选，覆盖 JWT 有效期，默认 24 小时。
 - `REDIS_PASSWORD`：可选；当前 Compose 中的 Redis 未启用密码认证，保持为空即可。
-- 不要提交真实的 `.env`，可从 [.env.example](.env.example) 复制后修改。
+- 不要提交真实的 `.env`，可从 [.env.example](../../.env.example) 复制后修改。
 
 ### 14.2 YAML 配置覆盖
 
@@ -537,18 +539,18 @@ make test-service
 
 Redis 集成测试前需保证 Redis 已启动，可先执行 `make infra-up`。
 
-手动接口测试文件位于 [docs/http](docs/http)，完整业务链路见 [docs/http/demo_flow.http](docs/http/demo_flow.http)。测试计划见 [docs/test_plan.md](docs/test_plan.md)。
+手动接口测试文件位于 [http](../http)，完整业务链路见 [demo_flow.http](../http/demo_flow.http)。测试计划见 [test_plan.md](../test_plan.md)。
 
 ## 17. 项目文档
 
-- [docs/api_list.md](docs/api_list.md)：接口清单
-- [docs/business_rules.md](docs/business_rules.md)：业务规则
-- [docs/table_design.md](docs/table_design.md)：数据表设计
-- [docs/test_plan.md](docs/test_plan.md)：测试计划
-- [docs/test_result.md](docs/test_result.md)：测试结果记录
-- [docs/project_evolution.md](docs/project_evolution.md)：后续演进
-- [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
-- [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
+- [api_list.md](../api_list.md)：接口清单
+- [business_rules.md](../business_rules.md)：业务规则
+- [table_design.md](../table_design.md)：数据表设计
+- [test_plan.md](../test_plan.md)：测试计划
+- [test_result.md](../test_result.md)：测试结果记录
+- [project_evolution.md](../project_evolution.md)：后续演进
+- [interview_guide.md](../interview_guide.md)：简历描述、项目讲解和面试追问
+- [evidence](../evidence)：项目运行、测试与关键业务截图证据
 
 ### 17.1 项目证据链（docs/evidence/）
 

@@ -166,6 +166,8 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 | 表 | 作用 | 关键设计 |
 | --- | --- | --- |
 | `users` | 用户表 | `username` 唯一、密码哈希、用户状态、软删除 |
+| `roles` | 角色表 | `role_name` 唯一，内置 `admin` 与 `user` |
+| `user_roles` | 用户角色关联表 | `user_id` 唯一，当前每个用户只绑定一个角色 |
 | `products` | 商品表 | `price_fen` 金额分、商品状态、默认下架 |
 | `product_inventories` | 商品库存表 | `product_id` 唯一，保证一个商品一条库存记录 |
 | `stock_logs` | 库存流水表 | 记录变更前、变更量、变更后、业务类型和业务 ID |
@@ -282,7 +284,7 @@ npm run dev
 | `make migrate-up` | 执行全部待处理迁移 |
 | `make migrate-down` | 回滚最近一条迁移 |
 | `make docker-build` | 构建应用镜像 |
-| `make docker-up` | 构建并启动应用、MySQL、Redis |
+| `make docker-up` | 构建并启动应用、MySQL、Redis、RabbitMQ |
 | `make docker-down` | 停止并移除容器，保留数据卷 |
 | `make test` | 运行全部 Go 测试 |
 | `make test-service` | 运行 MySQL service 集成测试 |
@@ -329,9 +331,8 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 
 后续可演进方向：
 
-- 增加管理员角色与商品、库存操作的 RBAC 授权
-- 增加订单列表分页、状态筛选和时间范围筛选
-- 增加 handler 业务接口测试和 DAO 测试
+- 增加订单列表状态筛选和时间范围筛选
+- 扩展 handler 边界测试和 DAO 集成测试覆盖
 - 增加 Prometheus 指标、结构化日志字段规范和链路追踪
 - 为幂等记录增加过期清理策略
 - 增加操作日志，记录管理员对商品与库存的变更
