@@ -31,15 +31,6 @@ rabbitmq:
 jwt:
   expireHours: 24
 
-assistant:
-  timeout: 15s
-  llm:
-    mode: mock
-    provider: mock
-    endpoint: ""
-    model: ""
-    maxResponseBytes: 1048576
-
 http:
   server:
     readTimeout: 5s

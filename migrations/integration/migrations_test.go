@@ -105,53 +105,6 @@ func TestMigrationsBackfillExistingUserRole(t *testing.T) {
 		t.Fatalf("expected 2 user_roles foreign keys, got %d", foreignKeyCount)
 	}
 
-	var aiCallLogColumnCount int
-	err = testDB.QueryRow(`
-		SELECT COUNT(*)
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'ai_call_logs'
-	`, databaseName).Scan(&aiCallLogColumnCount)
-	if err != nil {
-		t.Fatalf("query ai_call_logs columns failed: %v", err)
-	}
-	if aiCallLogColumnCount != 14 {
-		t.Fatalf("expected 14 ai_call_logs columns, got %d", aiCallLogColumnCount)
-	}
-
-	var aiCallLogIndexCount int
-	err = testDB.QueryRow(`
-		SELECT COUNT(DISTINCT INDEX_NAME)
-		FROM information_schema.STATISTICS
-		WHERE TABLE_SCHEMA = ?
-		  AND TABLE_NAME = 'ai_call_logs'
-		  AND INDEX_NAME IN (
-		      'uk_ai_call_logs_request_id',
-		      'idx_ai_call_logs_user_created',
-		      'idx_ai_call_logs_status_created'
-		  )
-	`, databaseName).Scan(&aiCallLogIndexCount)
-	if err != nil {
-		t.Fatalf("query ai_call_logs indexes failed: %v", err)
-	}
-	if aiCallLogIndexCount != 3 {
-		t.Fatalf("expected 3 ai_call_logs indexes, got %d", aiCallLogIndexCount)
-	}
-
-	var orderAssistantIndexCount int
-	err = testDB.QueryRow(`
-		SELECT COUNT(DISTINCT INDEX_NAME)
-		FROM information_schema.STATISTICS
-		WHERE TABLE_SCHEMA = ?
-		  AND TABLE_NAME = 'orders'
-		  AND INDEX_NAME = 'idx_orders_created_at_status'
-	`, databaseName).Scan(&orderAssistantIndexCount)
-	if err != nil {
-		t.Fatalf("query assistant order index failed: %v", err)
-	}
-	if orderAssistantIndexCount != 1 {
-		t.Fatalf("expected assistant order index, got %d", orderAssistantIndexCount)
-	}
-
 	var orderTimeoutColumnCount int
 	err = testDB.QueryRow(`
 		SELECT COUNT(*)

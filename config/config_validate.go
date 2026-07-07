@@ -104,12 +104,5 @@ func (c Config) Validate() error {
 		return err
 	}
 
-	if err := c.Assistant.Validate(); err != nil {
-		return err
-	}
-	if err := validateAssistantHTTPTimeout(c.Assistant.Timeout, http.Timeout); err != nil {
-		return err
-	}
-
 	return nil
 }

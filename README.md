@@ -82,15 +82,6 @@ flowchart LR
 - 待支付超过 30 分钟后由 RabbitMQ 触发自动取消和库存回补
 - 创建订单与超时 Outbox 同事务提交，发布使用 Publisher Confirm，消费使用手动 ACK
 
-### 订单运营 AI 助手
-
-- 管理员通过 `POST /api/v1/admin/assistant/chat` 使用自然语言查询运营数据
-- Structured Output 将模型输出限制为 `intent + arguments`
-- Go 后端使用只读白名单 ToolRegistry 执行低库存和订单状态统计
-- 复用现有 JWT 与 RBAC，普通用户不能触发 LLM 或访问运营数据
-- 记录 provider、model、token、耗时、状态和错误码，不保存请求正文和工具结果
-- `mock` 模式不访问外网；`chat_completions` 模式使用可配置的 HTTP endpoint
-
 ### 前端管理台
 
 - React 管理台已接入商品、库存、库存流水、订单和用户资料接口
@@ -182,7 +173,6 @@ Makefile                  开发、测试、Docker 和迁移命令入口
 | `order_items` | 订单明细表 | 保存商品名称、价格快照和数量 |
 | `order_idempotency_keys` | 订单幂等表 | `(user_id, idempotency_key)` 复合唯一索引 + `request_hash` |
 | `order_timeout_outbox` | 订单超时 Outbox | 与订单同事务写入，记录发布时间、重试次数和超时截止点 |
-| `ai_call_logs` | AI 调用审计表 | request ID 唯一、token/耗时/状态元数据，不保存敏感正文 |
 
 详细表结构见：[docs/table_design.md](docs/table_design.md)
 
@@ -232,13 +222,7 @@ JWT_EXPIRE_HOURS=24
 REDIS_PASSWORD=
 RABBITMQ_URL=amqp://order_app:order_dev_password@127.0.0.1:5672/
 ORDER_TIMEOUT_DELAY=30m
-ASSISTANT_TIMEOUT=4s
-LLM_MODE=mock
-LLM_PROVIDER=mock
-LLM_MAX_RESPONSE_BYTES=1048576
 ```
-
-使用真实模型时额外设置 `LLM_MODE=chat_completions`、`LLM_ENDPOINT`、`LLM_MODEL` 和 `LLM_API_KEY`。API Key 只能来自环境变量或部署 Secret。
 
 不要提交真实 `.env`，可从 [.env.example](.env.example) 复制后修改。
 
@@ -338,7 +322,6 @@ service 测试会清理所连接数据库中的业务表。必须使用独立测
 - [docs/project_evolution.md](docs/project_evolution.md)：后续演进
 - [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
 - [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
-- [docs/http/assistant.http](docs/http/assistant.http)：管理员 AI 助手接口示例
 
 ## 当前边界与后续演进
 

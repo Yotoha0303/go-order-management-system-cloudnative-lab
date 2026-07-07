@@ -83,12 +83,3 @@ const (
 	CodeCreateUserRoleFailed = 8003
 	CodePermissionDenied     = 8004
 )
-
-const (
-	CodeAssistantInvalidRequest       = 9001
-	CodeAssistantUnknownIntent        = 9002
-	CodeAssistantInvalidModelResponse = 9003
-	CodeAssistantLLMUnavailable       = 9004
-	CodeAssistantToolFailed           = 9005
-	CodeAssistantInternalError        = 9006
-)

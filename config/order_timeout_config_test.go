@@ -94,13 +94,6 @@ func TestLoadProjectConfigUsesNestedRabbitMQOrderTimeout(t *testing.T) {
 	for _, name := range []string{
 		"RABBITMQ_URL",
 		"ORDER_TIMEOUT_DELAY",
-		"ASSISTANT_TIMEOUT",
-		"LLM_MODE",
-		"LLM_PROVIDER",
-		"LLM_ENDPOINT",
-		"LLM_MODEL",
-		"LLM_API_KEY",
-		"LLM_MAX_RESPONSE_BYTES",
 	} {
 		t.Setenv(name, "")
 	}

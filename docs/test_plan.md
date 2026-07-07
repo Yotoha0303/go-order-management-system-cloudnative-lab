@@ -223,7 +223,6 @@ make test-migrations
 - [x] 在隔离数据库执行全部迁移和回滚
 - [x] 存量用户自动回填 `user` 角色
 - [x] `user_roles` 外键完整创建
-- [x] `ai_call_logs` 字段和三个审计索引完整创建
 - [x] `order_timeout_outbox` 字段和订单外键完整创建
 
 ## 8. RabbitMQ 订单超时取消测试

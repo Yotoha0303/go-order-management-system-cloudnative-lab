@@ -1,5 +1,4 @@
 import {
-  Bot,
   History,
   LayoutDashboard,
   Package,
@@ -44,11 +43,6 @@ export function getSidebarData(isAdmin: boolean): SidebarData {
                   title: '库存流水',
                   url: '/stock-logs',
                   icon: History,
-                },
-                {
-                  title: 'AI 运营助手',
-                  url: '/assistant',
-                  icon: Bot,
                 },
               ]
             : []),

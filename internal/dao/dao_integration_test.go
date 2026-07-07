@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"go-order-management-system/config"
-	"go-order-management-system/internal/assistant"
-	"go-order-management-system/internal/assistantadapter"
 	"go-order-management-system/internal/dao"
 	"go-order-management-system/internal/model"
 
@@ -128,81 +126,6 @@ func TestCriticalDAOQueries(t *testing.T) {
 		}
 	})
 
-	t.Run("assistant queries and call log use real MySQL", func(t *testing.T) {
-		products := []model.Product{
-			{Name: "low-1", PriceFen: 100, Status: model.ProductStatusOnSale},
-			{Name: "low-2", PriceFen: 200, Status: model.ProductStatusOnSale},
-			{Name: "enough", PriceFen: 300, Status: model.ProductStatusOnSale},
-		}
-		if err := db.Create(&products).Error; err != nil {
-			t.Fatalf("seed assistant products failed: %v", err)
-		}
-		inventories := []model.Inventory{
-			{ProductID: products[0].ID, StockQuantity: 2},
-			{ProductID: products[1].ID, StockQuantity: 5},
-			{ProductID: products[2].ID, StockQuantity: 20},
-		}
-		if err := db.Create(&inventories).Error; err != nil {
-			t.Fatalf("seed assistant inventory failed: %v", err)
-		}
-		now := time.Now().Add(24 * time.Hour).Truncate(time.Second)
-		orders := []model.Order{
-			{UserID: owner.ID, OrderNo: "ASSISTANT-1", TotalAmountFen: 100, Status: model.OrderStatusPending, CreatedAt: now},
-			{UserID: owner.ID, OrderNo: "ASSISTANT-2", TotalAmountFen: 100, Status: model.OrderStatusPaid, CreatedAt: now},
-			{UserID: owner.ID, OrderNo: "ASSISTANT-3", TotalAmountFen: 100, Status: model.OrderStatusPaid, CreatedAt: now},
-			{UserID: owner.ID, OrderNo: "ASSISTANT-OLD", TotalAmountFen: 100, Status: model.OrderStatusFinished, CreatedAt: now.Add(-48 * time.Hour)},
-		}
-		if err := db.Create(&orders).Error; err != nil {
-			t.Fatalf("seed assistant orders failed: %v", err)
-		}
-
-		repository, err := assistantadapter.NewMySQLRepository(db)
-		if err != nil {
-			t.Fatalf("new assistant repository failed: %v", err)
-		}
-		lowStock, err := repository.ListLowStockProducts(ctx, 5, 10)
-		if err != nil {
-			t.Fatalf("list low stock failed: %v", err)
-		}
-		if len(lowStock) != 2 || lowStock[0].ProductID != products[0].ID || lowStock[1].ProductID != products[1].ID {
-			t.Fatalf("unexpected low stock result: %+v", lowStock)
-		}
-
-		counts, err := repository.SummarizeOrderStatus(ctx, now.Add(-time.Hour), now.Add(time.Hour))
-		if err != nil {
-			t.Fatalf("summarize order status failed: %v", err)
-		}
-		countByStatus := make(map[assistant.OrderStatus]int64, len(counts))
-		for _, count := range counts {
-			countByStatus[count.Status] = count.Count
-		}
-		if countByStatus[assistant.OrderStatusPending] != 1 || countByStatus[assistant.OrderStatusPaid] != 2 {
-			t.Fatalf("unexpected order counts: %+v", counts)
-		}
-
-		call := assistant.AICallLog{
-			RequestID:   "assistant-dao-request",
-			UserID:      owner.ID,
-			Intent:      assistant.IntentGetLowStockProducts,
-			ToolName:    string(assistant.IntentGetLowStockProducts),
-			Provider:    "test",
-			Model:       "test-model",
-			TotalTokens: 12,
-			LatencyMS:   5,
-			Status:      assistant.CallStatusSuccess,
-			CreatedAt:   now,
-		}
-		if err := repository.Save(ctx, call); err != nil {
-			t.Fatalf("save assistant call log failed: %v", err)
-		}
-		var stored model.AICallLog
-		if err := db.Where("request_id = ?", call.RequestID).First(&stored).Error; err != nil {
-			t.Fatalf("query assistant call log failed: %v", err)
-		}
-		if stored.UserID != owner.ID || stored.TotalTokens != 12 || stored.Status != string(assistant.CallStatusSuccess) {
-			t.Fatalf("unexpected assistant call log: %+v", stored)
-		}
-	})
 }
 
 func setupIsolatedDAOTestDB(t *testing.T) *gorm.DB {
@@ -267,7 +190,6 @@ func setupIsolatedDAOTestDB(t *testing.T) *gorm.DB {
 		&model.Inventory{},
 		&model.Order{},
 		&model.Product{},
-		&model.AICallLog{},
 		&model.OrderTimeoutOutbox{},
 	); err != nil {
 		t.Fatalf("migrate isolated database failed: %v", err)

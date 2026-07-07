@@ -11,13 +11,12 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig    `yaml:"server"`
-	MySQL      MySQLConfig     `yaml:"mysql"`
-	Redis      RedisConfig     `yaml:"redis"`
-	RabbitMQ   RabbitMQConfig  `yaml:"rabbitmq"`
-	JWT        JWTConfig       `yaml:"jwt"`
-	HttpServer HttpServer      `yaml:"http"`
-	Assistant  AssistantConfig `yaml:"assistant"`
+	Server     ServerConfig   `yaml:"server"`
+	MySQL      MySQLConfig    `yaml:"mysql"`
+	Redis      RedisConfig    `yaml:"redis"`
+	RabbitMQ   RabbitMQConfig `yaml:"rabbitmq"`
+	JWT        JWTConfig      `yaml:"jwt"`
+	HttpServer HttpServer     `yaml:"http"`
 }
 
 type ServerConfig struct {
@@ -129,10 +128,6 @@ func applyEnvOverrides(cfg *Config) error {
 			return fmt.Errorf("invalid JWT_EXPIRE_HOURS: %w", err)
 		}
 		cfg.JWT.ExpireHours = hours
-	}
-
-	if err := applyAssistantEnvOverrides(&cfg.Assistant); err != nil {
-		return err
 	}
 
 	return nil
