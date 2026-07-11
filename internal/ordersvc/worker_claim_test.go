@@ -71,7 +71,9 @@ func TestClaimPendingUsesExclusiveLeases(t *testing.T) {
 		t.Fatalf("unexpected lease distribution: %#v", ownerCounts)
 	}
 
-	if err := db.Table(TimeoutOutbox{}.TableName()).Update("lease_until", time.Now().Add(-time.Second)).Error; err != nil {
+	if err := db.Table(TimeoutOutbox{}.TableName()).
+		Where("id > 0").
+		Update("lease_until", time.Now().Add(-time.Second)).Error; err != nil {
 		t.Fatalf("expire leases: %v", err)
 	}
 	workerThree := &Worker{
@@ -93,8 +95,8 @@ func openOutboxLeaseTestDB(t *testing.T) *gorm.DB {
 		t.Skip("set RUN_MYSQL_TEST=1 to run MySQL integration tests")
 	}
 
-	host := envOr("MYSQL_TEST_HOST", "127.0.0.1")
-	port := envOr("MYSQL_TEST_PORT", "3306")
+	host := outboxTestEnvOr("MYSQL_TEST_HOST", "127.0.0.1")
+	port := outboxTestEnvOr("MYSQL_TEST_PORT", "3306")
 	password := os.Getenv("MYSQL_TEST_PASSWORD")
 	databaseName := fmt.Sprintf("go_order_outbox_lease_%d", time.Now().UnixNano())
 
@@ -147,7 +149,7 @@ func openOutboxLeaseTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func envOr(key, fallback string) string {
+func outboxTestEnvOr(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
