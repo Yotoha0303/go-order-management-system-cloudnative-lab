@@ -73,7 +73,7 @@ func (OrderItem) TableName() string { return "order_items_v2" }
 
 type TimeoutOutbox struct {
 	ID        uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
-	OrderID   int64     `gorm:"column:order_id;not null;uniqueIndex;index" json:"order_id"`
+	OrderID   int64     `gorm:"column:order_id;not null;uniqueIndex:uk_order_timeout_outbox_order" json:"order_id"`
 	DueAt     time.Time `gorm:"column:due_at;not null;index" json:"due_at"`
 	Status    string    `gorm:"type:varchar(20);not null;index" json:"status"`
 	Attempts  int       `gorm:"not null;default:0" json:"attempts"`
