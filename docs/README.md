@@ -8,10 +8,14 @@
 | --- | --- |
 | [../README.md](../README.md) | 当前项目定位、运行拓扑、快速启动和能力边界 |
 | [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、服务间调用、库存预占和订单 Saga |
-| [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 服务独立 Goose 迁移、Outbox 租约和多 Worker 扩容 |
+| [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 服务独立 Goose 迁移、Outbox 租约、多 Worker 和 Publisher Confirms |
+| [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | 端到端请求预算、传输超时、有限重试和安全边界 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 当前云原生完成度、已完成能力和生产级缺口 |
 | [verification/ci-baseline.md](verification/ci-baseline.md) | 当前 CI、Compose、双 Worker 和端到端 Saga 验证 |
+| [verification/publisher-confirms.md](verification/publisher-confirms.md) | RabbitMQ Broker ACK 与 Outbox 状态验证 |
+| [verification/http-timeout-retry.md](verification/http-timeout-retry.md) | 请求预算和有限重试验证计划 |
 | [project_evolution.md](project_evolution.md) | 从原单体到当前微服务阶段的演进记录 |
+| [roadmap/cloud-native-delivery-plan.md](roadmap/cloud-native-delivery-plan.md) | 可靠性、Kubernetes、可观测性和运行保障路线 |
 
 ## 当前运行路径
 
@@ -70,7 +74,7 @@ migrations/ordering
 ## 文档维护规则
 
 1. 根 README 只描述 `main` 当前可运行状态。
-2. 当前架构变化必须同步更新微服务 v2、迁移/Outbox 和云原生状态文档。
+2. 当前架构变化必须同步更新微服务 v2、可靠性、迁移/Outbox 和云原生状态文档。
 3. 历史文档不删除，但必须明确标记其对应阶段。
 4. 不能把未通过 CI 或未在 Compose/Kubernetes 中实际运行的能力写成“已完成”。
 5. Kubernetes、可观测性和持续部署完成后，应新增独立文档并更新云原生状态矩阵。
