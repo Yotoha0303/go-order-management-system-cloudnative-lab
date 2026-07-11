@@ -1,172 +1,251 @@
-# 项目演进说明
+# 项目演进记录
 
-## 第一阶段：商品模块
+本文记录项目从业务型 Go 单体到当前微服务实验系统的真实演进过程。
 
-目标：建立商品基础管理能力。
+## 阶段总览
 
-完成内容：
+```text
+业务单体
+  ↓
+工程化单体
+  ↓
+独立 API / Worker
+  ↓
+多服务运行单元
+  ↓
+服务独立数据库
+  ↓
+库存预占 + Order Saga
+  ↓
+独立 Goose 迁移
+  ↓
+Outbox 多 Worker 租约
+  ↓
+【当前阶段】
+  ↓
+可观测性与可靠性
+  ↓
+Kubernetes
+  ↓
+持续交付与生产治理
+```
 
-- 创建商品
-- 查询商品列表
-- 查询商品详情
-- 商品上架
-- 商品下架
+## Phase 0：原单体业务基本盘
 
-设计重点：
+完成：
 
-- 商品创建后默认下架
-- 价格使用 price_fen，避免浮点数问题
-- 商品状态通过 status 控制
+- 用户注册、登录、JWT 和最小 RBAC；
+- 商品创建、查询、上下架；
+- 库存初始化、增加、查询和库存流水；
+- 用户级幂等订单；
+- MySQL 事务、行锁、条件更新和订单状态机；
+- Redis 商品详情 cache-aside；
+- RabbitMQ TTL/DLX 超时取消；
+- Transactional Outbox；
+- React 管理台；
+- Docker、Compose、Goose、Makefile 和 GitHub Actions。
 
-## 第二阶段：库存模块
+这一阶段的核心一致性依赖单个 MySQL 本地事务：订单、库存、订单项、幂等和 Outbox 同事务提交。
 
-目标：建立商品库存管理能力。
+## Phase 1：迁移基线与架构审计
 
-完成内容：
+完成：
 
-- 初始化库存
-- 查询商品库存
-- 增加库存
-- 写库存流水
+- 从原仓库复制完整 Git 历史；
+- 建立实验仓库；
+- 修复 CI 与数据库命名漂移；
+- 固化单体依赖、数据所有权、事务边界和风险；
+- 建立可重复的 Compose 和 CI 验证入口。
 
-设计重点：
+该阶段不改变业务行为，只为后续拆分建立可验证基线。
 
-- 商品和库存分表
-- 一个商品只能初始化一条库存记录
-- 每次库存变化都写入 stock_logs
-- 通过 before/change/after 记录库存变化链路
+## Phase 2：Microservices v1——运行单元拆分
 
-## 第三阶段：订单模块
+完成：
 
-目标：打通订单创建和库存扣减闭环。
+- `api-gateway`；
+- `identity-service`；
+- `catalog-service`；
+- `inventory-service`；
+- `order-service`；
+- `order-timeout-worker`；
+- 每个服务独立二进制和 Docker 镜像；
+- Gateway 统一入口和上游就绪检查；
+- Worker 与 HTTP API 生命周期分离；
+- CI 构建全部服务和镜像。
 
-完成内容：
+限制：服务虽然已拆为独立进程，但最初仍共享 MySQL。
 
-- 创建订单
-- 创建订单项
-- 扣减库存
-- 写库存流水
-- 查询订单列表
-- 查询订单详情
+## Phase 3：Microservices v2——数据所有权与 Saga
 
-设计重点：
+完成：
 
-- 使用事务保证订单和库存一致
-- 下单时保存商品名称和价格快照
-- 使用 stock_logs 记录订单扣减库存
+### 独立数据库
 
-## 第四阶段：订单状态机
+```text
+Identity  -> go_order_identity
+Catalog   -> go_order_catalog
+Inventory -> go_order_inventory
+Ordering  -> go_order_ordering
+```
 
-目标：补齐订单状态流转。
+### 服务间调用
 
-完成内容：
+- Catalog / Inventory → Identity：管理员角色校验；
+- Order → Catalog：商品快照；
+- Order → Inventory：库存预占、确认和释放；
+- Worker → Order：超时取消。
 
-- 支付订单
-- 完成订单
-- 取消订单
-- 取消订单回滚库存
+### 库存预占
 
-设计重点：
+```text
+pending -> confirmed
+pending -> released
+```
 
-- 只允许合法状态流转
-- 使用 PatchOrderStatus 做条件更新
-- 取消订单时回滚库存并写库存流水
+### Order Saga
 
-## 第五阶段：Redis 缓存商品详情
+```text
+reserving -> pending -> paid / cancelled
+reserving -> failed
+uncertain -> reconciliation_required
+```
 
-目标：引入 Redis 缓存，提高商品详情查询性能。
+### 补偿规则
 
-完成内容：
-- 已接入 Redis 客户端
-- 商品详情接口已采用 cache-aside
-- Redis miss 时查询 MySQL 并写入缓存
-- 商品上架 / 下架时删除商品详情缓存
-- Redis 不可用时不影响主流程
+- 预占失败：订单标记 `failed`；
+- 预占成功但订单最终事务失败：释放预占；
+- 释放也失败：标记 `reconciliation_required`；
+- 取消或超时：释放库存；
+- 支付：确认库存。
 
-## 第六阶段：用户认证与订单隔离
+### 验证
 
-目标：让订单归属于真实登录用户，并隔离不同用户的数据。
+CI 实际启动四数据库拓扑，并验证注册、商品、库存、幂等下单、支付、主动取消和 RabbitMQ 超时补偿。
 
-完成内容：
+## Phase 4：独立迁移与 Outbox 多 Worker
 
-- 用户注册、登录和 JWT 签发
-- 查询当前用户、修改昵称和修改密码
-- 受保护接口统一校验 Bearer Token
-- 订单创建、查询和状态更新按 user_id 隔离
-- 幂等键唯一范围从全局调整为用户级
+完成：
 
-设计重点：
+### 服务独立 Goose 迁移
 
-- 密码仅保存 bcrypt 哈希
-- JWT 携带 user_id、username、issuer 和过期时间
-- 跨用户访问订单按不存在处理，避免泄露资源信息
-- `(user_id, idempotency_key)` 复合唯一索引支持不同用户复用相同 Key
+```text
+migrations/identity
+migrations/catalog
+migrations/inventory
+migrations/ordering
+```
 
-## 第七阶段：React 管理台联调
+业务进程不再执行 `AutoMigrate`。Compose 使用四个一次性 Migration Job，迁移成功后才启动服务。
 
-目标：提供可演示、可操作的业务管理界面，覆盖后端主要接口。
+### Outbox 租约
 
-完成内容：
+新增：
 
-- 注册、登录和前端 Token 状态管理
-- 商品、库存、库存流水和订单业务页面
-- 当前用户资料查询、昵称修改和密码修改
-- 侧边栏与顶部菜单动态展示用户昵称和用户名
-- 仪表盘通过 `/ping` 展示后端连通状态
+```text
+lease_owner
+lease_until
+next_attempt_at
+```
 
-设计重点：
+Worker 使用：
 
-- Axios 统一配置 `/api/v1` 基础路径和 Bearer Token
-- TanStack Query 管理查询缓存和业务数据刷新
-- 后端未支持的 OAuth、邮箱、头像等入口不作为可用功能展示
-- 保留统一业务响应结构 `{ code, message, data }`，不在前端改写公共协议
+```sql
+FOR UPDATE SKIP LOCKED
+```
 
-## 第八阶段：项目合并
+实现：
 
-目标：结合用户基础认证系统，实现用户登录订单管理系统
+- 多 Worker 不重复拥有同一活跃租约；
+- 崩溃后租约可回收；
+- 失败事件延迟重试；
+- Compose 和 CI 启动两个 Worker 副本；
+- 真实 MySQL 集成测试验证领取隔离和租约恢复。
 
-完成内容：
+## 当前项目状态
 
-- 合并用户注册、登录、资料维护和密码修改能力
-- 订单表增加 `user_id`，查询和状态变更按用户隔离
-- 幂等键调整为 `(user_id, idempotency_key)` 复合唯一约束
-- 前端认证状态与后端 Bearer Token 接口完成联调
+当前已经具备：
 
-设计重点：
+- API Gateway 和独立业务服务；
+- 服务独立数据库；
+- 服务间 HTTP 调用；
+- 内部服务认证；
+- 库存预占与 Order Saga；
+- Transactional Outbox；
+- RabbitMQ 延迟取消；
+- 多 Worker 租约抢占；
+- 服务独立 Goose 迁移；
+- 完整 Compose 与端到端 CI。
 
-- 复用统一用户模型和 JWT 身份，不保留两套认证入口
-- 跨用户访问订单按资源不存在处理，避免泄露订单是否存在
-- 合并后执行全量迁移、接口和订单库存回归
+当前仍不等于完整生产级云原生系统。
 
-## 第九阶段：项目完善
+## Phase 5：可靠性与可观测性——待完成
 
-目标：加入最小的 RBAC 权限系统 ，测试覆盖
+计划：
 
-完成内容：
+- RabbitMQ Publisher Confirms；
+- Prometheus Metrics；
+- Grafana Dashboard；
+- OpenTelemetry Trace；
+- Request ID / Trace ID 跨服务传播；
+- Outbox backlog、租约、失败和重试指标；
+- Saga 成功率、补偿率和对账状态指标；
+- HTTP 客户端超时预算；
+- 幂等请求的受控重试；
+- 熔断、限流和并发隔离；
+- 基础告警规则。
 
-- 实现最小管理员 RBAC
-- 完成订单 Handler 业务接口测试和关键 DAO 集成测试
-- 部署到云服务器
-- RabbitMQ TTL/DLX + 事务 Outbox，实现“30 分钟未支付自动取消”
+## Phase 6：Kubernetes 本地部署——待完成
 
-设计重点：
+计划：
 
-- 创建商品、上架/下架商品、初始化/增加库存非管理员不可操作
+- Deployment；
+- Service；
+- ConfigMap；
+- Secret；
+- Ingress；
+- Migration Job；
+- startup/liveness/readiness probes；
+- resource requests/limits；
+- HPA；
+- PodDisruptionBudget；
+- NetworkPolicy；
+- kind 或 k3d 本地集群验证。
 
-## 第十阶段：进阶中级项目
+## Phase 7：持续交付——待完成
 
-目标：补齐项目边界，使项目水准达到中级水平
+计划：
 
-规划内容：
+- 镜像推送 GHCR；
+- Commit SHA / SemVer 镜像标签；
+- 自动部署开发环境；
+- Migration Job 发布顺序；
+- 滚动更新；
+- 部署后 Saga smoke；
+- 失败阻断或回滚；
+- 生产环境人工审批。
 
-- Redis 进阶使用
-- 持续维护 Markdown，使接口、权限、迁移和测试说明与代码同步
-- 线上部署和稳定性运行证据
-- 补齐操作日志、后台审计、管理员权限边界
-- 完善项目可观测性
-- 真实压测、慢 SQL 分析和性能报告
-- 解决多商品加锁顺序还有锁死的风险
-- 完整支付、退款、发货、售后等更复杂的订单链路
+## Phase 8：生产治理——待完成
 
-评估重点：
-- 库存扣减加一层 Redis Lua 做"预扣"
+计划：
+
+- 业务服务和迁移任务独立最小权限数据库账号；
+- mTLS 或 Workload Identity；
+- MySQL 与 RabbitMQ 备份恢复；
+- `reconciliation_required` 自动对账；
+- SLI / SLO / 告警；
+- 压测、容量评估和慢 SQL 分析；
+- 故障注入、恢复演练和 Runbook。
+
+## 当前求职展示重点
+
+项目讲解时应突出：
+
+1. 为什么不能直接把原单体目录切成多个服务；
+2. 如何识别商品、库存、订单的数据所有权；
+3. 单库 ACID 失效后为什么引入库存预占和 Saga；
+4. 为什么补偿失败必须进入 `reconciliation_required`；
+5. 为什么 Outbox 仍是至少一次投递；
+6. 多 Worker 如何通过租约和 `SKIP LOCKED` 协作；
+7. 为什么迁移必须从业务进程生命周期中分离；
+8. 为什么当前还不能宣称完成生产级云原生交付。
