@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,12 +18,15 @@ import (
 	"go-order-management-system/internal/platform/resiliencehttp"
 )
 
-var serviceRetryPolicy = resiliencehttp.RetryPolicy{
-	MaxAttempts:       3,
-	BaseBackoff:       50 * time.Millisecond,
-	MaxBackoff:        300 * time.Millisecond,
-	MinimumAttemptGap: 100 * time.Millisecond,
-}
+var (
+	errInvalidReservationIdentity = errors.New("inventory reservation identity is required")
+	serviceRetryPolicy            = resiliencehttp.RetryPolicy{
+		MaxAttempts:       3,
+		BaseBackoff:       50 * time.Millisecond,
+		MaxBackoff:        300 * time.Millisecond,
+		MinimumAttemptGap: 100 * time.Millisecond,
+	}
+)
 
 type RemoteError struct {
 	Service string
@@ -94,7 +98,7 @@ func NewInventoryClient(baseURL, token string, timeout time.Duration) *Inventory
 func (c *InventoryClient) Reserve(ctx context.Context, orderID int64, reservationID string, items []ReservationItem) (*InventoryReservation, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if orderID <= 0 || reservationID == "" {
-		return nil, errorsNewInvalidReservationIdentity()
+		return nil, errInvalidReservationIdentity
 	}
 	payload := struct {
 		OrderID       int64             `json:"order_id"`
@@ -119,7 +123,7 @@ func (c *InventoryClient) Release(ctx context.Context, reservationID string) (*I
 func (c *InventoryClient) transition(ctx context.Context, reservationID, action string) (*InventoryReservation, error) {
 	reservationID = strings.TrimSpace(reservationID)
 	if reservationID == "" {
-		return nil, errorsNewInvalidReservationIdentity()
+		return nil, errInvalidReservationIdentity
 	}
 	endpoint := c.baseURL + "/internal/v1/reservations/" + url.PathEscape(reservationID) + "/" + action
 	var reservation InventoryReservation
@@ -218,8 +222,4 @@ func doJSON(
 		return fmt.Errorf("decode %s response: %w", service, err)
 	}
 	return nil
-}
-
-func errorsNewInvalidReservationIdentity() error {
-	return fmt.Errorf("inventory reservation identity is required")
 }
