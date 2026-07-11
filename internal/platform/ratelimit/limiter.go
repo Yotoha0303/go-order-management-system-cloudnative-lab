@@ -58,18 +58,25 @@ type Limiter struct {
 }
 
 func New(cfg Config) *Limiter {
+	return newWithClock(cfg, time.Now)
+}
+
+func newWithClock(cfg Config, now func() time.Time) *Limiter {
 	cfg = cfg.normalized()
-	now := time.Now()
+	if now == nil {
+		now = time.Now
+	}
+	startedAt := now()
 	return &Limiter{
 		cfg: cfg,
-		now: time.Now,
+		now: now,
 		global: bucket{
 			tokens:   float64(cfg.GlobalBurst),
-			last:     now,
-			lastSeen: now,
+			last:     startedAt,
+			lastSeen: startedAt,
 		},
 		clients:     make(map[string]*bucket),
-		lastCleanup: now,
+		lastCleanup: startedAt,
 	}
 }
 
