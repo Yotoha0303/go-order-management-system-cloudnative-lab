@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go-order-management-system/internal/platform/ratelimit"
 	"go-order-management-system/internal/platform/resiliencehttp"
 	"go-order-management-system/internal/platform/servicehost"
 )
@@ -25,8 +28,9 @@ type route struct {
 }
 
 type gateway struct {
-	routes []route
-	client *http.Client
+	routes  []route
+	client  *http.Client
+	limiter *ratelimit.Limiter
 }
 
 func main() {
@@ -55,6 +59,15 @@ func main() {
 			ConnectTimeout:        300 * time.Millisecond,
 			ResponseHeaderTimeout: time.Second,
 			TotalTimeout:          2 * time.Second,
+		}),
+		limiter: ratelimit.New(ratelimit.Config{
+			PerClientRate:  envPositiveFloat("GATEWAY_RATE_LIMIT_PER_CLIENT_RPS", 50),
+			PerClientBurst: envPositiveInt("GATEWAY_RATE_LIMIT_PER_CLIENT_BURST", 100),
+			GlobalRate:     envPositiveFloat("GATEWAY_RATE_LIMIT_GLOBAL_RPS", 500),
+			GlobalBurst:    envPositiveInt("GATEWAY_RATE_LIMIT_GLOBAL_BURST", 1000),
+			MaxClients:     envPositiveInt("GATEWAY_RATE_LIMIT_MAX_CLIENTS", 10000),
+			InactiveTTL:    envPositiveDuration("GATEWAY_RATE_LIMIT_INACTIVE_TTL", 10*time.Minute),
+			CleanupEvery:   envPositiveDuration("GATEWAY_RATE_LIMIT_CLEANUP_INTERVAL", time.Minute),
 		}),
 	}
 	budgetedHandler := resiliencehttp.BudgetHandler(handler, resiliencehttp.BudgetConfig{
@@ -160,6 +173,21 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if allowed, retryAfter := g.limiter.Allow(clientKey(req)); !allowed {
+		seconds := int64(math.Ceil(retryAfter.Seconds()))
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"code":        "rate_limited",
+			"message":     "request rate limit exceeded",
+			"request_id":  resiliencehttp.RequestID(req.Context()),
+			"retry_after": seconds,
+		})
+		return
+	}
+
 	for _, candidate := range g.routes {
 		if pathMatches(req.URL.Path, candidate.prefix) {
 			candidate.proxy.ServeHTTP(w, req)
@@ -202,6 +230,17 @@ func (g *gateway) ready(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
+func clientKey(req *http.Request) string {
+	remote := strings.TrimSpace(req.RemoteAddr)
+	if host, _, err := net.SplitHostPort(remote); err == nil && host != "" {
+		return host
+	}
+	if remote == "" {
+		return "unknown"
+	}
+	return remote
+}
+
 func pathMatches(path, prefix string) bool {
 	return path == prefix || strings.HasPrefix(path, prefix+"/")
 }
@@ -211,6 +250,33 @@ func envOrDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envPositiveFloat(key string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envPositiveInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envPositiveDuration(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
