@@ -154,7 +154,7 @@ func (executor *Executor) Do(
 
 		started := time.Now()
 		resp, callErr := executor.client.Do(req)
-		retryable := shouldRetry(resp, callErr)
+		retryable := shouldRetry(ctx, resp, callErr)
 		executor.logAttempt(ctx, upstream, operation, attempt, resp, callErr, retryable, time.Since(started))
 
 		if !retryable || attempt == policy.MaxAttempts {
@@ -180,9 +180,9 @@ func (executor *Executor) Do(
 	return nil, lastErr
 }
 
-func shouldRetry(resp *http.Response, err error) bool {
+func shouldRetry(ctx context.Context, resp *http.Response, err error) bool {
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if ctx.Err() != nil {
 			return false
 		}
 		var netErr net.Error
