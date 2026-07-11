@@ -89,6 +89,41 @@ An unknown action must:
 - preserve an explanatory error;
 - remain visible rather than being marked successful.
 
+## Dry-run tests
+
+The read-only preview uses a real MySQL database with a mixed task set:
+
+- supported `release_inventory_and_fail`;
+- supported `finalize_cancel`;
+- supported `finalize_payment`;
+- an Order already in its intended target state;
+- an incompatible Order state;
+- an unsupported action;
+- a missing Order;
+- an actively leased task;
+- a task scheduled for the future.
+
+Required assertions:
+
+- only currently eligible, unleased `pending`/`failed` tasks appear;
+- supported actions show the correct intended target state;
+- already-final, unsupported, state-mismatch and missing-Order classifications remain visible;
+- active leases and future tasks are excluded;
+- Inventory confirm/release call counts remain zero;
+- complete snapshots of `orders_v2`, `order_reconciliation_tasks` and `order_timeout_outbox_v2` are deeply equal before and after the dry-run;
+- task attempts, lease owner and lease expiry are unchanged;
+- an empty eligible set returns a successful empty report.
+
+The binary invocation is:
+
+```bash
+docker compose run --rm \
+  -e RECONCILIATION_DRY_RUN=true \
+  order-reconciliation-worker
+```
+
+It prints one JSON report and exits. The normal Worker loop is not started.
+
 ## Context-boundary test intent
 
 Remote Inventory calls use the task call timeout, while successful local completion and failure persistence use an independent short Context. Code review and timeout-path tests must ensure that an expired remote Context cannot strand the task under its lease without a recorded retry state.
@@ -127,4 +162,4 @@ complete Order Saga smoke test
 
 ## Non-claims
 
-Passing these tests does not establish exactly-once repair. The design relies on idempotent Inventory operations and local task leases to provide recoverable at-least-once processing.
+Passing these tests does not establish exactly-once repair. The design relies on idempotent Inventory operations and local task leases to provide recoverable at-least-once processing. Dry-run is a preview only and does not provide interactive approval or selective execution.
