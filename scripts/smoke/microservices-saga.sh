@@ -117,6 +117,9 @@ promote_admin() {
         exit 1
       }
       kubectl -n "$KUBERNETES_NAMESPACE" exec "$mysql_pod" -- mysql \
+        --protocol=tcp \
+        --host=127.0.0.1 \
+        --port=3306 \
         -uroot \
         -p"${MYSQL_PASSWORD}" \
         "${IDENTITY_DB_NAME}" \
