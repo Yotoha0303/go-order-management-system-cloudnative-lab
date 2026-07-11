@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -73,8 +74,11 @@ func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) 
 		return fallback, nil
 	}
 	parsed, err := time.ParseDuration(raw)
-	if err != nil || parsed <= 0 {
-		return 0, err
+	if err != nil {
+		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", key)
 	}
 	return parsed, nil
 }
