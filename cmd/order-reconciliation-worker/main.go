@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -58,6 +59,11 @@ func main() {
 		logger.Error("invalid reconciliation batch size", "error", err)
 		os.Exit(1)
 	}
+	dryRun, err := boolFromEnv("RECONCILIATION_DRY_RUN", false)
+	if err != nil {
+		logger.Error("invalid reconciliation dry-run setting", "error", err)
+		os.Exit(1)
+	}
 
 	internalToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
 	inventoryClient := ordersvc.NewInventoryClient(os.Getenv("INVENTORY_SERVICE_URL"), internalToken, callTimeout)
@@ -77,6 +83,21 @@ func main() {
 
 	ctx, stop := servicehost.SignalContext()
 	defer stop()
+	if dryRun {
+		report, reportErr := worker.DryRun(ctx)
+		if reportErr != nil {
+			logger.Error("build reconciliation dry-run report", "error", reportErr)
+			os.Exit(1)
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if encodeErr := encoder.Encode(report); encodeErr != nil {
+			logger.Error("write reconciliation dry-run report", "error", encodeErr)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("order reconciliation worker stopped", "error", err)
 		os.Exit(1)
@@ -110,6 +131,18 @@ func positiveIntFromEnv(key string, fallback int) (int, error) {
 	}
 	if parsed <= 0 {
 		return 0, fmt.Errorf("%s must be greater than zero", key)
+	}
+	return parsed, nil
+}
+
+func boolFromEnv(key string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
 	return parsed, nil
 }
