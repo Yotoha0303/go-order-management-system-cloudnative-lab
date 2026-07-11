@@ -6,13 +6,12 @@ import (
 
 	"go-order-management-system/config"
 	"go-order-management-system/internal/auth"
-	"go-order-management-system/internal/bizcache"
+	"go-order-management-system/internal/catalogsvc"
 	"go-order-management-system/internal/handler"
 	"go-order-management-system/internal/middleware"
+	"go-order-management-system/internal/platform/serviceclient"
 	"go-order-management-system/internal/platform/servicehost"
-	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
-	redisstore "go-order-management-system/pkg/redis"
 
 	"github.com/gin-gonic/gin"
 )
@@ -32,10 +31,9 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
-
-	redisClient, err := redisstore.InitRedis(cfg)
-	if err != nil {
-		logger.Warn("redis unavailable; product cache disabled", "error", err)
+	if err := catalogsvc.Migrate(db); err != nil {
+		logger.Error("migrate catalog database", "error", err)
+		os.Exit(1)
 	}
 
 	tokenManager, err := auth.NewTokenManager(
@@ -48,10 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	productService := service.NewProductService(db, bizcache.NewProductCache(redisClient))
-	productHandler := handler.NewProductHandler(productService)
 	healthHandler := handler.NewHealthHandler(db)
-	roleChecker := service.NewAuthorizationService(db)
+	roleChecker := serviceclient.NewIdentityRoleChecker(
+		os.Getenv("IDENTITY_SERVICE_URL"),
+		os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		3*time.Second,
+	)
 
 	router := gin.New()
 	router.Use(
@@ -59,21 +59,17 @@ func main() {
 		middleware.AccessLog(logger),
 		middleware.Recovery(logger),
 	)
-
 	router.GET("/ping", healthHandler.PingHandler)
 	router.GET("/live", healthHandler.LiveHandler)
 	router.GET("/readyz", healthHandler.ReadyzHandler)
 
-	api := router.Group("/api/v1")
-	api.Use(middleware.AuthMiddleware(tokenManager))
-	api.GET("/products", productHandler.ListProducts)
-	api.GET("/products/:id", productHandler.GetProductByID)
-
-	admin := api.Group("")
-	admin.Use(middleware.AdminMiddleware(roleChecker))
-	admin.POST("/products", productHandler.CreateProduct)
-	admin.PATCH("/products/:id/on-sale", productHandler.OnSaleProduct)
-	admin.PATCH("/products/:id/off-sale", productHandler.OffSaleProduct)
+	catalogsvc.RegisterRoutes(
+		router,
+		tokenManager,
+		roleChecker,
+		os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		catalogsvc.NewService(db),
+	)
 
 	server := servicehost.NewHTTPServer(
 		cfg.Server.Port,
