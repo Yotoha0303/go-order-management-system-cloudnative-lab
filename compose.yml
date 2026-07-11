@@ -1,40 +1,188 @@
+x-common-environment: &common-environment
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_USER: root
+  DB_NAME: ${DB_NAME:-go_order_management_system}
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-order_app}:${RABBITMQ_PASSWORD:-order_dev_password}@rabbitmq:5672/
+  ORDER_TIMEOUT_DELAY: ${ORDER_TIMEOUT_DELAY:-30m}
+
 services:
-  app:
-    image: go-order-management-system:local
+  api-gateway:
+    image: go-order-management-system/api-gateway:local
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: go-order-management-system-app
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: api-gateway
+    container_name: go-order-management-system-api-gateway
     ports:
-      - "8082:8082"
+      - "${GATEWAY_HOST_PORT:-8082}:8082"
     environment:
-      APP_PORT: 8082
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
-      DB_NAME: ${DB_NAME:-go_order_management_system}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
-      REDIS_ADDR: redis:6379
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-order_app}:${RABBITMQ_PASSWORD:-order_dev_password}@rabbitmq:5672/
-      ORDER_TIMEOUT_DELAY: ${ORDER_TIMEOUT_DELAY:-30m}
+      GATEWAY_PORT: 8082
+      IDENTITY_SERVICE_URL: http://identity-service:8083
+      CATALOG_SERVICE_URL: http://catalog-service:8084
+      INVENTORY_SERVICE_URL: http://inventory-service:8085
+      ORDER_SERVICE_URL: http://order-service:8086
     depends_on:
-      mysql:
+      identity-service:
         condition: service_healthy
-      redis:
+      catalog-service:
         condition: service_healthy
-      rabbitmq:
+      inventory-service:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      order-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8082/readyz"]
       interval: 10s
       timeout: 3s
-      retries: 5
+      retries: 10
       start_period: 10s
     restart: unless-stopped
+
+  identity-service:
+    image: go-order-management-system/identity-service:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: identity-service
+    container_name: go-order-management-system-identity-service
+    expose:
+      - "8083"
+    environment:
+      <<: *common-environment
+      APP_PORT: 8083
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8083/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  catalog-service:
+    image: go-order-management-system/catalog-service:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: catalog-service
+    container_name: go-order-management-system-catalog-service
+    expose:
+      - "8084"
+    environment:
+      <<: *common-environment
+      APP_PORT: 8084
+      REDIS_ADDR: redis:6379
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  inventory-service:
+    image: go-order-management-system/inventory-service:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: inventory-service
+    container_name: go-order-management-system-inventory-service
+    expose:
+      - "8085"
+    environment:
+      <<: *common-environment
+      APP_PORT: 8085
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8085/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  order-service:
+    image: go-order-management-system/order-service:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: order-service
+    container_name: go-order-management-system-order-service
+    expose:
+      - "8086"
+    environment:
+      <<: *common-environment
+      APP_PORT: 8086
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8086/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  order-timeout-worker:
+    image: go-order-management-system/order-timeout-worker:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: order-timeout-worker
+    container_name: go-order-management-system-order-timeout-worker
+    environment:
+      <<: *common-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  migrate:
+    image: go-order-management-system/migrate:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: order-service
+    container_name: go-order-management-system-migrate
+    working_dir: /app
+    environment:
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_NAME: ${DB_NAME:-go_order_management_system}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
 
   mysql:
     image: mysql:8.4
@@ -86,28 +234,6 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
-
-  migrate:
-    image: go-order-management-system:local
-    build:
-      context: .
-      dockerfile: Dockerfile
-    working_dir: /app
-    environment:
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
-      DB_NAME: ${DB_NAME:-go_order_management_system}
-    depends_on:
-      mysql:
-        condition: service_healthy
-    command:
-      - sh
-      - -ec
-      - |
-        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
-    restart: "no"
 
 volumes:
   mysql_data:

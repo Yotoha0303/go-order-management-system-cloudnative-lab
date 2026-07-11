@@ -18,8 +18,10 @@ env:
   RUN_MYSQL_TEST: "1"
   RUN_REDIS_TEST: "1"
   RUN_RABBITMQ_TEST: "1"
+  MYSQL_PASSWORD: ci-password
   MYSQL_TEST_PASSWORD: ci-password
   MYSQL_TEST_DATABASE: go_order_management_system_test
+  JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
 
@@ -89,7 +91,7 @@ jobs:
       - name: Run golangci-lint
         run: golangci-lint run ./...
 
-      - name: Run test
+      - name: Run tests
         run: go test ./...
 
       - name: Run race tests
@@ -98,14 +100,28 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
-      - name: Build
+      - name: Build all Go packages
         run: go build ./...
 
       - name: Validate migrations
         run: goose -dir migrations validate
 
-      - name: Build binary
-        run: go build -o bin/go-order-management-system ./cmd
+      - name: Build service binaries
+        run: |
+          mkdir -p bin
+          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker; do
+            go build -trimpath -o "bin/${service}" "./cmd/${service}"
+          done
 
-      - name: Build Docker image
-        run: docker build -t go-order-management-system:ci .
+      - name: Validate microservices Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build microservice images
+        run: |
+          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker; do
+            docker build \
+              -f deploy/docker/Dockerfile.service \
+              --build-arg "SERVICE=${service}" \
+              -t "go-order-management-system/${service}:ci" \
+              .
+          done
