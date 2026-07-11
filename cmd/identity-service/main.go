@@ -11,6 +11,7 @@ import (
 	"go-order-management-system/internal/handler"
 	"go-order-management-system/internal/middleware"
 	"go-order-management-system/internal/platform/internalapi"
+	"go-order-management-system/internal/platform/resiliencehttp"
 	"go-order-management-system/internal/platform/servicehost"
 	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
@@ -87,9 +88,14 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"allowed": allowed})
 	})
 
+	applicationHandler := middleware.TimeoutHandler(router, cfg.HttpServer.Server.Timeout)
+	budgetedHandler := resiliencehttp.BudgetHandler(applicationHandler, resiliencehttp.BudgetConfig{
+		Default: cfg.HttpServer.Server.Timeout,
+		Maximum: 30 * time.Second,
+	})
 	server := servicehost.NewHTTPServer(
 		cfg.Server.Port,
-		middleware.TimeoutHandler(router, cfg.HttpServer.Server.Timeout),
+		budgetedHandler,
 		cfg.HttpServer.Server,
 	)
 	if err := servicehost.RunHTTP(logger, server); err != nil {
