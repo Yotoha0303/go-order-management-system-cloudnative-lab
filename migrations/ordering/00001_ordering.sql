@@ -39,16 +39,12 @@ CREATE TABLE IF NOT EXISTS order_timeout_outbox_v2 (
     status VARCHAR(20) NOT NULL,
     attempts INT NOT NULL DEFAULT 0,
     last_error VARCHAR(500) NOT NULL DEFAULT '',
-    lease_owner VARCHAR(128) NOT NULL DEFAULT '',
-    lease_until DATETIME(3) NULL,
-    next_attempt_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id),
     UNIQUE KEY uk_order_timeout_outbox_order (order_id),
     KEY idx_order_timeout_outbox_due_at (due_at),
     KEY idx_order_timeout_outbox_status (status),
-    KEY idx_order_timeout_outbox_claim (status, next_attempt_at, lease_until),
     CONSTRAINT fk_order_timeout_outbox_order FOREIGN KEY (order_id) REFERENCES orders_v2 (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
