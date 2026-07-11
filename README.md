@@ -1,338 +1,313 @@
-# Go 订单库存一致性管理服务
+# Go Order Management Cloud-Native Lab
 
-> 一个面向 Go 后端求职展示的订单库存业务服务，重点演示事务一致性、并发库存扣减、用户级幂等、订单状态机、RabbitMQ 延迟取消、用户数据隔离、Redis 缓存和基础工程化能力。
+> 一个从 Go 分层单体持续演进而来的微服务实验项目，重点展示服务拆分、数据库所有权、库存预占、订单 Saga、Transactional Outbox、RabbitMQ 超时补偿、多 Worker 租约抢占、独立数据库迁移和端到端 CI 验证。
 
-本项目不是完整商城系统，不刻意堆购物车、支付、物流、优惠券等外围功能；项目重点是把后端开发中最容易被问到、也最能体现工程能力的订单库存主链路做扎实。
+本仓库是实验性演进项目，不是完整电商平台，也不宣称已经达到生产级云原生交付标准。当前已经完成容器化微服务核心改造；Kubernetes、完整可观测性、服务弹性治理和持续部署仍属于后续阶段。
 
-## 一眼看懂这个项目
+## 当前状态
 
-| 维度 | 说明 |
+| 维度 | 当前实现 |
 | --- | --- |
-| 项目定位 | Go 订单库存一致性管理服务 |
-| 适合场景 | Go 后端求职项目、事务/锁/幂等/状态机训练、业务后端项目展示 |
-| 核心主链路 | 登录用户创建订单 → 校验幂等 Key → 事务扣减库存 → 写入订单明细与库存流水 → 状态流转 |
-| 主要后端能力 | Gin、GORM、MySQL 事务、行锁、条件更新、RabbitMQ、Outbox、JWT、Redis cache-aside、Docker、CI |
-| 展示重点 | 不是 CRUD 数量，而是业务一致性、并发安全、数据隔离和工程化完整度 |
+| 运行形态 | API Gateway + 4 个业务服务 + 独立订单超时 Worker |
+| 数据边界 | Identity、Catalog、Inventory、Ordering 使用 4 个独立逻辑数据库 |
+| 一致性 | 库存预占/确认/释放 + Order Saga + 补偿事务 |
+| 异步可靠性 | Transactional Outbox + RabbitMQ TTL/DLX + 至少一次投递 |
+| Worker 扩容 | 数据库租约 + `FOR UPDATE SKIP LOCKED`，支持多副本抢占 |
+| 数据库迁移 | 每个服务拥有独立 Goose 迁移目录和一次性迁移 Job |
+| 部署验证 | Docker Compose 启动完整四库拓扑，可启动两个 Worker 副本 |
+| CI | lint、test、race、vet、build、迁移校验、镜像构建、完整 Saga 冒烟 |
+| 尚未完成 | Kubernetes、Prometheus/Grafana、OpenTelemetry、熔断限流、正式 CD |
 
-## 核心业务闭环
+## 运行拓扑
 
 ```mermaid
 flowchart LR
-    A[用户注册 / 登录] --> B[JWT 鉴权]
-    B --> C[商品与库存准备]
-    C --> D[提交订单]
-    D --> E[用户级幂等校验]
-    E --> F[开启事务]
-    F --> G[锁定库存并条件扣减]
-    G --> H[创建订单与订单明细]
-    H --> I[写入库存流水]
-    I --> J{订单状态机}
-    J -->|支付| K[已支付]
-    K -->|完成| L[已完成]
-    J -->|取消| M[已取消并回滚库存]
+    Client[Client / Frontend] --> Gateway[API Gateway :8082]
+
+    Gateway --> Identity[Identity Service :8083]
+    Gateway --> Catalog[Catalog Service :8084]
+    Gateway --> Inventory[Inventory Service :8085]
+    Gateway --> Order[Order Service :8086]
+
+    Catalog -->|role check| Identity
+    Inventory -->|role check| Identity
+    Order -->|product snapshot| Catalog
+    Order -->|reserve / confirm / release| Inventory
+
+    Identity --> IdentityDB[(go_order_identity)]
+    Catalog --> CatalogDB[(go_order_catalog)]
+    Inventory --> InventoryDB[(go_order_inventory)]
+    Order --> OrderDB[(go_order_ordering)]
+
+    Worker[Order Timeout Worker x N] --> OrderDB
+    Worker --> RabbitMQ[(RabbitMQ)]
+    Worker -->|timeout cancel| Order
 ```
 
-## 项目重点解决的问题
+只有 API Gateway 默认暴露宿主机端口 `8082`；业务服务仅在 Compose 网络内部通信。
 
-| 问题 | 解决方式 | 项目价值 |
-| --- | --- | --- |
-| 重复提交导致重复订单 | `(user_id, idempotency_key)` 唯一索引 + SHA-256 请求摘要 | 避免用户重复点击、客户端重试造成重复下单和重复扣库存 |
-| 并发下单导致超卖 | MySQL 事务 + `SELECT ... FOR UPDATE` + `stock_quantity >= quantity` 条件扣减 | 保证库存不会被扣成负数 |
-| 多表写入不一致 | 幂等记录、订单、订单项、库存、库存流水放在同一事务 | 任一步失败时整体回滚 |
-| 订单越权访问 | 订单查询和状态变更同时匹配当前登录用户 `user_id` | 防止用户访问或操作他人订单 |
-| 非法订单状态流转 | service 层状态机 + DAO 条件状态更新 | 限制待支付、已支付、已完成、已取消之间的合法流转 |
-| 商品详情重复查询 | Redis cache-aside 缓存 + 商品上下架删除缓存 | 减少热点商品详情对 MySQL 的重复访问 |
-| 待支付订单长期占用库存 | 事务 Outbox + RabbitMQ TTL/DLX + 幂等消费者 | 订单创建 30 分钟后仍未支付则自动取消并回补库存 |
+## 服务与数据所有权
 
-## 核心功能
+| 服务 | 端口 | 数据库 | 主要职责 |
+| --- | ---: | --- | --- |
+| API Gateway | 8082 | 无 | 统一入口、反向代理、上游就绪检查、Request ID 透传 |
+| Identity Service | 8083 | `go_order_identity` | 注册、登录、JWT、用户资料、角色校验 |
+| Catalog Service | 8084 | `go_order_catalog` | 商品创建、查询、上下架、商品快照 |
+| Inventory Service | 8085 | `go_order_inventory` | 库存管理、库存预占、确认、释放、库存流水 |
+| Order Service | 8086 | `go_order_ordering` | 创建订单、状态机、Saga 编排、超时 Outbox |
+| Order Timeout Worker | 无 HTTP 端口 | `go_order_ordering` | Outbox 抢占发布、RabbitMQ 超时消费、调用订单取消 |
 
-### 用户与鉴权
-
-- 用户注册、登录、查询当前用户信息
-- 修改昵称、修改密码
-- HS256 JWT 签发、过期校验和 Bearer 鉴权
-- 除健康检查、注册和登录外，业务接口统一要求 JWT
-- 订单读写接口基于当前登录用户做数据隔离
-
-### 商品模块
-
-- 创建商品
-- 查询商品列表和商品详情
-- 商品上架、下架
-- 商品价格使用 `price_fen`，单位为分，避免浮点精度问题
-- 商品创建后默认下架，避免无库存商品直接进入下单链路
-
-### 库存模块
-
-- 初始化商品库存
-- 增加商品库存
-- 查询商品库存
-- 记录库存变更流水
-- 通过库存流水追踪初始化、入库、下单扣减、取消回滚等业务来源
-
-### 订单模块
-
-- 使用 `idempotency_key` 幂等创建订单
-- 创建订单时扣减库存
-- 库存不足时事务回滚
-- 查询订单列表和订单详情
-- 支付、完成、取消订单
-- 取消待支付订单时回滚库存
-- 订单状态机限制非法状态流转
-- 待支付超过 30 分钟后由 RabbitMQ 触发自动取消和库存回补
-- 创建订单与超时 Outbox 同事务提交，发布使用 Publisher Confirm，消费使用手动 ACK
-
-### 前端管理台
-
-- React 管理台已接入商品、库存、库存流水、订单和用户资料接口
-- 首页作为项目展示页，突出后端健康状态、订单摘要、库存流水和工程能力点
-- 可完整演示商品准备、库存初始化、用户下单、支付、取消、库存回滚等业务流程
-
-## 技术栈
-
-### 后端
-
-- Go 1.25.7
-- Gin + GORM
-- MySQL 8.4
-- Redis 7.2
-- RabbitMQ 4.1
-- JWT
-- Goose 数据库迁移
-- YAML + godotenv 配置
-
-### 前端管理台
-
-- React 19 + TypeScript + Vite
-- TanStack Router / Query
-- Axios + Zustand
-- Tailwind CSS + Shadcn UI
-
-### 工程化
-
-- Docker + Docker Compose
-- Makefile
-- GitHub Actions
-- golangci-lint
-- go test / go test -race / go vet / go build
-
-## 项目结构
+当前主要业务表：
 
 ```text
-.github/workflows/ci.yml  持续集成配置
-cmd/                      项目启动入口
-config/                   YAML 加载、环境变量覆盖和配置校验
-docs/                     设计文档、REST Client 请求和验证证据
-internal/apperror/        业务错误定义与错误码映射
-internal/app/             依赖装配、HTTP Server 和优雅退出
-internal/auth/            JWT 签发、校验和认证上下文
-internal/bizcache/        Redis 业务缓存
-internal/dao/             数据库访问层
-internal/handler/         HTTP 接口层
-internal/middleware/      请求 ID、日志、超时和恢复中间件
-internal/model/           GORM 数据模型
-internal/ordertimeout/    RabbitMQ 延迟拓扑、Outbox 发布和超时消费
-internal/request/         请求参数和校验规则
-internal/response/        统一响应结构
-internal/service/         业务规则、状态机和事务
-fronted/                  React 管理台、认证状态和后端 API 适配层
-migrations/               Goose SQL 迁移
-pkg/database/             MySQL 初始化与连接池
-pkg/redis/                Redis 客户端初始化
-router/                   路由注册
-compose.yml               应用、MySQL、Redis、RabbitMQ 编排
-Dockerfile                应用镜像多阶段构建
-Makefile                  开发、测试、Docker 和迁移命令入口
+Identity
+├── users
+├── roles
+└── user_roles
+
+Catalog
+└── catalog_products
+
+Inventory
+├── inventory_items
+├── inventory_reservations
+├── inventory_reservation_items
+└── inventory_stock_logs
+
+Ordering
+├── orders_v2
+├── order_items_v2
+└── order_timeout_outbox_v2
 ```
 
-## 分层说明
+## 下单 Saga
 
-项目采用常见业务后端分层方式：
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as Gateway
+    participant O as Order Service
+    participant P as Catalog Service
+    participant I as Inventory Service
+    participant DB as Order DB
 
-| 层 | 职责 |
-| --- | --- |
-| handler | HTTP 请求处理、参数绑定、错误映射和统一响应 |
-| service | 业务规则、状态流转、事务控制和跨表操作 |
-| dao | 数据库 CRUD、条件查询和条件更新 |
-| model | 数据库表结构映射 |
-| request / response | 入参校验与响应结构 |
-| bizcache | 业务缓存读写、缓存 key 规则和缓存失效 |
-| apperror | 业务错误、错误码和错误信息封装 |
+    C->>G: POST /api/v1/orders
+    G->>O: JWT + Request ID
+    O->>P: 查询商品快照
+    P-->>O: 名称、价格、上架状态
+    O->>DB: 创建 reserving 订单和订单项
+    O->>I: 预占库存
+    I-->>O: reservation_id
+    O->>DB: pending + timeout outbox
+    O-->>C: pending order
+```
 
-核心原则：**handler 不写业务规则，service 不直接拼 HTTP 响应，dao 不处理业务状态。**
+关键补偿规则：
 
-## 核心表设计
+- 库存预占失败：订单转为 `failed`。
+- 库存已预占，但订单本地事务失败：调用 Inventory 释放预占。
+- 释放补偿也失败：订单转为 `reconciliation_required`，不伪装为普通失败。
+- 支付成功：Inventory 将预占从 `pending` 转为 `confirmed`。
+- 主动取消或超时取消：Inventory 将预占转为 `released` 并回补可用库存。
 
-| 表 | 作用 | 关键设计 |
-| --- | --- | --- |
-| `users` | 用户表 | `username` 唯一、密码哈希、用户状态、软删除 |
-| `roles` | 角色表 | `role_name` 唯一，内置 `admin` 与 `user` |
-| `user_roles` | 用户角色关联表 | `user_id` 唯一，当前每个用户只绑定一个角色 |
-| `products` | 商品表 | `price_fen` 金额分、商品状态、默认下架 |
-| `product_inventories` | 商品库存表 | `product_id` 唯一，保证一个商品一条库存记录 |
-| `stock_logs` | 库存流水表 | 记录变更前、变更量、变更后、业务类型和业务 ID |
-| `orders` | 订单主表 | `user_id` 归属隔离、`order_no` 唯一、订单状态机 |
-| `order_items` | 订单明细表 | 保存商品名称、价格快照和数量 |
-| `order_idempotency_keys` | 订单幂等表 | `(user_id, idempotency_key)` 复合唯一索引 + `request_hash` |
-| `order_timeout_outbox` | 订单超时 Outbox | 与订单同事务写入，记录发布时间、重试次数和超时截止点 |
+## Outbox 与多 Worker
 
-详细表结构见：[docs/table_design.md](docs/table_design.md)
+订单创建在 Ordering 数据库内写入 `order_timeout_outbox_v2`。Worker 通过租约字段安全领取事件：
 
-## 核心业务设计
+```text
+lease_owner
+lease_until
+next_attempt_at
+```
 
-- 订单创建流程见：[docs/order_flow.md](docs/order_flow.md)
-- 幂等设计见：[docs/idempotency.md](docs/idempotency.md)
-- Redis 缓存设计见：[docs/cache_design.md](docs/cache_design.md)
-- 完整业务规则见：[docs/business_rules.md](docs/business_rules.md)
-- 接口清单见：[docs/api_list.md](docs/api_list.md)
+领取查询使用 `FOR UPDATE SKIP LOCKED`，允许多个 Worker 跳过其他实例已经锁定的记录。Worker 崩溃后，租约过期的事件可以被其他实例重新领取。
 
-## 工程化能力
+当前语义是 **at-least-once**。RabbitMQ 已接收消息、但数据库尚未更新为 `published` 时进程崩溃，事件可能重复发布；超时取消接口依靠幂等状态机处理重复消息。Publisher Confirms 尚未接入。
 
-- HTTP Server 设置 ReadTimeout、WriteTimeout、IdleTimeout、ReadHeaderTimeout 和 MaxHeaderBytes
-- MySQL 初始化时配置连接池：MaxOpenConns、MaxIdleConns、ConnMaxLifetime、ConnMaxIdleTime
-- 启动时使用 PingContext 检查 MySQL 连通性
-- 请求层使用 Request ID、Access Log、Recovery 和超时中间件
-- Redis 不可用时商品详情缓存自动降级，不影响主流程
-- RabbitMQ 使用 TTL + DLX 延迟投递；发布端 Confirm、消费端手动 ACK，重复消息由订单状态条件更新消解
-- Dockerfile 使用多阶段构建和非 root 用户运行应用
-- Docker Compose 编排应用、MySQL、Redis 和 RabbitMQ，并通过健康检查控制依赖启动顺序
-- Goose 管理数据库版本，Makefile 统一封装开发、测试、Docker 和迁移命令
-- CI 覆盖 go test、go test -race、go vet、golangci-lint、goose validate 和 go build
+## 数据库迁移
+
+运行时服务不再调用 GORM `AutoMigrate`。每个业务域拥有独立 Goose 目录：
+
+```text
+migrations/
+├── identity/
+├── catalog/
+├── inventory/
+└── ordering/
+```
+
+Compose 先执行：
+
+```text
+db-init
+├── identity-migrate
+├── catalog-migrate
+├── inventory-migrate
+└── ordering-migrate
+```
+
+迁移成功后，对应业务服务才会启动。根目录旧迁移保留用于原单体回归，不参与当前微服务 Compose 运行。
 
 ## 快速启动
 
-### 前置依赖
+### 依赖
 
-- Go 1.25.7
-- GNU Make
-- Docker 与 Docker Compose
-- Goose v3.27.1
+- Docker
+- Docker Compose v2
+- 可选：Go 1.25.7、Goose v3.27.1，用于本地开发和迁移检查
+
+### 配置
 
 ```bash
-go mod download
-go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+cp .env.example .env
 ```
 
-### 配置环境变量
-
-应用启动时先加载 `.env`，再读取 [config.yml](config.yml)。环境变量会覆盖 YAML 中适合按环境变化的连接配置。
+至少设置：
 
 ```env
-MYSQL_PASSWORD=your-password
-JWT_SECRET=replace-with-at-least-32-random-characters
-JWT_EXPIRE_HOURS=24
-REDIS_PASSWORD=
-RABBITMQ_URL=amqp://order_app:order_dev_password@127.0.0.1:5672/
+MYSQL_PASSWORD=replace_with_a_database_password
+JWT_SECRET=replace_with_a_32_plus_chars_random_secret
+INTERNAL_SERVICE_TOKEN=replace_with_a_long_random_internal_service_token
+```
+
+可选配置：
+
+```env
 ORDER_TIMEOUT_DELAY=30m
+OUTBOX_LEASE_DURATION=30s
+GATEWAY_HOST_PORT=8082
 ```
 
-不要提交真实 `.env`，可从 [.env.example](.env.example) 复制后修改。
+### 启动完整拓扑
 
-### 本地运行后端
-
-PowerShell 示例：
-
-```powershell
-Copy-Item .env.example .env
-$env:MYSQL_PASSWORD = "your-password"
-$env:JWT_SECRET = "replace-with-at-least-32-random-characters"
-
-make infra-up
-make migrate-up
-make run
+```bash
+docker compose config --quiet
+docker compose up -d --build --wait --scale order-timeout-worker=2
+docker compose ps
 ```
-
-默认访问地址：`http://localhost:8082`
 
 健康检查：
 
 ```bash
-curl http://localhost:8082/ping
-curl http://localhost:8082/live
-curl http://localhost:8082/readyz
+curl --fail http://127.0.0.1:8082/ping
+curl --fail http://127.0.0.1:8082/live
+curl --fail http://127.0.0.1:8082/readyz
 ```
 
-### Docker 运行完整服务
+停止并清理：
 
-```powershell
-$env:MYSQL_PASSWORD = "your-password"
-$env:JWT_SECRET = "replace-with-at-least-32-random-characters"
-
-make docker-up
+```bash
+docker compose down -v --remove-orphans
 ```
 
-`make docker-up` 会构建应用镜像，启动 MySQL、Redis、RabbitMQ 和应用，并执行数据库迁移。
+### 完整 Saga 冒烟测试
 
-### 本地运行前端
+在 Linux、macOS、WSL 或 Git Bash 中：
 
-```powershell
-Set-Location fronted
-npm install
-npm run dev
+```bash
+export MYSQL_PASSWORD=replace_with_a_database_password
+sh scripts/smoke/microservices-saga.sh
 ```
 
-前端默认运行在 `http://127.0.0.1:8880`，Vite 会把 `/api` 和 `/ping` 代理到 `http://localhost:8082`。
+该脚本验证：
 
-## 常用命令
+1. 用户注册、登录和管理员授权；
+2. 创建并上架商品；
+3. 初始化库存；
+4. 幂等下单和库存预占；
+5. 支付确认预占；
+6. 主动取消释放库存；
+7. RabbitMQ 超时取消和库存补偿。
 
-| 命令 | 作用 |
-| --- | --- |
-| `make infra-up` | 仅启动 MySQL、Redis 和 RabbitMQ，并等待健康 |
-| `make infra-down` | 停止 Compose 项目 |
-| `make migrate-validate` | 静态校验迁移文件 |
-| `make migrate-status` | 查看数据库迁移状态 |
-| `make migrate-up` | 执行全部待处理迁移 |
-| `make migrate-down` | 回滚最近一条迁移 |
-| `make docker-build` | 构建应用镜像 |
-| `make docker-up` | 构建并启动应用、MySQL、Redis、RabbitMQ |
-| `make docker-down` | 停止并移除容器，保留数据卷 |
-| `make test` | 运行全部 Go 测试 |
-| `make test-service` | 运行 MySQL service 集成测试 |
-| `make test-dao` | 运行关键 DAO MySQL 集成测试 |
-| `make test-migrations` | 在隔离数据库实跑迁移和回滚 |
-| `make test-redis` | 运行 Redis 集成测试 |
-| `make test-order-timeout` | 运行 RabbitMQ + MySQL 订单超时端到端测试 |
-| `make test-all` | 运行普通测试、MySQL service/DAO/迁移测试和 Redis 集成测试 |
-| `make test-race` | 使用 race detector 运行测试 |
-| `make check` | 执行格式化、模块校验、vet 和测试 |
+## CI 验证
 
-## 测试与验证
+GitHub Actions 当前执行：
 
-service 测试会清理所连接数据库中的业务表。必须使用独立测试库，禁止将 `DB_NAME` 指向含有开发数据或生产数据的数据库。
+```text
+golangci-lint
+go test ./...
+go test -race ./...
+go vet ./...
+go build ./...
+旧单体迁移 validate
+4 个服务迁移目录 validate
+6 个服务二进制构建
+Compose 配置校验
+全部服务镜像构建
+四数据库完整拓扑启动
+两个 Timeout Worker 副本检查
+Gateway readiness
+完整订单 Saga 冒烟测试
+```
 
-当前测试重点：
+CI 不是只做静态编译，而是会实际启动完整容器拓扑并执行跨服务业务链路。
 
-- 商品、库存、订单创建、状态机和关键异常分支
-- 并发下单防超卖
-- 多商品事务回滚
-- 创建订单幂等：同 Key 重放、不同请求冲突、并发同 Key、失败回滚后重试
-- 订单状态并发：并发支付、并发取消、支付与取消竞争
-- Redis 商品详情缓存命中、删除和降级
+## 项目结构
 
-手动接口测试文件位于 [docs/http](docs/http)，完整业务链路见 [docs/http/demo_flow.http](docs/http/demo_flow.http)。测试计划见 [docs/test_plan.md](docs/test_plan.md)。
+```text
+cmd/
+├── api-gateway/
+├── identity-service/
+├── catalog-service/
+├── inventory-service/
+├── order-service/
+└── order-timeout-worker/
 
-## 项目文档
+internal/
+├── catalogsvc/
+├── inventorysvc/
+├── ordersvc/
+└── platform/
+    ├── internalapi/
+    ├── serviceclient/
+    └── servicehost/
 
-- [docs/api_list.md](docs/api_list.md)：接口清单
-- [docs/business_rules.md](docs/business_rules.md)：业务规则
-- [docs/table_design.md](docs/table_design.md)：数据表设计
-- [docs/order_flow.md](docs/order_flow.md)：订单创建、取消和状态流转说明
-- [docs/idempotency.md](docs/idempotency.md)：订单创建幂等设计说明
-- [docs/cache_design.md](docs/cache_design.md)：Redis 商品详情缓存设计说明
-- [docs/test_plan.md](docs/test_plan.md)：测试计划
-- [docs/test_result.md](docs/test_result.md)：测试结果记录
-- [docs/project_evolution.md](docs/project_evolution.md)：后续演进
-- [docs/interview_guide.md](docs/interview_guide.md)：简历描述、项目讲解和面试追问
-- [docs/evidence](docs/evidence)：项目运行、测试与关键业务截图证据
+migrations/
+├── identity/
+├── catalog/
+├── inventory/
+└── ordering/
 
-## 当前边界与后续演进
+deploy/docker/             通用服务镜像构建
+scripts/smoke/             端到端微服务业务验证
+docs/architecture/        当前架构与历史基线
+docs/verification/        CI 和运行验证说明
+compose.yml                四库微服务本地编排
+.github/workflows/ci.yml   完整持续集成流水线
+```
 
-当前项目重点是后端业务基本功，不把系统包装成完整电商平台。
+仓库中仍保留原单体的 `handler/service/dao/model`、旧迁移和前端目录，用于历史回归和展示演进过程。当前微服务运行路径以 `cmd/*-service`、`internal/*svc` 和服务独立迁移目录为准。
 
-后续可演进方向：
+## 文档入口
 
-- 增加订单列表状态筛选和时间范围筛选
-- 扩展 handler 边界测试和 DAO 集成测试覆盖
-- 增加 Prometheus 指标、结构化日志字段规范和链路追踪
-- 为幂等记录增加过期清理策略
-- 增加操作日志，记录管理员对商品与库存的变更
+- [文档导航](docs/README.md)
+- [微服务数据所有权与订单 Saga](docs/architecture/microservices-v2-data-ownership.md)
+- [服务迁移与 Outbox 租约](docs/architecture/migrations-outbox-leasing.md)
+- [云原生完成度与缺口](docs/architecture/cloud-native-status.md)
+- [项目演进记录](docs/project_evolution.md)
+- [CI 与运行验证](docs/verification/ci-baseline.md)
+
+## 当前边界
+
+已经完成：
+
+- 独立进程、独立容器和 API Gateway；
+- 服务独立数据库和数据所有权；
+- 库存预占与订单 Saga；
+- Transactional Outbox 与 RabbitMQ 超时补偿；
+- 多 Worker 租约抢占；
+- 服务独立 Goose 迁移；
+- 完整 Compose 与端到端 CI 验证。
+
+尚未完成：
+
+- Kubernetes Deployment、Service、Ingress、ConfigMap、Secret、Job 和 HPA；
+- Prometheus、Grafana、OpenTelemetry 和集中式日志；
+- Publisher Confirms、标准重试、熔断、限流和隔离；
+- 最小权限数据库账户、mTLS/Workload Identity；
+- 镜像 Registry、环境部署、滚动发布和自动回滚；
+- 备份恢复、对账任务、告警、压测与故障演练。
+
+因此，当前最准确的项目描述是：
+
+> **完成微服务核心改造和容器化验证的云原生演进实验项目，尚未达到生产级云原生交付状态。**
