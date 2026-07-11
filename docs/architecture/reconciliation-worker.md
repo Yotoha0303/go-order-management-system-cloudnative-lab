@@ -181,6 +181,56 @@ RECONCILIATION_BATCH_SIZE=10
 
 An unsupported action, missing Order or incompatible Order state moves the task to `unresolved`. It remains stored with `last_error` and emits a structured error log. The Worker does not guess an alternative repair.
 
+## Read-only dry-run
+
+The Worker binary also supports a one-shot preview mode:
+
+```text
+RECONCILIATION_DRY_RUN=true
+```
+
+Dry-run selects the same currently eligible `pending` and `failed` tasks, but deliberately does not claim them. It performs one read-only task/Order JOIN and emits a JSON report containing:
+
+```text
+task_id
+order_id
+action
+task_status
+current_order_status
+intended_target_state
+classification
+reason
+```
+
+Classifications:
+
+| Classification | Meaning |
+| --- | --- |
+| `ready` | supported action and Order is `reconciliation_required` |
+| `already_final` | Order already has the intended target state |
+| `unsupported_action` | action is not implemented |
+| `state_mismatch` | current Order state is incompatible with the action |
+| `order_missing` | referenced Order no longer exists |
+
+Dry-run guarantees:
+
+- no lease is claimed;
+- `attempts` is not incremented;
+- no task, Order or Outbox record is updated;
+- no Inventory HTTP request is made;
+- the process exits after printing the report;
+- an empty eligible set returns a valid empty report.
+
+Local Compose invocation:
+
+```bash
+docker compose run --rm \
+  -e RECONCILIATION_DRY_RUN=true \
+  order-reconciliation-worker
+```
+
+The normal long-running Worker path remains unchanged when `RECONCILIATION_DRY_RUN` is absent or false.
+
 ## Persistence after remote deadlines
 
 Remote calls use a bounded task Context. Task failure/unresolved updates and successful local finalization use a separate short persistence Context. This ensures a remote timeout does not also prevent the Worker from clearing its lease and recording the retry state.
@@ -202,7 +252,7 @@ Completed, failed and unresolved tasks remain distinguishable.
 
 ## Compose and scaling
 
-Local runtime:
+Normal local runtime:
 
 ```bash
 docker compose up -d --wait \
@@ -217,6 +267,7 @@ The reconciliation service intentionally has no fixed `container_name`, allowing
 This implementation does not provide:
 
 - a human approval UI;
+- executing only a selected subset from dry-run output;
 - arbitrary workflow definitions;
 - exactly-once remote effects;
 - cross-service distributed transactions;
