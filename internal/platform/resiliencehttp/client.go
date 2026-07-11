@@ -140,7 +140,7 @@ func (executor *Executor) Do(
 			remaining, ok := Remaining(ctx)
 			if ok && remaining <= policy.MinimumAttemptGap {
 				if lastErr != nil {
-					return nil, fmt.Errorf("%w: %v", ErrInsufficientBudget, lastErr)
+					return nil, fmt.Errorf("%w: %w", ErrInsufficientBudget, lastErr)
 				}
 				return nil, ErrInsufficientBudget
 			}
