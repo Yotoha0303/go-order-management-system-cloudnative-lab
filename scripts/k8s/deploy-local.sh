@@ -15,6 +15,7 @@ require_command() {
 require_command docker
 require_command kind
 require_command kubectl
+require_command curl
 
 if ! kind get clusters | grep -Fxq "$CLUSTER_NAME"; then
   kind create cluster \
@@ -24,29 +25,30 @@ fi
 
 kubectl config use-context "kind-$CLUSTER_NAME" >/dev/null
 
-printf '%s\n' 'Building application images...'
-docker compose build \
-  api-gateway \
-  identity-service \
-  catalog-service \
-  inventory-service \
-  order-service \
-  order-timeout-worker \
-  order-reconciliation-worker
-
-images='
-go-order-management-system/api-gateway:local
-go-order-management-system/identity-service:local
-go-order-management-system/catalog-service:local
-go-order-management-system/inventory-service:local
-go-order-management-system/order-service:local
-go-order-management-system/order-timeout-worker:local
-go-order-management-system/order-reconciliation-worker:local
+services='
+api-gateway
+identity-service
+catalog-service
+inventory-service
+order-service
+order-timeout-worker
+order-reconciliation-worker
 '
 
+printf '%s\n' 'Building application images...'
+for service in $services; do
+  docker build \
+    --file deploy/docker/Dockerfile.service \
+    --build-arg "SERVICE=$service" \
+    --tag "go-order-management-system/$service:local" \
+    .
+done
+
 printf '%s\n' 'Loading images into kind...'
-for image in $images; do
-  kind load docker-image "$image" --name "$CLUSTER_NAME"
+for service in $services; do
+  kind load docker-image \
+    "go-order-management-system/$service:local" \
+    --name "$CLUSTER_NAME"
 done
 
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
