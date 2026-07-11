@@ -31,10 +31,6 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
-	if err := inventorysvc.Migrate(db); err != nil {
-		logger.Error("migrate inventory database", "error", err)
-		os.Exit(1)
-	}
 
 	tokenManager, err := auth.NewTokenManager(
 		os.Getenv("JWT_SECRET"),
