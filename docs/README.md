@@ -10,6 +10,7 @@
 | [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、服务间调用、库存预占和订单 Saga |
 | [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 服务独立 Goose 迁移、Outbox 租约和多 Worker 扩容 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 当前云原生完成度、已完成能力和生产级缺口 |
+| [roadmap/cloud-native-delivery-plan.md](roadmap/cloud-native-delivery-plan.md) | 可靠性、Kubernetes、可观测性和运行保障四阶段交付路线 |
 | [verification/ci-baseline.md](verification/ci-baseline.md) | 当前 CI、Compose、双 Worker 和端到端 Saga 验证 |
 | [project_evolution.md](project_evolution.md) | 从原单体到当前微服务阶段的演进记录 |
 
