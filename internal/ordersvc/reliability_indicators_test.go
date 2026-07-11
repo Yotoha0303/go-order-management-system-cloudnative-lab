@@ -2,7 +2,6 @@ package ordersvc
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -17,14 +16,14 @@ func TestReliabilityReporterSnapshot(t *testing.T) {
 	fixed := time.Date(2026, time.July, 11, 12, 0, 0, 0, time.UTC)
 
 	outboxRows := []struct {
-		orderID      int64
-		dueAt        time.Time
-		status       string
-		attempts     int
-		leaseOwner   string
-		leaseUntil   any
-		nextAttempt  time.Time
-		createdAt    time.Time
+		orderID     int64
+		dueAt       time.Time
+		status      string
+		attempts    int
+		leaseOwner  string
+		leaseUntil  any
+		nextAttempt time.Time
+		createdAt   time.Time
 	}{
 		{1, fixed.Add(-time.Minute), OutboxPending, 0, "", nil, fixed.Add(-time.Minute), fixed.Add(-10 * time.Minute)},
 		{2, fixed.Add(-2 * time.Minute), OutboxFailed, 3, "worker-a", fixed.Add(time.Minute), fixed.Add(-time.Minute), fixed.Add(-20 * time.Minute)},
@@ -184,4 +183,3 @@ func (logger *queryCountingLogger) Count() int {
 }
 
 var _ gormlogger.Interface = (*queryCountingLogger)(nil)
-var _ = errors.Is
