@@ -21,9 +21,9 @@ Outbox 多 Worker 租约
   ↓
 应用可靠性收口
   ↓
-【当前下一阶段：Kubernetes 基础】
+Kubernetes 基础 + 真实 kind 验收
   ↓
-完整可观测性
+【当前下一阶段：可观测性与 Kubernetes 治理】
   ↓
 持续交付与运行保障
 ```
@@ -59,7 +59,7 @@ Outbox 多 Worker 租约
 
 ## Phase 2：Microservices v1——运行单元拆分
 
-完成：
+拆分：
 
 ```text
 api-gateway
@@ -92,7 +92,7 @@ Ordering  -> go_order_ordering
 - Order → Inventory：库存预占、确认和释放；
 - Timeout Worker → Order：超时取消。
 
-### 状态流
+### 状态与补偿
 
 ```text
 Inventory reservation:
@@ -103,8 +103,6 @@ reserving -> pending -> paid / cancelled
 reserving -> failed
 uncertain -> reconciliation_required
 ```
-
-### 补偿规则
 
 - 预占失败：订单标记 `failed`；
 - 预占成功但订单最终事务失败：释放预占；
@@ -149,19 +147,13 @@ Worker 使用 `FOR UPDATE SKIP LOCKED`，实现：
 
 ### 5.1 RabbitMQ Publisher Confirms
 
-完成：
-
 - 发布与消费 Channel 分离；
-- Publisher Channel 开启 Confirm Mode；
 - Broker ACK 后才把 Outbox 标记为 `published`；
 - NACK、确认超时、通道关闭和直接发布错误进入失败重试；
-- 真实 RabbitMQ ACK 与 MySQL 状态测试。
-
-投递语义仍为 at-least-once，不宣称 exactly-once。
+- 真实 RabbitMQ ACK 与 MySQL 状态测试；
+- 保留 at-least-once，不宣称 exactly-once。
 
 ### 5.2 HTTP 请求预算与有限重试
-
-完成：
 
 ```text
 X-Request-ID
@@ -180,8 +172,6 @@ X-Request-Deadline
 
 ### 5.3 基础熔断与 Gateway 限流
 
-完成：
-
 - 按 `<upstream>/<operation>` 隔离的 Closed/Open/Half-open 熔断器；
 - 选定基础设施错误计数，4xx 不打开熔断；
 - Open 状态在网络调用前快速失败；
@@ -191,10 +181,7 @@ X-Request-Deadline
 
 ### 5.4 Outbox 与 Saga 运行指标
 
-完成：
-
-- 一条 Outbox 聚合 SQL；
-- 一条 Order 聚合 SQL；
+- Outbox 与 Order 聚合 SQL；
 - 内部 Token 保护的只读 JSON 端点；
 - Outbox 状态、租约、可重试、超时、年龄和尝试次数；
 - Order 状态、对账数量、最老年龄和卡住的瞬态状态；
@@ -220,20 +207,81 @@ order-reconciliation-worker
 | `reserving` | `release_inventory_and_fail` |
 | `cancelling` | `finalize_cancel` |
 | `paying` | `finalize_payment` |
-| 其他 | 保留为 `unresolved` |
+| 其他 | `unresolved` |
 
 实现：
 
 - 订单状态与任务创建同一 MySQL 事务；
-- 不解析 `failure_reason`；
 - 任务租约与 `FOR UPDATE SKIP LOCKED`；
 - 多副本和过期租约恢复；
 - Inventory release/confirm 幂等重试；
 - 本地最终订单状态、Outbox 完成和任务完成同事务；
 - 有界指数重试；
 - 未知动作和状态不匹配保持 `unresolved`；
-- 保留原始失败历史；
+- 非变更式 dry-run；
 - CI 启动两个 Timeout Worker 和两个 Reconciliation Worker。
+
+## Phase 6：Kubernetes 基础与运行验收——已完成基础版
+
+### 6.1 Kustomize 交付基础
+
+新增：
+
+```text
+deploy/kubernetes/base
+deploy/kubernetes/overlays/local
+scripts/k8s/deploy-local.sh
+```
+
+基础清单包括：
+
+- Namespace、ConfigMap 和 Secret 合同；
+- MySQL、RabbitMQ StatefulSet 与 PVC；
+- 四个服务独立 Migration Job；
+- Gateway、四个业务服务和两个 Worker Deployment；
+- HTTP Service 与 Gateway NodePort；
+- startup/liveness/readiness Probe；
+- Worker 进程探针；
+- CPU/内存 requests 和 limits；
+- RollingUpdate；
+- Schema 等待 initContainer。
+
+CI 首先验证 local overlay 可以被 Kustomize 实际渲染。
+
+### 6.2 真实 kind 部署、恢复与 Saga
+
+新增独立 Kubernetes CI Job：
+
+```text
+quality + Compose regression
+          ↓
+kind runtime verification
+```
+
+真实执行：
+
+1. 从干净 runner 创建 disposable kind 集群；
+2. 构建并加载七个应用镜像；
+3. 应用 Kustomize local overlay；
+4. 等待 MySQL、RabbitMQ；
+5. 等待四个 Migration Job；
+6. 等待七个 Deployment；
+7. 验证只有 Gateway 使用 NodePort；
+8. 验证两个 Timeout Worker 和两个 Reconciliation Worker；
+9. 发布不可用 Gateway revision，确认 rollout 失败；
+10. 执行 `kubectl rollout undo`；
+11. 验证原镜像与 Gateway readiness 恢复；
+12. 执行注册、商品、库存、幂等下单、支付、取消和超时补偿；
+13. 无论成功失败都删除集群。
+
+Compose 与 Kubernetes 共用同一组 Saga 业务断言，只切换管理员授权后端。
+
+实际验收发现并修复：
+
+- MySQL Pod 内隐式 Unix Socket 与 TCP 行为差异；
+- Deployment Ready 后 Gateway 聚合 readiness 短暂抖动造成的一次性 `curl` 脆弱性。
+
+失败时自动上传资源、事件、Pod 描述、容器日志和 kind 节点日志。
 
 ## 当前项目状态
 
@@ -245,29 +293,28 @@ order-reconciliation-worker
 - Transactional Outbox、Publisher Confirms 和超时补偿；
 - HTTP deadline、有限重试、熔断和限流；
 - Outbox/Saga 运行指标；
-- 自动分类和修复已知对账场景；
+- 自动分类、修复和 dry-run；
 - 服务独立迁移；
-- 四库、四个 Worker 副本和完整 Saga CI。
+- Compose 四库、四个 Worker 副本和完整 Saga；
+- Kustomize Kubernetes 基础；
+- kind 真实部署、失败 rollout 检测、`rollout undo` 和完整 Kubernetes Saga。
 
 当前仍不等于完整生产级云原生系统。
 
-## Phase 6：Kubernetes 基础——下一阶段
+## Phase 6 剩余 Kubernetes 治理
 
-计划：
+待完成：
 
-- Deployment；
-- Service；
-- ConfigMap；
-- Secret；
-- Migration Job；
-- Ingress；
-- startup/liveness/readiness Probe；
-- resource requests/limits；
-- RollingUpdate 与 rollout undo；
-- HPA、PDB 和基础 NetworkPolicy；
-- kind 或 k3d 本地集群验证。
+- Ingress Controller；
+- PodDisruptionBudget；
+- HorizontalPodAutoscaler；
+- NetworkPolicy；
+- 多节点与节点失效验证；
+- 不可变 Registry 镜像；
+- dev/test/prod overlays；
+- 托管云存储、LoadBalancer 和 Workload Identity。
 
-## Phase 7：完整可观测性——待完成
+## Phase 7：完整可观测性——下一主阶段
 
 计划：
 
@@ -286,7 +333,7 @@ order-reconciliation-worker
 - GHCR 版本化镜像；
 - 测试环境自动部署；
 - 部署后 Smoke Test；
-- 错误版本回滚；
+- 环境级错误版本回滚；
 - MySQL 备份恢复；
 - 故障演练；
 - Runbook；
@@ -304,6 +351,7 @@ order-reconciliation-worker
 5. Publisher Confirms 解决了什么，仍未解决什么；
 6. Request budget、重试、熔断和限流如何配合；
 7. 为什么对账动作必须结构化，不能解析错误文本；
-8. 触发器如何保证订单状态和对账任务不分离；
-9. 多 Worker 如何通过租约和 `SKIP LOCKED` 协作；
-10. 为什么当前仍不能宣称完成生产级云原生交付。
+8. 多 Worker 如何通过租约和 `SKIP LOCKED` 协作；
+9. Kubernetes 中如何保证 Migration Job、Schema 和 readiness 的启动顺序；
+10. 如何用不可用 revision 和 `rollout undo` 验证部署恢复；
+11. 为什么 kind 自动验收仍不等于生产级托管 Kubernetes。
