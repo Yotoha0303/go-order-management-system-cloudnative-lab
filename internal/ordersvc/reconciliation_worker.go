@@ -218,9 +218,9 @@ func (worker *ReconciliationWorker) processTask(parent context.Context, task *Re
 	var order Order
 	if err := worker.db.WithContext(ctx).First(&order, "id = ?", task.OrderID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return worker.markUnresolved(ctx, task, "order not found")
+			return worker.markUnresolved(task, "order not found")
 		}
-		return worker.markFailed(ctx, task, err)
+		return worker.markFailed(task, err)
 	}
 
 	var err error
@@ -232,7 +232,7 @@ func (worker *ReconciliationWorker) processTask(parent context.Context, task *Re
 	case ReconciliationActionFinalizePayment:
 		err = worker.finalizePayment(ctx, task, &order)
 	default:
-		return worker.markUnresolved(ctx, task, fmt.Sprintf("%s: %s", ErrUnsupportedReconciliationAction, task.Action))
+		return worker.markUnresolved(task, fmt.Sprintf("%s: %s", ErrUnsupportedReconciliationAction, task.Action))
 	}
 	if err == nil {
 		worker.logger.Info(
@@ -246,14 +246,14 @@ func (worker *ReconciliationWorker) processTask(parent context.Context, task *Re
 		return nil
 	}
 	if errors.Is(err, ErrReconciliationStateMismatch) || errors.Is(err, ErrUnsupportedReconciliationAction) {
-		return worker.markUnresolved(ctx, task, err.Error())
+		return worker.markUnresolved(task, err.Error())
 	}
-	return worker.markFailed(ctx, task, err)
+	return worker.markFailed(task, err)
 }
 
 func (worker *ReconciliationWorker) releaseInventoryAndFail(ctx context.Context, task *ReconciliationTask, order *Order) error {
 	if order.Status == OrderStatusFailed {
-		return worker.completeTask(ctx, task, OrderStatusFailed, false)
+		return worker.completeTask(task, OrderStatusFailed, false)
 	}
 	if order.Status != OrderStatusReconciliationRequired {
 		return fmt.Errorf("%w: action=%s status=%s", ErrReconciliationStateMismatch, task.Action, order.Status)
@@ -261,12 +261,12 @@ func (worker *ReconciliationWorker) releaseInventoryAndFail(ctx context.Context,
 	if _, err := worker.inventory.Release(ctx, order.ReservationID); err != nil {
 		return fmt.Errorf("release inventory reservation: %w", err)
 	}
-	return worker.completeTask(ctx, task, OrderStatusFailed, false)
+	return worker.completeTask(task, OrderStatusFailed, false)
 }
 
 func (worker *ReconciliationWorker) finalizeCancel(ctx context.Context, task *ReconciliationTask, order *Order) error {
 	if order.Status == OrderStatusCancelled {
-		return worker.completeTask(ctx, task, OrderStatusCancelled, true)
+		return worker.completeTask(task, OrderStatusCancelled, true)
 	}
 	if order.Status != OrderStatusReconciliationRequired {
 		return fmt.Errorf("%w: action=%s status=%s", ErrReconciliationStateMismatch, task.Action, order.Status)
@@ -274,12 +274,12 @@ func (worker *ReconciliationWorker) finalizeCancel(ctx context.Context, task *Re
 	if _, err := worker.inventory.Release(ctx, order.ReservationID); err != nil {
 		return fmt.Errorf("confirm released inventory reservation: %w", err)
 	}
-	return worker.completeTask(ctx, task, OrderStatusCancelled, true)
+	return worker.completeTask(task, OrderStatusCancelled, true)
 }
 
 func (worker *ReconciliationWorker) finalizePayment(ctx context.Context, task *ReconciliationTask, order *Order) error {
 	if order.Status == OrderStatusPaid {
-		return worker.completeTask(ctx, task, OrderStatusPaid, true)
+		return worker.completeTask(task, OrderStatusPaid, true)
 	}
 	if order.Status != OrderStatusReconciliationRequired {
 		return fmt.Errorf("%w: action=%s status=%s", ErrReconciliationStateMismatch, task.Action, order.Status)
@@ -287,15 +287,16 @@ func (worker *ReconciliationWorker) finalizePayment(ctx context.Context, task *R
 	if _, err := worker.inventory.Confirm(ctx, order.ReservationID); err != nil {
 		return fmt.Errorf("confirm inventory reservation: %w", err)
 	}
-	return worker.completeTask(ctx, task, OrderStatusPaid, true)
+	return worker.completeTask(task, OrderStatusPaid, true)
 }
 
 func (worker *ReconciliationWorker) completeTask(
-	ctx context.Context,
 	task *ReconciliationTask,
 	targetStatus string,
 	completeOutbox bool,
 ) error {
+	ctx, cancel := worker.persistenceContext()
+	defer cancel()
 	now := worker.now().UTC()
 	return worker.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&Order{}).
@@ -340,7 +341,9 @@ func (worker *ReconciliationWorker) completeTask(
 	})
 }
 
-func (worker *ReconciliationWorker) markFailed(ctx context.Context, task *ReconciliationTask, cause error) error {
+func (worker *ReconciliationWorker) markFailed(task *ReconciliationTask, cause error) error {
+	ctx, cancel := worker.persistenceContext()
+	defer cancel()
 	now := worker.now().UTC()
 	nextAttempt := now.Add(worker.retryDelay(task.Attempts))
 	result := worker.db.WithContext(ctx).Model(&ReconciliationTask{}).
@@ -362,7 +365,9 @@ func (worker *ReconciliationWorker) markFailed(ctx context.Context, task *Reconc
 	return cause
 }
 
-func (worker *ReconciliationWorker) markUnresolved(ctx context.Context, task *ReconciliationTask, reason string) error {
+func (worker *ReconciliationWorker) markUnresolved(task *ReconciliationTask, reason string) error {
+	ctx, cancel := worker.persistenceContext()
+	defer cancel()
 	now := worker.now().UTC()
 	result := worker.db.WithContext(ctx).Model(&ReconciliationTask{}).
 		Where("id = ? AND lease_owner = ?", task.ID, worker.cfg.WorkerID).
@@ -390,6 +395,10 @@ func (worker *ReconciliationWorker) markUnresolved(ctx context.Context, task *Re
 		"reason", reason,
 	)
 	return nil
+}
+
+func (worker *ReconciliationWorker) persistenceContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
 func (worker *ReconciliationWorker) retryDelay(attempt int) time.Duration {
