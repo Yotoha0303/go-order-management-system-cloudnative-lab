@@ -95,7 +95,24 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        id: lint
+        continue-on-error: true
+        run: golangci-lint run ./... > lint.log 2>&1
+
+      - name: Upload lint diagnostics
+        if: steps.lint.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-log
+          path: lint.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce lint result
+        if: steps.lint.outcome == 'failure'
+        run: |
+          cat lint.log
+          exit 1
 
       - name: Run tests
         run: go test ./...
