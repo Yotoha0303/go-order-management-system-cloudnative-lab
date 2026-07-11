@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go-order-management-system/internal/platform/resiliencehttp"
 	"go-order-management-system/internal/platform/servicehost"
 )
 
@@ -30,10 +33,10 @@ func main() {
 	logger := servicehost.NewLogger("api-gateway")
 
 	routes, err := buildRoutes(map[string]string{
-		"identity-service": envOrDefault("IDENTITY_SERVICE_URL", "http://identity-service:8083"),
-		"catalog-service":  envOrDefault("CATALOG_SERVICE_URL", "http://catalog-service:8084"),
+		"identity-service":  envOrDefault("IDENTITY_SERVICE_URL", "http://identity-service:8083"),
+		"catalog-service":   envOrDefault("CATALOG_SERVICE_URL", "http://catalog-service:8084"),
 		"inventory-service": envOrDefault("INVENTORY_SERVICE_URL", "http://inventory-service:8085"),
-		"order-service":    envOrDefault("ORDER_SERVICE_URL", "http://order-service:8086"),
+		"order-service":     envOrDefault("ORDER_SERVICE_URL", "http://order-service:8086"),
 	})
 	if err != nil {
 		logger.Error("build gateway routes", "error", err)
@@ -48,11 +51,19 @@ func main() {
 
 	handler := &gateway{
 		routes: routes,
-		client: &http.Client{Timeout: 2 * time.Second},
+		client: resiliencehttp.NewHTTPClient(resiliencehttp.TransportConfig{
+			ConnectTimeout:        300 * time.Millisecond,
+			ResponseHeaderTimeout: time.Second,
+			TotalTimeout:          2 * time.Second,
+		}),
 	}
+	budgetedHandler := resiliencehttp.BudgetHandler(handler, resiliencehttp.BudgetConfig{
+		Default: 10 * time.Second,
+		Maximum: 30 * time.Second,
+	})
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           handler,
+		Handler:           budgetedHandler,
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -103,15 +114,29 @@ func newUpstream(name, rawURL string) (route, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = resiliencehttp.NewTransport(resiliencehttp.TransportConfig{
+		ConnectTimeout:        500 * time.Millisecond,
+		TLSHandshakeTimeout:   time.Second,
+		ResponseHeaderTimeout: 8 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	})
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		req.Host = target.Host
+		resiliencehttp.ApplyMetadata(req.Context(), req)
 	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"code":    "upstream_unavailable",
-			"message": proxyErr.Error(),
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, proxyErr error) {
+		status := http.StatusBadGateway
+		code := "upstream_unavailable"
+		if errors.Is(proxyErr, context.DeadlineExceeded) || errors.Is(req.Context().Err(), context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+			code = "upstream_timeout"
+		}
+		writeJSON(w, status, map[string]any{
+			"code":       code,
+			"message":    proxyErr.Error(),
+			"request_id": resiliencehttp.RequestID(req.Context()),
 		})
 	}
 	return route{name: name, base: target, proxy: proxy}, nil
@@ -135,9 +160,6 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if req.Header.Get("X-Request-ID") == "" {
-		req.Header.Set("X-Request-ID", fmt.Sprintf("gw-%d", time.Now().UnixNano()))
-	}
 	for _, candidate := range g.routes {
 		if pathMatches(req.URL.Path, candidate.prefix) {
 			candidate.proxy.ServeHTTP(w, req)
@@ -165,6 +187,7 @@ func (g *gateway) ready(w http.ResponseWriter, req *http.Request) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "service": candidate.name})
 			return
 		}
+		resiliencehttp.ApplyMetadata(req.Context(), healthReq)
 		resp, err := g.client.Do(healthReq)
 		if err != nil {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "service": candidate.name})
