@@ -128,7 +128,9 @@ func TestConfirmedAMQPPublisherReceivesBrokerAck(t *testing.T) {
 	if err := channel.ExchangeDeclare(exchange, "direct", false, true, false, false, nil); err != nil {
 		t.Fatalf("declare test exchange: %v", err)
 	}
-	defer channel.ExchangeDelete(exchange, false, false)
+	t.Cleanup(func() {
+		_ = channel.ExchangeDelete(exchange, false, false)
+	})
 
 	queue, err := channel.QueueDeclare("", false, true, true, false, nil)
 	if err != nil {
@@ -151,11 +153,14 @@ func TestConfirmedAMQPPublisherReceivesBrokerAck(t *testing.T) {
 		t.Fatalf("publish with broker confirmation: %v", err)
 	}
 
-	inspected, err := channel.QueueInspect(queue.Name)
+	delivery, ok, err := channel.Get(queue.Name, true)
 	if err != nil {
-		t.Fatalf("inspect confirmed queue: %v", err)
+		t.Fatalf("get confirmed message: %v", err)
 	}
-	if inspected.Messages != 1 {
-		t.Fatalf("expected one confirmed message in queue, got %d", inspected.Messages)
+	if !ok {
+		t.Fatal("expected one confirmed message in queue")
+	}
+	if delivery.MessageId != "1" {
+		t.Fatalf("expected message id 1, got %q", delivery.MessageId)
 	}
 }
