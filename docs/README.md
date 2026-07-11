@@ -15,7 +15,6 @@
 | [verification/publisher-confirms.md](verification/publisher-confirms.md) | RabbitMQ Broker ACK 与 Outbox 状态验证 |
 | [verification/http-timeout-retry.md](verification/http-timeout-retry.md) | 请求预算和有限重试验证计划 |
 | [project_evolution.md](project_evolution.md) | 从原单体到当前微服务阶段的演进记录 |
-| [roadmap/cloud-native-delivery-plan.md](roadmap/cloud-native-delivery-plan.md) | 可靠性、Kubernetes、可观测性和运行保障路线 |
 
 ## 当前运行路径
 
