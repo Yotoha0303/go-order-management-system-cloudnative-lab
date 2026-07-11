@@ -11,9 +11,9 @@ import (
 )
 
 var (
-	errPublisherNacked        = errors.New("rabbitmq publish negatively acknowledged")
-	errPublisherConfirmClosed = errors.New("rabbitmq publisher confirmation channel closed")
-	errPublisherConfirmTimed  = errors.New("rabbitmq publisher confirmation timed out")
+	errPublisherNacked         = errors.New("rabbitmq publish negatively acknowledged")
+	errPublisherConfirmClosed  = errors.New("rabbitmq publisher confirmation channel closed")
+	errPublisherConfirmTimeout = errors.New("rabbitmq publisher confirmation timed out")
 )
 
 type timeoutEventPublisher interface {
@@ -21,10 +21,10 @@ type timeoutEventPublisher interface {
 }
 
 type confirmedAMQPPublisher struct {
-	channel      *amqp.Channel
-	confirmations <-chan amqp.Confirmation
-	exchange     string
-	routingKey   string
+	channel        *amqp.Channel
+	confirmations  <-chan amqp.Confirmation
+	exchange       string
+	routingKey     string
 	confirmTimeout time.Duration
 }
 
@@ -82,6 +82,6 @@ func waitForPublisherConfirmation(ctx context.Context, confirmations <-chan amqp
 		}
 		return nil
 	case <-ctx.Done():
-		return fmt.Errorf("%w: %w", errPublisherConfirmTimed, ctx.Err())
+		return fmt.Errorf("%w: %w", errPublisherConfirmTimeout, ctx.Err())
 	}
 }
