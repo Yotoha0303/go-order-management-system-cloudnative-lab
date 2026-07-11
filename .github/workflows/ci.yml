@@ -140,7 +140,7 @@ jobs:
       - name: Build service binaries
         run: |
           mkdir -p bin
-          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker; do
+          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker order-reconciliation-worker; do
             go build -trimpath -o "bin/${service}" "./cmd/${service}"
           done
 
@@ -150,10 +150,10 @@ jobs:
       - name: Build microservice images
         run: docker compose build
 
-      - name: Start data-isolated microservices with two workers
+      - name: Start data-isolated microservices with worker replicas
         id: startup
         continue-on-error: true
-        run: docker compose up -d --wait --scale order-timeout-worker=2
+        run: docker compose up -d --wait --scale order-timeout-worker=2 --scale order-reconciliation-worker=2
 
       - name: Collect startup diagnostics
         if: steps.startup.outcome == 'failure'
@@ -184,8 +184,10 @@ jobs:
       - name: Verify gateway readiness and worker replicas
         run: |
           curl --fail --silent --show-error http://127.0.0.1:8082/readyz
-          worker_count="$(docker compose ps -q order-timeout-worker | wc -l | tr -d ' ')"
-          test "${worker_count}" -eq 2
+          timeout_worker_count="$(docker compose ps -q order-timeout-worker | wc -l | tr -d ' ')"
+          reconciliation_worker_count="$(docker compose ps -q order-reconciliation-worker | wc -l | tr -d ' ')"
+          test "${timeout_worker_count}" -eq 2
+          test "${reconciliation_worker_count}" -eq 2
           docker compose ps
 
       - name: Verify order Saga business flow

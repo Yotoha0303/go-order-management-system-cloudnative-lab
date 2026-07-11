@@ -1,6 +1,6 @@
 # 项目演进记录
 
-本文记录项目从业务型 Go 单体到当前微服务实验系统的真实演进过程。
+本文记录项目从业务型 Go 单体到当前云原生演进实验系统的真实过程。
 
 ## 阶段总览
 
@@ -8,8 +8,6 @@
 业务单体
   ↓
 工程化单体
-  ↓
-独立 API / Worker
   ↓
 多服务运行单元
   ↓
@@ -21,13 +19,13 @@
   ↓
 Outbox 多 Worker 租约
   ↓
-【当前阶段】
+应用可靠性收口
   ↓
-可观测性与可靠性
+【当前下一阶段：Kubernetes 基础】
   ↓
-Kubernetes
+完整可观测性
   ↓
-持续交付与生产治理
+持续交付与运行保障
 ```
 
 ## Phase 0：原单体业务基本盘
@@ -45,7 +43,7 @@ Kubernetes
 - React 管理台；
 - Docker、Compose、Goose、Makefile 和 GitHub Actions。
 
-这一阶段的核心一致性依赖单个 MySQL 本地事务：订单、库存、订单项、幂等和 Outbox 同事务提交。
+这一阶段的核心一致性依赖单个 MySQL 本地事务。
 
 ## Phase 1：迁移基线与架构审计
 
@@ -57,28 +55,26 @@ Kubernetes
 - 固化单体依赖、数据所有权、事务边界和风险；
 - 建立可重复的 Compose 和 CI 验证入口。
 
-该阶段不改变业务行为，只为后续拆分建立可验证基线。
+该阶段不改变业务行为，只为后续演进建立可验证基线。
 
 ## Phase 2：Microservices v1——运行单元拆分
 
 完成：
 
-- `api-gateway`；
-- `identity-service`；
-- `catalog-service`；
-- `inventory-service`；
-- `order-service`；
-- `order-timeout-worker`；
-- 每个服务独立二进制和 Docker 镜像；
-- Gateway 统一入口和上游就绪检查；
-- Worker 与 HTTP API 生命周期分离；
-- CI 构建全部服务和镜像。
+```text
+api-gateway
+identity-service
+catalog-service
+inventory-service
+order-service
+order-timeout-worker
+```
 
-限制：服务虽然已拆为独立进程，但最初仍共享 MySQL。
+每个运行单元拥有独立二进制和 Docker 镜像。Gateway 提供统一入口，Timeout Worker 与 HTTP 生命周期分离。
+
+初始限制：服务虽然已拆成进程，但仍共享 MySQL。
 
 ## Phase 3：Microservices v2——数据所有权与 Saga
-
-完成：
 
 ### 独立数据库
 
@@ -94,18 +90,15 @@ Ordering  -> go_order_ordering
 - Catalog / Inventory → Identity：管理员角色校验；
 - Order → Catalog：商品快照；
 - Order → Inventory：库存预占、确认和释放；
-- Worker → Order：超时取消。
+- Timeout Worker → Order：超时取消。
 
-### 库存预占
-
-```text
-pending -> confirmed
-pending -> released
-```
-
-### Order Saga
+### 状态流
 
 ```text
+Inventory reservation:
+pending -> confirmed / released
+
+Order:
 reserving -> pending -> paid / cancelled
 reserving -> failed
 uncertain -> reconciliation_required
@@ -119,13 +112,9 @@ uncertain -> reconciliation_required
 - 取消或超时：释放库存；
 - 支付：确认库存。
 
-### 验证
-
 CI 实际启动四数据库拓扑，并验证注册、商品、库存、幂等下单、支付、主动取消和 RabbitMQ 超时补偿。
 
 ## Phase 4：独立迁移与 Outbox 多 Worker
-
-完成：
 
 ### 服务独立 Goose 迁移
 
@@ -136,7 +125,7 @@ migrations/inventory
 migrations/ordering
 ```
 
-业务进程不再执行 `AutoMigrate`。Compose 使用四个一次性 Migration Job，迁移成功后才启动服务。
+业务进程不再执行 `AutoMigrate`。Compose 使用一次性 Migration Job，迁移成功后才启动服务。
 
 ### Outbox 租约
 
@@ -148,54 +137,121 @@ lease_until
 next_attempt_at
 ```
 
-Worker 使用：
+Worker 使用 `FOR UPDATE SKIP LOCKED`，实现：
 
-```sql
-FOR UPDATE SKIP LOCKED
+- 多副本不重复拥有同一活跃租约；
+- 崩溃后租约回收；
+- 失败事件延迟重试；
+- 真实 MySQL 集成测试；
+- Compose 与 CI 双副本验证。
+
+## Phase 5：应用可靠性收口——已完成
+
+### 5.1 RabbitMQ Publisher Confirms
+
+完成：
+
+- 发布与消费 Channel 分离；
+- Publisher Channel 开启 Confirm Mode；
+- Broker ACK 后才把 Outbox 标记为 `published`；
+- NACK、确认超时、通道关闭和直接发布错误进入失败重试；
+- 真实 RabbitMQ ACK 与 MySQL 状态测试。
+
+投递语义仍为 at-least-once，不宣称 exactly-once。
+
+### 5.2 HTTP 请求预算与有限重试
+
+完成：
+
+```text
+X-Request-ID
+X-Request-Deadline
 ```
+
+并实现：
+
+- TCP、TLS、响应头和单次调用总超时；
+- 只重试选定网络错误和 502/503/504；
+- 指数退避与有限抖动；
+- 剩余预算不足时停止；
+- 4xx、业务错误和调用方 deadline 不重试；
+- 库存预占复用稳定 reservation ID；
+- Gateway 不重放外部业务请求。
+
+### 5.3 基础熔断与 Gateway 限流
+
+完成：
+
+- 按 `<upstream>/<operation>` 隔离的 Closed/Open/Half-open 熔断器；
+- 选定基础设施错误计数，4xx 不打开熔断；
+- Open 状态在网络调用前快速失败；
+- Gateway 客户端与全局 Token Bucket；
+- HTTP 429、`Retry-After` 和 Request ID；
+- Bucket TTL 清理与最大客户端数限制。
+
+### 5.4 Outbox 与 Saga 运行指标
+
+完成：
+
+- 一条 Outbox 聚合 SQL；
+- 一条 Order 聚合 SQL；
+- 内部 Token 保护的只读 JSON 端点；
+- Outbox 状态、租约、可重试、超时、年龄和尝试次数；
+- Order 状态、对账数量、最老年龄和卡住的瞬态状态；
+- Timeout Worker 周期结构化日志；
+- 真实 MySQL、空数据库和固定时钟测试。
+
+该能力是 Prometheus Collector 的数据源，不等于完整时序监控。
+
+### 5.5 自动 Order Reconciliation Worker
+
+新增：
+
+```text
+order_reconciliation_tasks
+trg_orders_v2_create_reconciliation_task
+order-reconciliation-worker
+```
+
+任务动作根据进入 `reconciliation_required` 前的结构化订单状态确定：
+
+| 原状态 | 动作 |
+| --- | --- |
+| `reserving` | `release_inventory_and_fail` |
+| `cancelling` | `finalize_cancel` |
+| `paying` | `finalize_payment` |
+| 其他 | 保留为 `unresolved` |
 
 实现：
 
-- 多 Worker 不重复拥有同一活跃租约；
-- 崩溃后租约可回收；
-- 失败事件延迟重试；
-- Compose 和 CI 启动两个 Worker 副本；
-- 真实 MySQL 集成测试验证领取隔离和租约恢复。
+- 订单状态与任务创建同一 MySQL 事务；
+- 不解析 `failure_reason`；
+- 任务租约与 `FOR UPDATE SKIP LOCKED`；
+- 多副本和过期租约恢复；
+- Inventory release/confirm 幂等重试；
+- 本地最终订单状态、Outbox 完成和任务完成同事务；
+- 有界指数重试；
+- 未知动作和状态不匹配保持 `unresolved`；
+- 保留原始失败历史；
+- CI 启动两个 Timeout Worker 和两个 Reconciliation Worker。
 
 ## 当前项目状态
 
 当前已经具备：
 
-- API Gateway 和独立业务服务；
-- 服务独立数据库；
-- 服务间 HTTP 调用；
-- 内部服务认证；
-- 库存预占与 Order Saga；
-- Transactional Outbox；
-- RabbitMQ 延迟取消；
-- 多 Worker 租约抢占；
-- 服务独立 Goose 迁移；
-- 完整 Compose 与端到端 CI。
+- API Gateway、四个业务服务和两个独立 Worker 类型；
+- 服务独立数据库与数据所有权；
+- Inventory Reservation 和 Order Saga；
+- Transactional Outbox、Publisher Confirms 和超时补偿；
+- HTTP deadline、有限重试、熔断和限流；
+- Outbox/Saga 运行指标；
+- 自动分类和修复已知对账场景；
+- 服务独立迁移；
+- 四库、四个 Worker 副本和完整 Saga CI。
 
 当前仍不等于完整生产级云原生系统。
 
-## Phase 5：可靠性与可观测性——待完成
-
-计划：
-
-- RabbitMQ Publisher Confirms；
-- Prometheus Metrics；
-- Grafana Dashboard；
-- OpenTelemetry Trace；
-- Request ID / Trace ID 跨服务传播；
-- Outbox backlog、租约、失败和重试指标；
-- Saga 成功率、补偿率和对账状态指标；
-- HTTP 客户端超时预算；
-- 幂等请求的受控重试；
-- 熔断、限流和并发隔离；
-- 基础告警规则。
-
-## Phase 6：Kubernetes 本地部署——待完成
+## Phase 6：Kubernetes 基础——下一阶段
 
 计划：
 
@@ -203,49 +259,51 @@ FOR UPDATE SKIP LOCKED
 - Service；
 - ConfigMap；
 - Secret；
-- Ingress；
 - Migration Job；
-- startup/liveness/readiness probes；
+- Ingress；
+- startup/liveness/readiness Probe；
 - resource requests/limits；
-- HPA；
-- PodDisruptionBudget；
-- NetworkPolicy；
+- RollingUpdate 与 rollout undo；
+- HPA、PDB 和基础 NetworkPolicy；
 - kind 或 k3d 本地集群验证。
 
-## Phase 7：持续交付——待完成
+## Phase 7：完整可观测性——待完成
 
 计划：
 
-- 镜像推送 GHCR；
-- Commit SHA / SemVer 镜像标签；
-- 自动部署开发环境；
-- Migration Job 发布顺序；
-- 滚动更新；
-- 部署后 Saga smoke；
-- 失败阻断或回滚；
-- 生产环境人工审批。
+- Prometheus；
+- Grafana；
+- OpenTelemetry；
+- W3C Trace Context；
+- `trace_id` / `span_id` 日志字段；
+- Saga、Outbox、RabbitMQ 和 Reconciliation 指标；
+- 基础告警规则。
 
-## Phase 8：生产治理——待完成
+## Phase 8：持续交付与运行保障——待完成
 
 计划：
 
-- 业务服务和迁移任务独立最小权限数据库账号；
-- mTLS 或 Workload Identity；
-- MySQL 与 RabbitMQ 备份恢复；
-- `reconciliation_required` 自动对账；
-- SLI / SLO / 告警；
-- 压测、容量评估和慢 SQL 分析；
-- 故障注入、恢复演练和 Runbook。
+- GHCR 版本化镜像；
+- 测试环境自动部署；
+- 部署后 Smoke Test；
+- 错误版本回滚；
+- MySQL 备份恢复；
+- 故障演练；
+- Runbook；
+- 压测和容量报告；
+- 最小权限数据库账户与 Workload Identity。
 
 ## 当前求职展示重点
 
 项目讲解时应突出：
 
-1. 为什么不能直接把原单体目录切成多个服务；
-2. 如何识别商品、库存、订单的数据所有权；
+1. 为什么不能只把单体目录切成多个服务；
+2. 如何划分商品、库存、订单的数据所有权；
 3. 单库 ACID 失效后为什么引入库存预占和 Saga；
-4. 为什么补偿失败必须进入 `reconciliation_required`；
-5. 为什么 Outbox 仍是至少一次投递；
-6. 多 Worker 如何通过租约和 `SKIP LOCKED` 协作；
-7. 为什么迁移必须从业务进程生命周期中分离；
-8. 为什么当前还不能宣称完成生产级云原生交付。
+4. 为什么 Outbox 和修复 Worker 都采用 at-least-once + 幂等；
+5. Publisher Confirms 解决了什么，仍未解决什么；
+6. Request budget、重试、熔断和限流如何配合；
+7. 为什么对账动作必须结构化，不能解析错误文本；
+8. 触发器如何保证订单状态和对账任务不分离；
+9. 多 Worker 如何通过租约和 `SKIP LOCKED` 协作；
+10. 为什么当前仍不能宣称完成生产级云原生交付。
