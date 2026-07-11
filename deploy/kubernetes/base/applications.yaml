@@ -1,0 +1,620 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  labels:
+    app.kubernetes.io/name: api-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: api-gateway
+  ports:
+    - name: http
+      port: 8082
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          image: go-order-management-system/api-gateway:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: GATEWAY_PORT
+              value: "8082"
+            - name: IDENTITY_SERVICE_URL
+              value: http://identity-service:8083
+            - name: CATALOG_SERVICE_URL
+              value: http://catalog-service:8084
+            - name: INVENTORY_SERVICE_URL
+              value: http://inventory-service:8085
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:8086
+          startupProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-service
+  labels:
+    app.kubernetes.io/name: identity-service
+spec:
+  selector:
+    app.kubernetes.io/name: identity-service
+  ports:
+    - name: http
+      port: 8083
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-service
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity-service
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_identity
+            - name: EXPECTED_TABLE
+              value: users
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: identity-service
+          image: go-order-management-system/identity-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8083
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: APP_PORT
+              value: "8083"
+            - name: DB_NAME
+              value: go_order_identity
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  labels:
+    app.kubernetes.io/name: catalog-service
+spec:
+  selector:
+    app.kubernetes.io/name: catalog-service
+  ports:
+    - name: http
+      port: 8084
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog-service
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalog-service
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_catalog
+            - name: EXPECTED_TABLE
+              value: catalog_products
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: catalog-service
+          image: go-order-management-system/catalog-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: APP_PORT
+              value: "8084"
+            - name: DB_NAME
+              value: go_order_catalog
+            - name: IDENTITY_SERVICE_URL
+              value: http://identity-service:8083
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service
+  labels:
+    app.kubernetes.io/name: inventory-service
+spec:
+  selector:
+    app.kubernetes.io/name: inventory-service
+  ports:
+    - name: http
+      port: 8085
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: inventory-service
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_inventory
+            - name: EXPECTED_TABLE
+              value: inventory_items
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: inventory-service
+          image: go-order-management-system/inventory-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8085
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: APP_PORT
+              value: "8085"
+            - name: DB_NAME
+              value: go_order_inventory
+            - name: IDENTITY_SERVICE_URL
+              value: http://identity-service:8083
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  labels:
+    app.kubernetes.io/name: order-service
+spec:
+  selector:
+    app.kubernetes.io/name: order-service
+  ports:
+    - name: http
+      port: 8086
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order-service
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: EXPECTED_TABLE
+              value: orders_v2
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: order-service
+          image: go-order-management-system/order-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: APP_PORT
+              value: "8086"
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: CATALOG_SERVICE_URL
+              value: http://catalog-service:8084
+            - name: INVENTORY_SERVICE_URL
+              value: http://inventory-service:8085
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-timeout-worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-timeout-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order-timeout-worker
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: EXPECTED_TABLE
+              value: order_timeout_outbox_v2
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: order-timeout-worker
+          image: go-order-management-system/order-timeout-worker:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:8086
+          startupProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-reconciliation-worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: order-reconciliation-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: order-reconciliation-worker
+    spec:
+      initContainers:
+        - name: wait-for-schema
+          image: mysql:8.4
+          env:
+            - name: MYSQL_PWD
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: MYSQL_PASSWORD
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: EXPECTED_TABLE
+              value: order_reconciliation_tasks
+          command: ["sh", "-ec"]
+          args:
+            - until mysql -h mysql -P 3306 -uroot "$DB_NAME" -e "SELECT 1 FROM $EXPECTED_TABLE LIMIT 1" >/dev/null 2>&1; do sleep 2; done
+      containers:
+        - name: order-reconciliation-worker
+          image: go-order-management-system/order-reconciliation-worker:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+          env:
+            - name: DB_NAME
+              value: go_order_ordering
+            - name: INVENTORY_SERVICE_URL
+              value: http://inventory-service:8085
+          startupProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command: ["sh", "-ec", "kill -0 1"]
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
