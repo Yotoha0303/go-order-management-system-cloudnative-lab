@@ -22,8 +22,14 @@ env:
   MYSQL_TEST_PASSWORD: ci-password
   MYSQL_TEST_DATABASE: go_order_management_system_test
   JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
+  INTERNAL_SERVICE_TOKEN: ci-internal-service-token-must-be-long-and-random
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
+  RABBITMQ_USER: order_app
+  RABBITMQ_PASSWORD: ci-rabbit-password
+  MYSQL_HOST_PORT: "13306"
+  RABBITMQ_HOST_PORT: "15673"
+  RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
 
 jobs:
   quality:
@@ -113,15 +119,20 @@ jobs:
             go build -trimpath -o "bin/${service}" "./cmd/${service}"
           done
 
-      - name: Validate microservices Compose configuration
+      - name: Validate data-isolated Compose configuration
         run: docker compose config --quiet
 
       - name: Build microservice images
+        run: docker compose build
+
+      - name: Start data-isolated microservices
+        run: docker compose up -d --wait
+
+      - name: Verify gateway readiness
         run: |
-          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker; do
-            docker build \
-              -f deploy/docker/Dockerfile.service \
-              --build-arg "SERVICE=${service}" \
-              -t "go-order-management-system/${service}:ci" \
-              .
-          done
+          curl --fail --silent --show-error http://127.0.0.1:8082/readyz
+          docker compose ps
+
+      - name: Stop microservices
+        if: always()
+        run: docker compose down -v --remove-orphans
