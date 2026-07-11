@@ -10,22 +10,25 @@ import (
 )
 
 type dryRunOrderState struct {
-	ID             int64
-	Status         string
-	ReservationID  string
-	FailureReason  string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID            int64
+	Status        string
+	ReservationID string
+	FailureReason string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type dryRunOutboxState struct {
 	ID            uint64
 	OrderID       int64
+	DueAt         time.Time
 	Status        string
 	Attempts      int
+	LastError     string
 	LeaseOwner    string
 	LeaseUntil    *time.Time
 	NextAttemptAt time.Time
+	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
 
