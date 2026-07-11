@@ -192,6 +192,30 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  order-reconciliation-worker:
+    image: go-order-management-system/order-reconciliation-worker:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: order-reconciliation-worker
+    environment:
+      <<: *common-environment
+      DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
+      INVENTORY_SERVICE_URL: http://inventory-service:8085
+      RECONCILIATION_POLL_INTERVAL: ${RECONCILIATION_POLL_INTERVAL:-2s}
+      RECONCILIATION_RETRY_DELAY: ${RECONCILIATION_RETRY_DELAY:-5s}
+      RECONCILIATION_MAX_RETRY_DELAY: ${RECONCILIATION_MAX_RETRY_DELAY:-5m}
+      RECONCILIATION_LEASE_DURATION: ${RECONCILIATION_LEASE_DURATION:-30s}
+      RECONCILIATION_CALL_TIMEOUT: ${RECONCILIATION_CALL_TIMEOUT:-10s}
+      RECONCILIATION_BATCH_SIZE: ${RECONCILIATION_BATCH_SIZE:-10}
+    depends_on:
+      ordering-migrate:
+        condition: service_completed_successfully
+      inventory-service:
+        condition: service_healthy
+    restart: unless-stopped
+
   identity-migrate:
     image: go-order-management-system/identity-migrate:local
     build:
