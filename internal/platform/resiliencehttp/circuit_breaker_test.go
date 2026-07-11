@@ -1,9 +1,12 @@
 package resiliencehttp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -97,22 +100,64 @@ func TestCircuitBreakerLimitsHalfOpenProbes(t *testing.T) {
 	}
 }
 
-func TestCircuitBreakerPermanentResponseCountsAsHealthyInfrastructure(t *testing.T) {
-	clock := newFakeClock()
-	breaker := newCircuitBreaker("identity-service/role-check", CircuitBreakerConfig{
-		FailureThreshold: 1,
-		OpenInterval:     time.Second,
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), clock.Now)
+func TestExecutorOpenCircuitPerformsNoNetworkCall(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       io.NopCloser(strings.NewReader("unavailable")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	executor := NewExecutor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	executor.breakerConfig = CircuitBreakerConfig{FailureThreshold: 1, OpenInterval: time.Minute, HalfOpenMaxProbes: 1}
 
-	call, err := breaker.acquire()
-	if err != nil {
-		t.Fatalf("acquire call: %v", err)
+	factory := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, "http://catalog-service/internal", nil)
 	}
-	call(true)
+	resp, err := executor.Do(context.Background(), "catalog-service", "snapshot", RetryPolicy{MaxAttempts: 1}, factory)
+	if err != nil {
+		t.Fatalf("first 503 must remain an HTTP response: %v", err)
+	}
+	_ = resp.Body.Close()
 
-	next, err := breaker.acquire()
-	if err != nil {
-		t.Fatalf("permanent domain response must not open circuit: %v", err)
+	if _, err := executor.Do(context.Background(), "catalog-service", "snapshot", RetryPolicy{MaxAttempts: 1}, factory); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("expected circuit-open error, got %v", err)
 	}
-	next(true)
+	if calls != 1 {
+		t.Fatalf("open circuit must perform no additional network call, got %d calls", calls)
+	}
 }
+
+func TestExecutorPermanent4xxDoesNotOpenCircuit(t *testing.T) {
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusBadRequest,
+			Body:       io.NopCloser(strings.NewReader("bad request")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	executor := NewExecutor(client, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	executor.breakerConfig = CircuitBreakerConfig{FailureThreshold: 1, OpenInterval: time.Minute, HalfOpenMaxProbes: 1}
+
+	factory := func(ctx context.Context) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, "http://identity-service/internal", nil)
+	}
+	for index := 0; index < 2; index++ {
+		resp, err := executor.Do(context.Background(), "identity-service", "role-check", RetryPolicy{MaxAttempts: 1}, factory)
+		if err != nil {
+			t.Fatalf("4xx call %d returned transport error: %v", index+1, err)
+		}
+		_ = resp.Body.Close()
+	}
+	if calls != 2 {
+		t.Fatalf("permanent 4xx must not open circuit, got %d calls", calls)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
