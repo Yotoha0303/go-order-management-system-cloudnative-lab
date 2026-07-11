@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"go-order-management-system/config"
@@ -42,6 +44,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	stuckThreshold, err := durationFromEnv("ORDER_TRANSIENT_STUCK_THRESHOLD", 5*time.Minute)
+	if err != nil {
+		logger.Error("invalid ORDER_TRANSIENT_STUCK_THRESHOLD", "error", err)
+		os.Exit(1)
+	}
+	reliabilityReporter, err := ordersvc.NewReliabilityReporter(db, stuckThreshold)
+	if err != nil {
+		logger.Error("initialize reliability reporter", "error", err)
+		os.Exit(1)
+	}
+
 	internalToken := os.Getenv("INTERNAL_SERVICE_TOKEN")
 	catalogClient := ordersvc.NewCatalogClient(os.Getenv("CATALOG_SERVICE_URL"), internalToken, 5*time.Second)
 	inventoryClient := ordersvc.NewInventoryClient(os.Getenv("INVENTORY_SERVICE_URL"), internalToken, 5*time.Second)
@@ -58,6 +71,7 @@ func main() {
 	router.GET("/live", healthHandler.LiveHandler)
 	router.GET("/readyz", healthHandler.ReadyzHandler)
 	ordersvc.RegisterRoutes(router, tokenManager, internalToken, orderService)
+	ordersvc.RegisterReliabilityRoutes(router, internalToken, reliabilityReporter)
 
 	applicationHandler := middleware.TimeoutHandler(router, cfg.HttpServer.Server.Timeout)
 	budgetedHandler := resiliencehttp.BudgetHandler(applicationHandler, resiliencehttp.BudgetConfig{
@@ -73,4 +87,19 @@ func main() {
 		logger.Error("order service stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", key)
+	}
+	return parsed, nil
 }
