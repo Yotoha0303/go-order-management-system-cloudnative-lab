@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -102,6 +103,11 @@ type Executor struct {
 	logger *slog.Logger
 	sleep  SleepFunc
 	jitter JitterFunc
+	now    func() time.Time
+
+	breakerConfig CircuitBreakerConfig
+	breakersMu    sync.Mutex
+	breakers      map[string]*circuitBreaker
 }
 
 func NewExecutor(client *http.Client, logger *slog.Logger) *Executor {
@@ -112,10 +118,13 @@ func NewExecutor(client *http.Client, logger *slog.Logger) *Executor {
 		logger = slog.Default()
 	}
 	return &Executor{
-		client: client,
-		logger: logger,
-		sleep:  sleepWithContext,
-		jitter: defaultJitter,
+		client:         client,
+		logger:         logger,
+		sleep:          sleepWithContext,
+		jitter:         defaultJitter,
+		now:            time.Now,
+		breakerConfig: CircuitBreakerConfigFromEnvironment(),
+		breakers:       make(map[string]*circuitBreaker),
 	}
 }
 
@@ -130,6 +139,7 @@ func (executor *Executor) Do(
 		return nil, errors.New("HTTP retry executor is not configured")
 	}
 	policy = policy.normalized()
+	breaker := executor.breakerFor(upstream, operation)
 
 	var lastErr error
 	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
@@ -146,8 +156,15 @@ func (executor *Executor) Do(
 			}
 		}
 
+		completeCircuit, err := breaker.acquire()
+		if err != nil {
+			executor.logCircuitOpen(ctx, upstream, operation, attempt, err)
+			return nil, err
+		}
+
 		req, err := factory(ctx)
 		if err != nil {
+			completeCircuit(true)
 			return nil, err
 		}
 		ApplyMetadata(ctx, req)
@@ -155,6 +172,7 @@ func (executor *Executor) Do(
 		started := time.Now()
 		resp, callErr := executor.client.Do(req)
 		retryable := shouldRetry(ctx, resp, callErr)
+		completeCircuit(!retryable)
 		executor.logAttempt(ctx, upstream, operation, attempt, resp, callErr, retryable, time.Since(started))
 
 		if !retryable || attempt == policy.MaxAttempts {
@@ -178,6 +196,27 @@ func (executor *Executor) Do(
 		}
 	}
 	return nil, lastErr
+}
+
+func (executor *Executor) breakerFor(upstream string, operation string) *circuitBreaker {
+	key := upstream + "/" + operation
+	executor.breakersMu.Lock()
+	defer executor.breakersMu.Unlock()
+	if executor.breakers == nil {
+		executor.breakers = make(map[string]*circuitBreaker)
+	}
+	if executor.now == nil {
+		executor.now = time.Now
+	}
+	if executor.breakerConfig.FailureThreshold <= 0 {
+		executor.breakerConfig = CircuitBreakerConfigFromEnvironment()
+	}
+	breaker, ok := executor.breakers[key]
+	if !ok {
+		breaker = newCircuitBreaker(key, executor.breakerConfig, executor.logger, executor.now)
+		executor.breakers[key] = breaker
+	}
+	return breaker
 }
 
 func shouldRetry(ctx context.Context, resp *http.Response, err error) bool {
@@ -266,6 +305,29 @@ func (executor *Executor) logAttempt(
 		"status", status,
 		"retryable", retryable,
 		"duration_ms", duration.Milliseconds(),
+		"remaining_budget_ms", remainingMS,
+		"error", err,
+	)
+}
+
+func (executor *Executor) logCircuitOpen(
+	ctx context.Context,
+	upstream string,
+	operation string,
+	attempt int,
+	err error,
+) {
+	remainingMS := int64(-1)
+	if remaining, ok := Remaining(ctx); ok {
+		remainingMS = remaining.Milliseconds()
+	}
+	executor.logger.Warn(
+		"upstream HTTP circuit rejected request",
+		"request_id", RequestID(ctx),
+		"upstream", upstream,
+		"operation", operation,
+		"attempt", attempt,
+		"outcome", "circuit_open",
 		"remaining_budget_ms", remainingMS,
 		"error", err,
 	)

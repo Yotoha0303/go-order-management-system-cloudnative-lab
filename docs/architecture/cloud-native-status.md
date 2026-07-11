@@ -2,15 +2,15 @@
 
 ## 结论
 
-当前项目已经完成**微服务核心改造和容器化运行验证**，但尚未完成完整的生产级云原生交付。
+当前项目已经完成**微服务核心改造、容器化运行验证和应用可靠性基础收口**，但尚未完成完整的生产级云原生交付。
 
 最准确的定位是：
 
-> 具备独立服务、独立数据库、Saga、Outbox、多 Worker、独立迁移和端到端 CI 的云原生演进实验项目。
+> 具备独立服务、独立数据库、Saga、Outbox、Publisher Confirms、多 Worker、请求预算、有限重试、基础熔断、Gateway 限流、独立迁移和端到端 CI 的云原生演进实验项目。
 
 不应描述为：
 
-> 已经完成 Kubernetes、可观测性、持续部署和生产治理的完整云原生系统。
+> 已经完成 Kubernetes、完整可观测性、持续部署和生产治理的完整云原生系统。
 
 ## 能力矩阵
 
@@ -20,17 +20,19 @@
 | 容器化 | 已完成 | 每个服务独立镜像，Compose 完整编排 |
 | 数据所有权 | 已完成 | 4 个独立逻辑数据库，Order 不直接访问 Catalog/Inventory 表 |
 | 分布式一致性 | 已完成基础版 | 库存预占、确认、释放、Order Saga、补偿和对账状态 |
-| 异步消息 | 已完成基础版 | RabbitMQ TTL/DLX、Transactional Outbox、手动 ACK |
+| 异步消息 | 已完成基础版 | RabbitMQ TTL/DLX、Transactional Outbox、Publisher Confirms、手动 ACK |
 | Worker 弹性 | 已完成基础版 | 租约抢占、`SKIP LOCKED`、崩溃后租约回收、多副本启动 |
+| HTTP 可靠性 | 已完成基础版 | Request ID、端到端 deadline、细分传输超时、有限重试、操作级熔断 |
+| 入口流量保护 | 已完成基础版 | Gateway 客户端与全局 Token Bucket、429/Retry-After、状态清理 |
 | 数据库迁移 | 已完成 | 4 个服务独立 Goose 目录和一次性迁移 Job |
 | 健康检查 | 已完成基础版 | 各服务 `/ping`、`/live`、`/readyz`，Gateway 汇总上游就绪 |
 | CI | 已完成 | lint、test、race、vet、build、迁移、镜像、完整拓扑和 Saga 冒烟 |
 | Kubernetes | 未完成 | 尚无 Deployment、Service、Ingress、Job、HPA 等资源 |
 | 可观测性 | 未完成 | 尚无 Prometheus、Grafana、OpenTelemetry、集中日志和告警 |
-| 服务弹性治理 | 未完成 | 缺少标准重试、熔断、限流、隔离和统一超时预算 |
+| 高级弹性治理 | 未完成 | 缺少并发隔离、自适应超时、分布式限流和跨副本熔断状态 |
 | 持续部署 | 未完成 | 尚无 Registry 发布、环境部署、滚动发布和自动回滚 |
 | 生产安全 | 未完成 | 内部静态 Token、数据库 root 账号、无 mTLS/Workload Identity |
-| 备份与故障恢复 | 未完成 | 尚无恢复演练、对账任务、Runbook、SLO 和压测报告 |
+| 备份与故障恢复 | 未完成 | 尚无恢复演练、自动对账任务、Runbook、SLO 和压测报告 |
 
 ## 已完成的云原生基础
 
@@ -71,7 +73,7 @@ Order Service 通过 HTTP 获取商品快照和操作库存预占，不再通过
 - 超时事件的 Transactional Outbox；
 - RabbitMQ 延迟取消和幂等消费。
 
-### 多 Worker Outbox
+### 多 Worker 与确认发布
 
 Outbox 使用：
 
@@ -83,6 +85,36 @@ next_attempt_at
 
 并通过 `FOR UPDATE SKIP LOCKED` 领取批次。它避免多个活跃 Worker 同时拥有同一事件，但保持至少一次投递语义。
 
+Publisher Channel 开启 Confirm Mode，只有 Broker ACK 后才把事件标记为 `published`。NACK、确认超时和通道关闭会进入失败重试路径。
+
+### 同步调用可靠性
+
+Gateway 和业务服务传播：
+
+```text
+X-Request-ID
+X-Request-Deadline
+```
+
+内部客户端具备：
+
+- TCP 连接、TLS 握手、响应头和单次请求总超时；
+- 仅针对选定传输错误和 502/503/504 的有限重试；
+- 指数退避和有限抖动；
+- 剩余预算不足时停止重试；
+- 按 `upstream/operation` 隔离的 Closed/Open/Half-open 熔断器。
+
+Gateway 不重放外部业务请求。
+
+### 入口限流
+
+Gateway 在反向代理前检查：
+
+- 基于直接连接源 IP 的客户端 Token Bucket；
+- 单进程全局 Token Bucket。
+
+超限返回 HTTP 429、`Retry-After` 和 Request ID。`/live` 与 `/readyz` 不受限流影响。客户端 Bucket 通过 TTL 清理和最大数量限制保持内存有界。
+
 ### 版本化 Schema
 
 业务进程不执行 `AutoMigrate`。Compose 使用独立迁移 Job，在服务启动前执行 Goose migration。
@@ -91,15 +123,22 @@ next_attempt_at
 
 ### Phase 5：可靠性与可观测性
 
-优先事项：
+已完成：
 
 1. RabbitMQ Publisher Confirms；
-2. Prometheus 指标；
-3. Outbox 积压、租约、失败和重试指标；
-4. Order Saga 成功率、补偿率和对账状态指标；
+2. HTTP 统一超时预算；
+3. 有限重试和指数退避；
+4. 基础熔断；
+5. Gateway 请求限流。
+
+下一优先事项：
+
+1. Outbox 积压、租约、失败和重试指标；
+2. Order Saga 成功率、补偿率和对账状态指标；
+3. 自动 `reconciliation` Job；
+4. Prometheus 指标；
 5. OpenTelemetry Trace 和跨服务上下文传播；
-6. Grafana Dashboard 与基础告警；
-7. HTTP 客户端超时、受控重试和熔断。
+6. Grafana Dashboard 与基础告警。
 
 ### Phase 6：Kubernetes 本地部署
 
@@ -156,18 +195,18 @@ NetworkPolicy
 
 | 目标 | 估算完成度 |
 | --- | ---: |
-| 微服务核心改造 | 约 85% |
-| 容器化应用开发 | 约 80% |
-| 云原生应用基础 | 约 65%–70% |
+| 微服务核心改造 | 约 88% |
+| 容器化应用开发 | 约 82% |
+| 云原生应用基础 | 约 72%–76% |
 | Kubernetes 部署 | 约 10% |
 | 可观测性 | 约 15% |
-| 生产级云原生交付 | 约 40%–50% |
+| 生产级云原生交付 | 约 45%–55% |
 
 ## 简历和项目讲解表述
 
 推荐：
 
-> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ 超时补偿、Worker 多副本租约抢占、独立数据库迁移和端到端 CI 验证；继续建设 Kubernetes、可观测性与持续交付体系。
+> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ Publisher Confirms、Worker 多副本租约抢占、端到端请求预算、有限重试、操作级熔断、Gateway Token Bucket 限流、独立数据库迁移和端到端 CI 验证；继续建设 Kubernetes、可观测性与持续交付体系。
 
 不推荐：
 
