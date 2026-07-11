@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,7 @@ func TestReliabilityEndpointReturnsStableSnapshot(t *testing.T) {
 		},
 		Orders: OrderSagaIndicators{
 			ReconciliationRequired: 1,
-			StuckTransient:        2,
+			StuckTransient:          2,
 		},
 	}}
 	router := gin.New()
@@ -101,16 +102,8 @@ func TestReliabilityEndpointHidesCollectionError(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", recorder.Code)
 	}
-	if body := recorder.Body.String(); body == "" || contains(body, "database details") {
+	body := recorder.Body.String()
+	if body == "" || strings.Contains(body, "database details") {
 		t.Fatalf("endpoint leaked collection error: %s", body)
 	}
-}
-
-func contains(value string, fragment string) bool {
-	for index := 0; index+len(fragment) <= len(value); index++ {
-		if value[index:index+len(fragment)] == fragment {
-			return true
-		}
-	}
-	return false
 }
