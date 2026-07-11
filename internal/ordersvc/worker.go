@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -30,6 +32,8 @@ type WorkerConfig struct {
 	OrderServiceURL string
 	InternalToken   string
 	CallTimeout     time.Duration
+	WorkerID        string
+	LeaseDuration   time.Duration
 }
 
 type Worker struct {
@@ -43,6 +47,7 @@ func NewWorker(cfg WorkerConfig, db *gorm.DB, logger *slog.Logger) (*Worker, err
 	cfg.URL = strings.TrimSpace(cfg.URL)
 	cfg.OrderServiceURL = strings.TrimRight(strings.TrimSpace(cfg.OrderServiceURL), "/")
 	cfg.InternalToken = strings.TrimSpace(cfg.InternalToken)
+	cfg.WorkerID = strings.TrimSpace(cfg.WorkerID)
 	if cfg.URL == "" || cfg.OrderServiceURL == "" || cfg.InternalToken == "" || db == nil {
 		return nil, errors.New("order timeout worker configuration is incomplete")
 	}
@@ -61,6 +66,15 @@ func NewWorker(cfg WorkerConfig, db *gorm.DB, logger *slog.Logger) (*Worker, err
 	if cfg.Prefetch <= 0 {
 		cfg.Prefetch = 10
 	}
+	if cfg.CallTimeout <= 0 {
+		cfg.CallTimeout = 10 * time.Second
+	}
+	if cfg.WorkerID == "" {
+		cfg.WorkerID = uuid.NewString()
+	}
+	if cfg.LeaseDuration <= 0 {
+		cfg.LeaseDuration = 30 * time.Second
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -78,7 +92,7 @@ func (w *Worker) Run(ctx context.Context) error {
 			return nil
 		}
 		if err := w.runSession(ctx); err != nil {
-			w.logger.Error("timeout worker session failed", "error", err)
+			w.logger.Error("timeout worker session failed", "worker_id", w.cfg.WorkerID, "error", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -118,7 +132,7 @@ func (w *Worker) runSession(ctx context.Context) error {
 	ticker := time.NewTicker(w.cfg.PollInterval)
 	defer ticker.Stop()
 
-	w.logger.Info("timeout worker connected")
+	w.logger.Info("timeout worker connected", "worker_id", w.cfg.WorkerID)
 	for {
 		select {
 		case <-ctx.Done():
@@ -130,7 +144,7 @@ func (w *Worker) runSession(ctx context.Context) error {
 			return err
 		case <-ticker.C:
 			if err := w.publishPending(ctx, channel); err != nil {
-				w.logger.Error("publish timeout outbox batch", "error", err)
+				w.logger.Error("publish timeout outbox batch", "worker_id", w.cfg.WorkerID, "error", err)
 			}
 		case delivery, ok := <-deliveries:
 			if !ok {
@@ -165,28 +179,26 @@ func declareTimeoutTopology(channel *amqp.Channel) error {
 }
 
 func (w *Worker) publishPending(ctx context.Context, channel *amqp.Channel) error {
-	var events []TimeoutOutbox
-	if err := w.db.WithContext(ctx).
-		Where("status IN ?", []string{OutboxPending, OutboxFailed}).
-		Order("id ASC").
-		Limit(w.cfg.BatchSize).
-		Find(&events).Error; err != nil {
+	events, err := w.claimPending(ctx)
+	if err != nil {
 		return err
 	}
 
 	for _, event := range events {
-		payload, err := json.Marshal(struct {
+		payload, marshalErr := json.Marshal(struct {
 			OrderID int64 `json:"order_id"`
 		}{OrderID: event.OrderID})
-		if err != nil {
-			return err
+		if marshalErr != nil {
+			_ = w.markOutboxFailure(event.ID, marshalErr)
+			continue
 		}
+
 		delay := time.Until(event.DueAt)
 		if delay < time.Second {
 			delay = time.Second
 		}
 		publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err = channel.PublishWithContext(publishCtx, timeoutExchange, "delay", false, false, amqp.Publishing{
+		publishErr := channel.PublishWithContext(publishCtx, timeoutExchange, "delay", false, false, amqp.Publishing{
 			DeliveryMode: amqp.Persistent,
 			ContentType:  "application/json",
 			MessageId:    strconv.FormatUint(event.ID, 10),
@@ -195,19 +207,79 @@ func (w *Worker) publishPending(ctx context.Context, channel *amqp.Channel) erro
 			Body:         payload,
 		})
 		cancel()
-		if err != nil {
-			_ = w.markOutboxFailure(event.ID, err)
+		if publishErr != nil {
+			_ = w.markOutboxFailure(event.ID, publishErr)
 			continue
 		}
-		if err := w.db.WithContext(ctx).Model(&TimeoutOutbox{}).
-			Where("id = ? AND status IN ?", event.ID, []string{OutboxPending, OutboxFailed}).
-			Updates(map[string]any{
-				"status":     OutboxPublished,
-				"attempts":   gorm.Expr("attempts + 1"),
-				"last_error": "",
-			}).Error; err != nil {
+		if err := w.markOutboxPublished(ctx, event.ID); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (w *Worker) claimPending(ctx context.Context) ([]TimeoutOutbox, error) {
+	now := time.Now()
+	leaseUntil := now.Add(w.cfg.LeaseDuration)
+	var events []TimeoutOutbox
+
+	err := w.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table(TimeoutOutbox{}.TableName()).
+			Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("status IN ?", []string{OutboxPending, OutboxFailed}).
+			Where("next_attempt_at <= ?", now).
+			Where("lease_until IS NULL OR lease_until < ?", now).
+			Order("id ASC").
+			Limit(w.cfg.BatchSize).
+			Find(&events).Error; err != nil {
+			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+
+		ids := make([]uint64, 0, len(events))
+		for _, event := range events {
+			ids = append(ids, event.ID)
+		}
+		result := tx.Table(TimeoutOutbox{}.TableName()).
+			Where("id IN ?", ids).
+			Where("status IN ?", []string{OutboxPending, OutboxFailed}).
+			Where("lease_until IS NULL OR lease_until < ?", now).
+			Updates(map[string]any{
+				"lease_owner": w.cfg.WorkerID,
+				"lease_until": leaseUntil,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != int64(len(events)) {
+			return fmt.Errorf("claim timeout outbox batch: expected %d rows, updated %d", len(events), result.RowsAffected)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (w *Worker) markOutboxPublished(ctx context.Context, eventID uint64) error {
+	result := w.db.WithContext(ctx).Table(TimeoutOutbox{}.TableName()).
+		Where("id = ? AND lease_owner = ?", eventID, w.cfg.WorkerID).
+		Updates(map[string]any{
+			"status":          OutboxPublished,
+			"attempts":        gorm.Expr("attempts + 1"),
+			"last_error":      "",
+			"lease_owner":     "",
+			"lease_until":     nil,
+			"next_attempt_at": time.Now(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("timeout outbox lease was lost before publish completion")
 	}
 	return nil
 }
@@ -240,7 +312,12 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 
 	if err := w.db.WithContext(context.Background()).Model(&TimeoutOutbox{}).
 		Where("order_id = ?", payload.OrderID).
-		Updates(map[string]any{"status": OutboxCompleted, "last_error": ""}).Error; err != nil {
+		Updates(map[string]any{
+			"status":      OutboxCompleted,
+			"last_error":  "",
+			"lease_owner": "",
+			"lease_until": nil,
+		}).Error; err != nil {
 		w.logger.Error("mark timeout event completed", "order_id", payload.OrderID, "error", err)
 		_ = delivery.Nack(false, true)
 		return
@@ -249,11 +326,21 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 }
 
 func (w *Worker) markOutboxFailure(eventID uint64, cause error) error {
-	return w.db.WithContext(context.Background()).Model(&TimeoutOutbox{}).
-		Where("id = ?", eventID).
+	result := w.db.WithContext(context.Background()).Table(TimeoutOutbox{}.TableName()).
+		Where("id = ? AND lease_owner = ?", eventID, w.cfg.WorkerID).
 		Updates(map[string]any{
-			"status":     OutboxFailed,
-			"attempts":   gorm.Expr("attempts + 1"),
-			"last_error": truncate(cause.Error(), 500),
-		}).Error
+			"status":          OutboxFailed,
+			"attempts":        gorm.Expr("attempts + 1"),
+			"last_error":      truncate(cause.Error(), 500),
+			"lease_owner":     "",
+			"lease_until":     nil,
+			"next_attempt_at": time.Now().Add(w.cfg.RetryDelay),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("timeout outbox lease was lost before failure update")
+	}
+	return nil
 }

@@ -30,10 +30,6 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
-	if err := ordersvc.Migrate(db); err != nil {
-		logger.Error("migrate order database", "error", err)
-		os.Exit(1)
-	}
 
 	tokenManager, err := auth.NewTokenManager(
 		os.Getenv("JWT_SECRET"),

@@ -31,10 +31,6 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
-	if err := catalogsvc.Migrate(db); err != nil {
-		logger.Error("migrate catalog database", "error", err)
-		os.Exit(1)
-	}
 
 	tokenManager, err := auth.NewTokenManager(
 		os.Getenv("JWT_SECRET"),

@@ -9,6 +9,12 @@ x-common-environment: &common-environment
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-order_app}:${RABBITMQ_PASSWORD:-order_dev_password}@rabbitmq:5672/
   ORDER_TIMEOUT_DELAY: ${ORDER_TIMEOUT_DELAY:-30m}
 
+x-migration-environment: &migration-environment
+  MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_USER: root
+
 services:
   api-gateway:
     image: go-order-management-system/api-gateway:local
@@ -84,7 +90,7 @@ services:
       DB_NAME: ${CATALOG_DB_NAME:-go_order_catalog}
       IDENTITY_SERVICE_URL: http://identity-service:8083
     depends_on:
-      db-init:
+      catalog-migrate:
         condition: service_completed_successfully
       identity-service:
         condition: service_healthy
@@ -112,7 +118,7 @@ services:
       DB_NAME: ${INVENTORY_DB_NAME:-go_order_inventory}
       IDENTITY_SERVICE_URL: http://identity-service:8083
     depends_on:
-      db-init:
+      inventory-migrate:
         condition: service_completed_successfully
       identity-service:
         condition: service_healthy
@@ -141,7 +147,7 @@ services:
       CATALOG_SERVICE_URL: http://catalog-service:8084
       INVENTORY_SERVICE_URL: http://inventory-service:8085
     depends_on:
-      db-init:
+      ordering-migrate:
         condition: service_completed_successfully
       catalog-service:
         condition: service_healthy
@@ -162,12 +168,14 @@ services:
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: order-timeout-worker
-    container_name: go-order-management-system-order-timeout-worker
     environment:
       <<: *common-environment
       DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
       ORDER_SERVICE_URL: http://order-service:8086
+      OUTBOX_LEASE_DURATION: ${OUTBOX_LEASE_DURATION:-30s}
     depends_on:
+      ordering-migrate:
+        condition: service_completed_successfully
       order-service:
         condition: service_healthy
       rabbitmq:
@@ -181,13 +189,8 @@ services:
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: identity-service
-    container_name: go-order-management-system-identity-migrate
-    working_dir: /app
     environment:
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: root
+      <<: *migration-environment
       DB_NAME: ${IDENTITY_DB_NAME:-go_order_identity}
     depends_on:
       db-init:
@@ -196,7 +199,67 @@ services:
       - sh
       - -ec
       - |
-        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+        exec ./goose -dir ./migrations/identity mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
+
+  catalog-migrate:
+    image: go-order-management-system/catalog-migrate:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: catalog-service
+    environment:
+      <<: *migration-environment
+      DB_NAME: ${CATALOG_DB_NAME:-go_order_catalog}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations/catalog mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
+
+  inventory-migrate:
+    image: go-order-management-system/inventory-migrate:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: inventory-service
+    environment:
+      <<: *migration-environment
+      DB_NAME: ${INVENTORY_DB_NAME:-go_order_inventory}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations/inventory mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
+
+  ordering-migrate:
+    image: go-order-management-system/ordering-migrate:local
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.service
+      args:
+        SERVICE: order-service
+    environment:
+      <<: *migration-environment
+      DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations/ordering mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
     restart: "no"
 
   db-init:
