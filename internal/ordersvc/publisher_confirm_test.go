@@ -45,7 +45,7 @@ func TestWaitForPublisherConfirmation(t *testing.T) {
 		defer cancel()
 
 		err := waitForPublisherConfirmation(ctx, confirmations)
-		if !errors.Is(err, errPublisherConfirmTimed) {
+		if !errors.Is(err, errPublisherConfirmTimeout) {
 			t.Fatalf("expected timeout error, got %v", err)
 		}
 		if !errors.Is(err, context.DeadlineExceeded) {
