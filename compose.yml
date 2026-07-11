@@ -229,10 +229,11 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping --protocol=tcp -h 127.0.0.1 -P 3306 -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 10s
     restart: unless-stopped
 
   rabbitmq:
