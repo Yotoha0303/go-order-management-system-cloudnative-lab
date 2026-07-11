@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,17 +22,18 @@ const (
 )
 
 type WorkerConfig struct {
-	URL             string
-	ReconnectDelay  time.Duration
-	PollInterval    time.Duration
-	RetryDelay      time.Duration
-	BatchSize       int
-	Prefetch        int
-	OrderServiceURL string
-	InternalToken   string
-	CallTimeout     time.Duration
-	WorkerID        string
-	LeaseDuration   time.Duration
+	URL                   string
+	ReconnectDelay        time.Duration
+	PollInterval          time.Duration
+	RetryDelay            time.Duration
+	BatchSize             int
+	Prefetch              int
+	OrderServiceURL       string
+	InternalToken         string
+	CallTimeout           time.Duration
+	WorkerID              string
+	LeaseDuration         time.Duration
+	PublishConfirmTimeout time.Duration
 }
 
 type Worker struct {
@@ -75,6 +75,9 @@ func NewWorker(cfg WorkerConfig, db *gorm.DB, logger *slog.Logger) (*Worker, err
 	if cfg.LeaseDuration <= 0 {
 		cfg.LeaseDuration = 30 * time.Second
 	}
+	if cfg.PublishConfirmTimeout <= 0 {
+		cfg.PublishConfirmTimeout = 5 * time.Second
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -109,42 +112,67 @@ func (w *Worker) runSession(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	channel, err := conn.Channel()
+	consumerChannel, err := conn.Channel()
 	if err != nil {
-		return fmt.Errorf("open rabbitmq channel: %w", err)
+		return fmt.Errorf("open rabbitmq consumer channel: %w", err)
 	}
-	defer channel.Close()
+	defer consumerChannel.Close()
 
-	if err := declareTimeoutTopology(channel); err != nil {
+	publisherChannel, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("open rabbitmq publisher channel: %w", err)
+	}
+	defer publisherChannel.Close()
+
+	if err := declareTimeoutTopology(consumerChannel); err != nil {
 		return err
 	}
-	if err := channel.Qos(w.cfg.Prefetch, 0, false); err != nil {
+	publisher, err := newConfirmedAMQPPublisher(
+		publisherChannel,
+		timeoutExchange,
+		"delay",
+		w.cfg.PublishConfirmTimeout,
+	)
+	if err != nil {
+		return err
+	}
+	if err := consumerChannel.Qos(w.cfg.Prefetch, 0, false); err != nil {
 		return fmt.Errorf("set consumer qos: %w", err)
 	}
 
-	deliveries, err := channel.Consume(timeoutCancelQueue, "", false, false, false, false, nil)
+	deliveries, err := consumerChannel.Consume(timeoutCancelQueue, "", false, false, false, false, nil)
 	if err != nil {
 		return fmt.Errorf("consume timeout queue: %w", err)
 	}
 
-	closed := make(chan *amqp.Error, 1)
-	channel.NotifyClose(closed)
+	consumerClosed := consumerChannel.NotifyClose(make(chan *amqp.Error, 1))
+	publisherClosed := publisherChannel.NotifyClose(make(chan *amqp.Error, 1))
 	ticker := time.NewTicker(w.cfg.PollInterval)
 	defer ticker.Stop()
 
-	w.logger.Info("timeout worker connected", "worker_id", w.cfg.WorkerID)
+	w.logger.Info(
+		"timeout worker connected",
+		"worker_id", w.cfg.WorkerID,
+		"publisher_confirms", true,
+		"publisher_confirm_timeout", w.cfg.PublishConfirmTimeout,
+	)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case err := <-closed:
-			if err == nil {
-				return errors.New("rabbitmq channel closed")
+		case closeErr, ok := <-consumerClosed:
+			if !ok || closeErr == nil {
+				return errors.New("rabbitmq consumer channel closed")
 			}
-			return err
+			return fmt.Errorf("rabbitmq consumer channel closed: %w", closeErr)
+		case closeErr, ok := <-publisherClosed:
+			if !ok || closeErr == nil {
+				return errors.New("rabbitmq publisher channel closed")
+			}
+			return fmt.Errorf("rabbitmq publisher channel closed: %w", closeErr)
 		case <-ticker.C:
-			if err := w.publishPending(ctx, channel); err != nil {
-				w.logger.Error("publish timeout outbox batch", "worker_id", w.cfg.WorkerID, "error", err)
+			if err := w.publishPending(ctx, publisher); err != nil {
+				return err
 			}
 		case delivery, ok := <-deliveries:
 			if !ok {
@@ -178,42 +206,54 @@ func declareTimeoutTopology(channel *amqp.Channel) error {
 	return nil
 }
 
-func (w *Worker) publishPending(ctx context.Context, channel *amqp.Channel) error {
+func (w *Worker) publishPending(ctx context.Context, publisher timeoutEventPublisher) error {
 	events, err := w.claimPending(ctx)
 	if err != nil {
 		return err
 	}
 
-	for _, event := range events {
+	for index, event := range events {
 		payload, marshalErr := json.Marshal(struct {
 			OrderID int64 `json:"order_id"`
 		}{OrderID: event.OrderID})
 		if marshalErr != nil {
-			_ = w.markOutboxFailure(event.ID, marshalErr)
+			if err := w.markOutboxFailure(event.ID, marshalErr); err != nil {
+				return err
+			}
 			continue
 		}
 
 		delay := time.Until(event.DueAt)
-		if delay < time.Second {
-			delay = time.Second
-		}
-		publishCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		publishErr := channel.PublishWithContext(publishCtx, timeoutExchange, "delay", false, false, amqp.Publishing{
-			DeliveryMode: amqp.Persistent,
-			ContentType:  "application/json",
-			MessageId:    strconv.FormatUint(event.ID, 10),
-			Expiration:   strconv.FormatInt(delay.Milliseconds(), 10),
-			Timestamp:    time.Now(),
-			Body:         payload,
-		})
-		cancel()
+		publishErr := publisher.Publish(ctx, event, payload, delay)
 		if publishErr != nil {
-			_ = w.markOutboxFailure(event.ID, publishErr)
-			continue
+			if err := w.markOutboxFailure(event.ID, publishErr); err != nil {
+				return fmt.Errorf("record outbox publish failure: %w", err)
+			}
+			if err := w.releaseClaimedLeases(ctx, events[index+1:]); err != nil {
+				return fmt.Errorf("release unprocessed outbox leases: %w", err)
+			}
+			w.logger.Error(
+				"timeout outbox publish not confirmed",
+				"event_id", event.ID,
+				"order_id", event.OrderID,
+				"worker_id", w.cfg.WorkerID,
+				"attempt", event.Attempts+1,
+				"confirmation_outcome", "failed",
+				"error", publishErr,
+			)
+			return fmt.Errorf("publish timeout outbox event %d: %w", event.ID, publishErr)
 		}
 		if err := w.markOutboxPublished(ctx, event.ID); err != nil {
 			return err
 		}
+		w.logger.Info(
+			"timeout outbox publish confirmed",
+			"event_id", event.ID,
+			"order_id", event.OrderID,
+			"worker_id", w.cfg.WorkerID,
+			"attempt", event.Attempts+1,
+			"confirmation_outcome", "ack",
+		)
 	}
 	return nil
 }
@@ -262,6 +302,22 @@ func (w *Worker) claimPending(ctx context.Context) ([]TimeoutOutbox, error) {
 		return nil, err
 	}
 	return events, nil
+}
+
+func (w *Worker) releaseClaimedLeases(ctx context.Context, events []TimeoutOutbox) error {
+	if len(events) == 0 {
+		return nil
+	}
+	ids := make([]uint64, 0, len(events))
+	for _, event := range events {
+		ids = append(ids, event.ID)
+	}
+	return w.db.WithContext(ctx).Table(TimeoutOutbox{}.TableName()).
+		Where("id IN ? AND lease_owner = ?", ids, w.cfg.WorkerID).
+		Updates(map[string]any{
+			"lease_owner": "",
+			"lease_until": nil,
+		}).Error
 }
 
 func (w *Worker) markOutboxPublished(ctx context.Context, eventID uint64) error {

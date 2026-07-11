@@ -1,4 +1,4 @@
-# Service migrations and outbox leasing
+# Service migrations, outbox leasing and publisher confirms
 
 ## Service-owned migrations
 
@@ -38,22 +38,75 @@ The claiming transaction writes:
 - `lease_until`: crash-recovery deadline;
 - `next_attempt_at`: retry scheduling boundary.
 
-A successful publish clears the lease and sets `published`. A failed publish clears the lease, sets `failed`, increments attempts and delays the next attempt. If a process dies while holding a lease, another worker can reclaim the event after `lease_until`.
+If a process dies while holding a lease, another Worker can reclaim the event after `lease_until`.
 
-A crash after RabbitMQ accepted a message but before the database update can still cause a duplicate publish. This is intentional at-least-once behavior; timeout cancellation remains idempotent.
+## RabbitMQ Publisher Confirms
+
+The Worker uses separate RabbitMQ channels for consuming timeout messages and publishing Outbox messages. The publisher channel enters confirm mode before any message is sent.
+
+For each claimed Outbox event, the Worker now performs:
+
+1. serialize the timeout payload;
+2. publish one persistent RabbitMQ message;
+3. wait for the corresponding broker confirmation within `RABBITMQ_PUBLISH_CONFIRM_TIMEOUT`;
+4. set the Outbox status to `published` only after a positive ACK;
+5. record a nack, confirmation timeout, channel closure or publish error as `failed`;
+6. clear the failed event lease and release the unprocessed leases from the same claimed batch;
+7. end the RabbitMQ session and reconnect before publishing another event after an uncertain result.
+
+Only one publish is outstanding on a publisher channel at a time. This makes the ordered confirmation stream unambiguous. If confirmation times out, the channel is discarded so a late ACK cannot be mistaken for the next event.
+
+Structured logs include:
+
+- `event_id`;
+- `order_id`;
+- `worker_id`;
+- `attempt`;
+- `confirmation_outcome`.
+
+The default confirmation timeout is five seconds. Local execution can override it with:
+
+```env
+RABBITMQ_PUBLISH_CONFIRM_TIMEOUT=5s
+```
+
+## Failure semantics
+
+| Outcome | Outbox result | Session behavior |
+| --- | --- | --- |
+| Broker ACK | `published` | continue |
+| Broker NACK | `failed` | reconnect |
+| Confirmation timeout | `failed` | reconnect |
+| Publisher channel closed | `failed` | reconnect |
+| Immediate publish error | `failed` | reconnect |
+| Worker crash while leased | unchanged until lease expiry | another Worker reclaims |
+
+Publisher confirms remove the case where the Worker marks an event `published` without broker acknowledgement.
+
+They do not provide exactly-once delivery. A crash after RabbitMQ sends an ACK but before the database update can still cause the event to be published again after lease recovery. Timeout cancellation therefore remains idempotent.
 
 ## Scaling rule
 
-`order-timeout-worker` no longer has a fixed Compose `container_name`, so it can be scaled:
+`order-timeout-worker` has no fixed Compose `container_name`, so it can be scaled:
 
 ```bash
 docker compose up -d --wait --scale order-timeout-worker=2
 ```
 
-The CI pipeline starts two replicas and verifies both are running. Horizontal scaling beyond this point does not require a leader election mechanism for outbox polling.
+The CI pipeline starts two replicas and verifies both are running. Horizontal scaling does not require leader election for Outbox polling because database leases provide exclusive active ownership.
+
+## Verification
+
+The Publisher Confirm change is verified by:
+
+- unit tests for ACK, NACK, closed confirmation channel and timeout outcomes;
+- a real RabbitMQ integration test that receives a positive broker ACK;
+- a MySQL Outbox test proving an unconfirmed event becomes `failed`, remains retryable and is not marked `published`;
+- the existing two-Worker Compose startup check;
+- the complete Order Saga smoke test.
 
 ## Remaining constraints
 
-- RabbitMQ publisher confirms are not yet enabled; a future change should confirm broker acceptance before marking an event published.
+- Delivery remains at least once because RabbitMQ acknowledgement and the database `published` update are not one atomic transaction.
 - Migration jobs currently use the same MySQL root credential as runtime services. Production deployment should use separate least-privilege accounts.
 - Service migration rollback is available through Goose, but automatic rollback during deployment is intentionally not performed.

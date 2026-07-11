@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -27,28 +28,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	leaseDuration := 30 * time.Second
-	if raw := strings.TrimSpace(os.Getenv("OUTBOX_LEASE_DURATION")); raw != "" {
-		parsed, parseErr := time.ParseDuration(raw)
-		if parseErr != nil || parsed <= 0 {
-			logger.Error("invalid OUTBOX_LEASE_DURATION", "value", raw)
-			os.Exit(1)
-		}
-		leaseDuration = parsed
+	leaseDuration, err := durationFromEnv("OUTBOX_LEASE_DURATION", 30*time.Second)
+	if err != nil {
+		logger.Error("invalid OUTBOX_LEASE_DURATION", "error", err)
+		os.Exit(1)
+	}
+	publishConfirmTimeout, err := durationFromEnv("RABBITMQ_PUBLISH_CONFIRM_TIMEOUT", 5*time.Second)
+	if err != nil {
+		logger.Error("invalid RABBITMQ_PUBLISH_CONFIRM_TIMEOUT", "error", err)
+		os.Exit(1)
 	}
 
 	worker, err := ordersvc.NewWorker(ordersvc.WorkerConfig{
-		URL:             cfg.RabbitMQ.URL,
-		ReconnectDelay:  cfg.RabbitMQ.ReconnectDelay,
-		PollInterval:    cfg.RabbitMQ.OrderTimeout.OutboxPollInterval,
-		RetryDelay:      cfg.RabbitMQ.OrderTimeout.OutboxRetryDelay,
-		BatchSize:       cfg.RabbitMQ.OrderTimeout.PublishBatchSize,
-		Prefetch:        cfg.RabbitMQ.OrderTimeout.ConsumerPrefetch,
-		OrderServiceURL: os.Getenv("ORDER_SERVICE_URL"),
-		InternalToken:   os.Getenv("INTERNAL_SERVICE_TOKEN"),
-		CallTimeout:     10 * time.Second,
-		WorkerID:        os.Getenv("WORKER_ID"),
-		LeaseDuration:   leaseDuration,
+		URL:                   cfg.RabbitMQ.URL,
+		ReconnectDelay:        cfg.RabbitMQ.ReconnectDelay,
+		PollInterval:          cfg.RabbitMQ.OrderTimeout.OutboxPollInterval,
+		RetryDelay:            cfg.RabbitMQ.OrderTimeout.OutboxRetryDelay,
+		BatchSize:             cfg.RabbitMQ.OrderTimeout.PublishBatchSize,
+		Prefetch:              cfg.RabbitMQ.OrderTimeout.ConsumerPrefetch,
+		OrderServiceURL:       os.Getenv("ORDER_SERVICE_URL"),
+		InternalToken:         os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		CallTimeout:           10 * time.Second,
+		WorkerID:              os.Getenv("WORKER_ID"),
+		LeaseDuration:         leaseDuration,
+		PublishConfirmTimeout: publishConfirmTimeout,
 	}, db, logger)
 	if err != nil {
 		logger.Error("initialize timeout worker", "error", err)
@@ -63,4 +66,19 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("order timeout worker stopped")
+}
+
+func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("%s must be greater than zero", key)
+	}
+	return parsed, nil
 }
