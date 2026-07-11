@@ -23,6 +23,7 @@ env:
   MYSQL_TEST_DATABASE: go_order_management_system_test
   JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
   INTERNAL_SERVICE_TOKEN: ci-internal-service-token-must-be-long-and-random
+  ORDER_TIMEOUT_DELAY: 3s
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
   RABBITMQ_USER: order_app
@@ -177,6 +178,9 @@ jobs:
         run: |
           curl --fail --silent --show-error http://127.0.0.1:8082/readyz
           docker compose ps
+
+      - name: Verify order Saga business flow
+        run: sh scripts/smoke/microservices-saga.sh
 
       - name: Stop microservices
         if: always()
