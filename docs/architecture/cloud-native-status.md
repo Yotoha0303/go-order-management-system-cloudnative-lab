@@ -2,13 +2,21 @@
 
 ## 结论
 
-当前项目已经完成**微服务核心改造、容器化验证和应用可靠性收口**，但尚未完成 Kubernetes、完整可观测性、持续交付和生产运行保障。
+当前项目已经完成：
+
+- 微服务核心改造；
+- 容器化与四库数据所有权；
+- 应用可靠性收口；
+- Docker Compose 完整业务验证；
+- Kubernetes Kustomize 基础；
+- disposable kind 集群自动部署；
+- 失败 revision 检测、`kubectl rollout undo` 和完整 Kubernetes Saga 验收。
 
 最准确的定位是：
 
-> 具备独立服务与数据库、Order Saga、Transactional Outbox、Publisher Confirms、多 Worker、请求预算、有限重试、基础熔断、Gateway 限流、运行指标和自动对账 Worker 的云原生演进实验项目。
+> 具备独立服务与数据库、Order Saga、Transactional Outbox、Publisher Confirms、多 Worker、请求预算、有限重试、基础熔断、Gateway 限流、运行指标、自动对账，以及可重复 kind 部署与回滚验收的云原生演进实验项目。
 
-不应描述为：
+仍不应描述为：
 
 > 已完成生产级云原生系统。
 
@@ -17,22 +25,24 @@
 | 能力域 | 状态 | 当前实现 |
 | --- | --- | --- |
 | 服务拆分 | 已完成 | Gateway、Identity、Catalog、Inventory、Order、Timeout Worker、Reconciliation Worker |
-| 容器化 | 已完成 | 每个运行单元独立镜像，Compose 完整编排 |
+| 容器化 | 已完成 | 每个运行单元独立镜像，Compose 与 kind 均可运行 |
 | 数据所有权 | 已完成 | 4 个独立逻辑数据库 |
 | 分布式一致性 | 已完成基础版 | Inventory Reservation、Order Saga、补偿和明确对账状态 |
 | 异步消息 | 已完成基础版 | RabbitMQ TTL/DLX、Transactional Outbox、Publisher Confirms、手动 ACK |
 | Timeout Worker 弹性 | 已完成基础版 | 租约、`SKIP LOCKED`、多副本、租约恢复 |
-| 自动对账 | 已完成基础版 | 结构化任务、事务触发器、三种已知修复动作、租约 Worker、多副本 |
+| 自动对账 | 已完成基础版 | 结构化任务、事务触发器、已知修复动作、租约 Worker、多副本、dry-run |
 | HTTP 可靠性 | 已完成基础版 | Request ID、deadline、细分超时、有限重试、操作级熔断 |
 | 入口保护 | 已完成基础版 | Gateway 客户端/全局 Token Bucket、429/Retry-After |
-| 运行指标 | 已完成基础版 | Outbox/Saga 两条聚合 SQL、内部端点、周期结构化日志 |
-| 数据库迁移 | 已完成 | 服务独立 Goose migration 和一次性 Job |
-| CI | 已完成 | lint、test、race、build、迁移、镜像、四库、四个 Worker 副本、Saga 冒烟 |
-| Kubernetes | 未完成 | 无 Deployment、Service、Ingress、Migration Job、HPA 等清单 |
+| 运行指标 | 已完成基础版 | Outbox/Saga 聚合 SQL、内部端点、周期结构化日志 |
+| 数据库迁移 | 已完成 | 服务独立 Goose migration、Compose Job 和 Kubernetes Job |
+| Compose CI | 已完成 | lint、test、race、build、迁移、镜像、四库、四个 Worker 副本、完整 Saga |
+| Kubernetes 基础 | 已完成基础版 | Kustomize、Namespace、ConfigMap/Secret 合同、StatefulSet、Deployment、Service、Migration Job、探针和资源限制 |
+| Kubernetes 运行验收 | 已完成基础版 | CI 创建 kind 集群，完成迁移、rollout、暴露面、双 Worker、失败 revision、undo 与完整 Saga |
+| Kubernetes 高可用治理 | 未完成 | 无 Ingress、PDB、HPA、NetworkPolicy、多节点失效验证 |
 | 完整可观测性 | 未完成 | 无 Prometheus、Grafana、OpenTelemetry 和正式告警 |
-| 持续部署 | 未完成 | 无 GHCR 发布、测试环境自动部署、滚动更新和自动回滚 |
+| 持续部署 | 未完成 | 无 GHCR 发布、测试环境自动部署和不可变版本推广 |
 | 生产安全 | 未完成 | 静态内部 Token、数据库 root 账号、无 mTLS/Workload Identity |
-| 运行保障 | 未完成 | 无备份恢复演练、Runbook、压测报告和故障演练 |
+| 运行保障 | 未完成 | 无正式备份恢复演练、Runbook、压测报告和故障演练 |
 
 ## 当前运行单元
 
@@ -105,7 +115,7 @@ GET /internal/v1/operations/reliability
 
 ### 自动对账
 
-Ordering migration 新增：
+Ordering migration 包含：
 
 ```text
 order_reconciliation_tasks
@@ -121,8 +131,6 @@ trg_orders_v2_create_reconciliation_task
 | `paying` | `finalize_payment` |
 | 其他 | `unresolved` |
 
-该映射不读取 `failure_reason`。触发器与订单状态更新处于同一事务，回滚时任务同时回滚。
-
 Reconciliation Worker：
 
 - 使用租约和 `FOR UPDATE SKIP LOCKED`；
@@ -132,11 +140,58 @@ Reconciliation Worker：
 - 本地订单最终状态、Outbox 完成和任务完成同事务；
 - 失败进入有界指数重试；
 - 未知动作或状态不匹配保持 `unresolved`；
-- 保留原始失败历史。
+- 支持非变更式 dry-run。
+
+## Kubernetes 交付基础
+
+### 已实现清单
+
+```text
+Namespace
+ConfigMap
+Secret contract
+MySQL StatefulSet + PVC
+RabbitMQ StatefulSet + PVC
+4 Migration Jobs
+5 HTTP Services
+5 HTTP Deployments
+2 Worker Deployments
+startup/liveness/readiness probes
+resource requests/limits
+RollingUpdate
+local NodePort overlay
+kind cluster configuration
+```
+
+只有 Gateway 使用 NodePort；业务服务、MySQL 和 RabbitMQ 保持集群内部访问。
+
+### 自动化运行验收
+
+独立 CI Job 会：
+
+1. 创建干净 kind 集群；
+2. 构建并加载 7 个应用镜像；
+3. 应用 local overlay；
+4. 等待 MySQL、RabbitMQ 和 4 个 Migration Job；
+5. 等待 7 个 Deployment；
+6. 验证 Gateway/内部 Service 暴露边界；
+7. 验证两个 Timeout Worker 和两个 Reconciliation Worker；
+8. 发布不可用 Gateway revision 并确认 rollout 失败；
+9. 执行 `kubectl rollout undo`；
+10. 确认原镜像和 Gateway readiness 恢复；
+11. 执行完整 Kubernetes Order Saga；
+12. 清理集群，失败时上传完整诊断。
+
+该验收已经真实发现并修复：
+
+- Kubernetes MySQL 客户端隐式 Unix Socket 与显式 TCP 的差异；
+- Deployment 已 Ready 后 Gateway 聚合 readiness 短暂抖动导致的一次性检查脆弱性。
 
 ## CI 证据
 
-当前流水线验证：
+当前流水线包含两条独立链路。
+
+### Go 与 Compose
 
 ```text
 golangci-lint
@@ -151,43 +206,40 @@ go build ./...
 2 个 Timeout Worker
 2 个 Reconciliation Worker
 Gateway readiness
-完整 Order Saga smoke
+完整 Compose Order Saga
 ```
 
-Reconciliation 阶段还验证：
+### Kubernetes Runtime
 
-- 触发器动作映射；
-- 状态更新与任务创建事务回滚；
-- Worker 独占租约和租约恢复；
-- release/fail、cancel、payment 三种修复；
-- 远程失败保持可重试；
-- 未知动作保持 `unresolved`。
+```text
+Kustomize render
+kind cluster creation
+2 StatefulSets
+4 Migration Jobs
+7 Deployments
+Service exposure validation
+2 + 2 Worker replicas
+failed rollout detection
+kubectl rollout undo
+complete Kubernetes Order Saga
+failure diagnostics
+cluster cleanup
+```
 
 ## 下一阶段
 
-### Phase 6：Kubernetes 基础
+### Phase 6 剩余治理
 
-需要完成：
+仍需完成：
 
-```text
-Deployment
-Service
-ConfigMap
-Secret
-Migration Job
-Ingress
-startupProbe
-livenessProbe
-readinessProbe
-requests / limits
-RollingUpdate
-rollout undo
-HPA
-PodDisruptionBudget
-NetworkPolicy
-```
-
-推荐先在 kind 或 k3d 验证，不要求立即购买托管集群。
+- Ingress Controller 和域名入口；
+- PodDisruptionBudget；
+- HorizontalPodAutoscaler；
+- NetworkPolicy；
+- 多节点和节点故障验证；
+- Registry 不可变镜像；
+- dev/test/prod overlays；
+- 托管云存储、负载均衡和 Workload Identity 集成。
 
 ### Phase 7：完整可观测性
 
@@ -197,6 +249,7 @@ NetworkPolicy
 - Grafana；
 - OpenTelemetry；
 - W3C Trace Context；
+- `trace_id` / `span_id` 日志字段；
 - Saga、Outbox、RabbitMQ 和 Reconciliation 指标；
 - 基础告警。
 
@@ -206,8 +259,8 @@ NetworkPolicy
 
 - GHCR 镜像；
 - 测试环境自动部署；
-- Smoke Test；
-- 错误版本回滚；
+- 部署后 Smoke Test；
+- 环境级自动回滚；
 - MySQL 备份恢复；
 - 故障演练；
 - Runbook；
@@ -220,16 +273,16 @@ NetworkPolicy
 
 | 目标 | 估算完成度 |
 | --- | ---: |
-| 微服务核心改造 | 约 92% |
-| 容器化应用开发 | 约 87% |
-| 应用可靠性基础 | 约 92% |
-| 云原生应用基础 | 约 80%–84% |
-| Kubernetes 部署 | 约 10% |
+| 微服务核心改造 | 约 94% |
+| 容器化应用开发 | 约 92% |
+| 应用可靠性基础 | 约 94% |
+| 云原生应用基础 | 约 88%–91% |
+| Kubernetes 基础部署与验收 | 约 65%–72% |
 | 完整可观测性 | 约 25% |
-| 生产级云原生交付 | 约 52%–62% |
+| 生产级云原生交付 | 约 62%–70% |
 
 ## 简历表述
 
 推荐：
 
-> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ Publisher Confirms、Timeout/Reconciliation Worker 多副本租约、请求预算、有限重试、操作级熔断、Gateway Token Bucket 限流、Outbox/Saga 运行指标、结构化自动对账、独立迁移和端到端 CI；继续建设 Kubernetes、Prometheus/OpenTelemetry 与持续交付体系。
+> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ Publisher Confirms、Timeout/Reconciliation Worker 多副本租约、请求预算、有限重试、操作级熔断、Gateway Token Bucket 限流、自动对账、独立迁移，以及 Compose/kind 双环境端到端 CI；在 Kubernetes 中验证 Migration Job、探针、RollingUpdate、失败 revision 检测、`rollout undo` 和完整订单 Saga。
