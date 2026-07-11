@@ -12,7 +12,7 @@ services:
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: root
-      DB_NAME: ${DB_NAME:-go-order-management-system}
+      DB_NAME: ${DB_NAME:-go_order_management_system}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
@@ -43,7 +43,7 @@ services:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-      MYSQL_DATABASE: ${DB_NAME:-go-order-management-system}
+      MYSQL_DATABASE: ${DB_NAME:-go_order_management_system}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -98,7 +98,7 @@ services:
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: root
-      DB_NAME: ${DB_NAME:-go-order-management-system}
+      DB_NAME: ${DB_NAME:-go_order_management_system}
     depends_on:
       mysql:
         condition: service_healthy
