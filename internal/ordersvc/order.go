@@ -163,7 +163,7 @@ func (s *Service) Create(ctx context.Context, userID int64, req CreateOrderReque
 			"status":         OrderStatusFailed,
 			"failure_reason": truncate(err.Error(), 500),
 		}).Error
-		return nil, fmt.Errorf("%w: %v", ErrReservationFailed, err)
+		return nil, fmt.Errorf("%w: %w", ErrReservationFailed, err)
 	}
 
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
