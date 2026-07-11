@@ -122,7 +122,11 @@ func TestExecutorOpenCircuitPerformsNoNetworkCall(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	if _, err := executor.Do(context.Background(), "catalog-service", "snapshot", RetryPolicy{MaxAttempts: 1}, factory); !errors.Is(err, ErrCircuitOpen) {
+	openResp, err := executor.Do(context.Background(), "catalog-service", "snapshot", RetryPolicy{MaxAttempts: 1}, factory)
+	if openResp != nil {
+		_ = openResp.Body.Close()
+	}
+	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("expected circuit-open error, got %v", err)
 	}
 	if calls != 1 {
