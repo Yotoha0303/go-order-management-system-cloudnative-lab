@@ -11,11 +11,13 @@
 | [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 服务独立 Goose 迁移、Outbox 租约、多 Worker 和 Publisher Confirms |
 | [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | 端到端请求预算、传输超时、有限重试和安全边界 |
 | [architecture/circuit-breaker-rate-limit.md](architecture/circuit-breaker-rate-limit.md) | 上游熔断状态机、Gateway Token Bucket 与运行边界 |
+| [architecture/reliability-indicators.md](architecture/reliability-indicators.md) | Outbox/Saga 聚合指标、内部端点和周期结构化日志 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 当前云原生完成度、已完成能力和生产级缺口 |
 | [verification/ci-baseline.md](verification/ci-baseline.md) | 当前 CI、Compose、双 Worker 和端到端 Saga 验证 |
 | [verification/publisher-confirms.md](verification/publisher-confirms.md) | RabbitMQ Broker ACK 与 Outbox 状态验证 |
 | [verification/http-timeout-retry.md](verification/http-timeout-retry.md) | 请求预算和有限重试验证计划 |
 | [verification/circuit-breaker-rate-limit.md](verification/circuit-breaker-rate-limit.md) | 熔断状态、限流补充/清理和 HTTP 429 合约验证 |
+| [verification/reliability-indicators.md](verification/reliability-indicators.md) | 两条聚合查询、内部鉴权和年龄边界验证 |
 | [project_evolution.md](project_evolution.md) | 从原单体到当前微服务阶段的演进记录 |
 
 ## 当前运行路径
