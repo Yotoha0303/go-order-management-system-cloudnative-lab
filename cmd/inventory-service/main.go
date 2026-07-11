@@ -7,9 +7,10 @@ import (
 	"go-order-management-system/config"
 	"go-order-management-system/internal/auth"
 	"go-order-management-system/internal/handler"
+	"go-order-management-system/internal/inventorysvc"
 	"go-order-management-system/internal/middleware"
+	"go-order-management-system/internal/platform/serviceclient"
 	"go-order-management-system/internal/platform/servicehost"
-	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,10 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
+	if err := inventorysvc.Migrate(db); err != nil {
+		logger.Error("migrate inventory database", "error", err)
+		os.Exit(1)
+	}
 
 	tokenManager, err := auth.NewTokenManager(
 		os.Getenv("JWT_SECRET"),
@@ -41,10 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	inventoryHandler := handler.NewInventoryHandler(service.NewInventoryService(db))
-	stockLogHandler := handler.NewStockLogHandler(service.NewStockLogService(db))
 	healthHandler := handler.NewHealthHandler(db)
-	roleChecker := service.NewAuthorizationService(db)
+	roleChecker := serviceclient.NewIdentityRoleChecker(
+		os.Getenv("IDENTITY_SERVICE_URL"),
+		os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		3*time.Second,
+	)
 
 	router := gin.New()
 	router.Use(
@@ -52,20 +59,17 @@ func main() {
 		middleware.AccessLog(logger),
 		middleware.Recovery(logger),
 	)
-
 	router.GET("/ping", healthHandler.PingHandler)
 	router.GET("/live", healthHandler.LiveHandler)
 	router.GET("/readyz", healthHandler.ReadyzHandler)
 
-	api := router.Group("/api/v1")
-	api.Use(middleware.AuthMiddleware(tokenManager))
-	api.GET("/inventory/products/:product_id", inventoryHandler.GetInventoryByProductID)
-
-	admin := api.Group("")
-	admin.Use(middleware.AdminMiddleware(roleChecker))
-	admin.POST("/inventory/init", inventoryHandler.InitInventory)
-	admin.POST("/inventory/add", inventoryHandler.AddInventory)
-	admin.GET("/stock-logs", stockLogHandler.ListStockLogs)
+	inventorysvc.RegisterRoutes(
+		router,
+		tokenManager,
+		roleChecker,
+		os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		inventorysvc.NewService(db),
+	)
 
 	server := servicehost.NewHTTPServer(
 		cfg.Server.Port,

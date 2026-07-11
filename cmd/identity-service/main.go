@@ -1,13 +1,16 @@
 package main
 
 import (
+	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"go-order-management-system/config"
 	"go-order-management-system/internal/auth"
 	"go-order-management-system/internal/handler"
 	"go-order-management-system/internal/middleware"
+	"go-order-management-system/internal/platform/internalapi"
 	"go-order-management-system/internal/platform/servicehost"
 	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
@@ -43,6 +46,7 @@ func main() {
 
 	userHandler := handler.NewUserHandler(service.NewUserService(db), tokenManager)
 	healthHandler := handler.NewHealthHandler(db)
+	roleChecker := service.NewAuthorizationService(db)
 
 	router := gin.New()
 	router.Use(
@@ -66,6 +70,22 @@ func main() {
 	users.GET("/me", userHandler.Me)
 	users.PUT("/me/profile", userHandler.UpdateProfile)
 	users.PATCH("/me/password", userHandler.UpdatePassword)
+
+	internal := router.Group("/internal/v1")
+	internal.Use(internalapi.Middleware(os.Getenv("INTERNAL_SERVICE_TOKEN")))
+	internal.GET("/users/:id/roles/:role", func(c *gin.Context) {
+		userID, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
+		if parseErr != nil || userID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+			return
+		}
+		allowed, roleErr := roleChecker.HasRole(c.Request.Context(), userID, c.Param("role"))
+		if roleErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "role check failed"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"allowed": allowed})
+	})
 
 	server := servicehost.NewHTTPServer(
 		cfg.Server.Port,

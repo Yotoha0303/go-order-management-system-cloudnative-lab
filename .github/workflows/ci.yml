@@ -22,8 +22,14 @@ env:
   MYSQL_TEST_PASSWORD: ci-password
   MYSQL_TEST_DATABASE: go_order_management_system_test
   JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
+  INTERNAL_SERVICE_TOKEN: ci-internal-service-token-must-be-long-and-random
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
+  RABBITMQ_USER: order_app
+  RABBITMQ_PASSWORD: ci-rabbit-password
+  MYSQL_HOST_PORT: "13306"
+  RABBITMQ_HOST_PORT: "15673"
+  RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
 
 jobs:
   quality:
@@ -89,7 +95,24 @@ jobs:
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        id: lint
+        continue-on-error: true
+        run: golangci-lint run ./... > lint.log 2>&1
+
+      - name: Upload lint diagnostics
+        if: steps.lint.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-log
+          path: lint.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce lint result
+        if: steps.lint.outcome == 'failure'
+        run: |
+          cat lint.log
+          exit 1
 
       - name: Run tests
         run: go test ./...
@@ -113,15 +136,48 @@ jobs:
             go build -trimpath -o "bin/${service}" "./cmd/${service}"
           done
 
-      - name: Validate microservices Compose configuration
+      - name: Validate data-isolated Compose configuration
         run: docker compose config --quiet
 
       - name: Build microservice images
+        run: docker compose build
+
+      - name: Start data-isolated microservices
+        id: startup
+        continue-on-error: true
+        run: docker compose up -d --wait
+
+      - name: Collect startup diagnostics
+        if: steps.startup.outcome == 'failure'
         run: |
-          for service in api-gateway identity-service catalog-service inventory-service order-service order-timeout-worker; do
-            docker build \
-              -f deploy/docker/Dockerfile.service \
-              --build-arg "SERVICE=${service}" \
-              -t "go-order-management-system/${service}:ci" \
-              .
-          done
+          {
+            echo '=== docker compose ps -a ==='
+            docker compose ps -a
+            echo
+            echo '=== docker compose logs ==='
+            docker compose logs --no-color --timestamps
+          } > compose-startup.log 2>&1
+
+      - name: Upload startup diagnostics
+        if: steps.startup.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-startup-log
+          path: compose-startup.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce startup result
+        if: steps.startup.outcome == 'failure'
+        run: |
+          cat compose-startup.log
+          exit 1
+
+      - name: Verify gateway readiness
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8082/readyz
+          docker compose ps
+
+      - name: Stop microservices
+        if: always()
+        run: docker compose down -v --remove-orphans

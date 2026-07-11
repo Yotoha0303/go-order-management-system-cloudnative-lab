@@ -2,10 +2,10 @@ x-common-environment: &common-environment
   DB_HOST: mysql
   DB_PORT: 3306
   DB_USER: root
-  DB_NAME: ${DB_NAME:-go_order_management_system}
   MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
   JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
   JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-24}
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-order_app}:${RABBITMQ_PASSWORD:-order_dev_password}@rabbitmq:5672/
   ORDER_TIMEOUT_DELAY: ${ORDER_TIMEOUT_DELAY:-30m}
 
@@ -56,8 +56,9 @@ services:
     environment:
       <<: *common-environment
       APP_PORT: 8083
+      DB_NAME: ${IDENTITY_DB_NAME:-go_order_identity}
     depends_on:
-      migrate:
+      identity-migrate:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8083/readyz"]
@@ -80,11 +81,12 @@ services:
     environment:
       <<: *common-environment
       APP_PORT: 8084
-      REDIS_ADDR: redis:6379
+      DB_NAME: ${CATALOG_DB_NAME:-go_order_catalog}
+      IDENTITY_SERVICE_URL: http://identity-service:8083
     depends_on:
-      migrate:
+      db-init:
         condition: service_completed_successfully
-      redis:
+      identity-service:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/readyz"]
@@ -107,9 +109,13 @@ services:
     environment:
       <<: *common-environment
       APP_PORT: 8085
+      DB_NAME: ${INVENTORY_DB_NAME:-go_order_inventory}
+      IDENTITY_SERVICE_URL: http://identity-service:8083
     depends_on:
-      migrate:
+      db-init:
         condition: service_completed_successfully
+      identity-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8085/readyz"]
       interval: 10s
@@ -131,9 +137,16 @@ services:
     environment:
       <<: *common-environment
       APP_PORT: 8086
+      DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
+      CATALOG_SERVICE_URL: http://catalog-service:8084
+      INVENTORY_SERVICE_URL: http://inventory-service:8085
     depends_on:
-      migrate:
+      db-init:
         condition: service_completed_successfully
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8086/readyz"]
       interval: 10s
@@ -152,28 +165,45 @@ services:
     container_name: go-order-management-system-order-timeout-worker
     environment:
       <<: *common-environment
+      DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
+      ORDER_SERVICE_URL: http://order-service:8086
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      order-service:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
     restart: unless-stopped
 
-  migrate:
-    image: go-order-management-system/migrate:local
+  identity-migrate:
+    image: go-order-management-system/identity-migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
-        SERVICE: order-service
-    container_name: go-order-management-system-migrate
+        SERVICE: identity-service
+    container_name: go-order-management-system-identity-migrate
     working_dir: /app
     environment:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: root
-      DB_NAME: ${DB_NAME:-go_order_management_system}
+      DB_NAME: ${IDENTITY_DB_NAME:-go_order_identity}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -ec
+      - |
+        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+    restart: "no"
+
+  db-init:
+    image: mysql:8.4
+    container_name: go-order-management-system-db-init
+    environment:
+      MYSQL_PWD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
     depends_on:
       mysql:
         condition: service_healthy
@@ -181,7 +211,12 @@ services:
       - sh
       - -ec
       - |
-        exec ./goose -dir ./migrations mysql "$${DB_USER}:$${MYSQL_PASSWORD}@tcp($${DB_HOST}:$${DB_PORT})/$${DB_NAME}?parseTime=true" up
+        mysql -h mysql -uroot -e "
+          CREATE DATABASE IF NOT EXISTS \`${IDENTITY_DB_NAME:-go_order_identity}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+          CREATE DATABASE IF NOT EXISTS \`${CATALOG_DB_NAME:-go_order_catalog}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+          CREATE DATABASE IF NOT EXISTS \`${INVENTORY_DB_NAME:-go_order_inventory}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+          CREATE DATABASE IF NOT EXISTS \`${ORDER_DB_NAME:-go_order_ordering}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+        "
     restart: "no"
 
   mysql:
@@ -191,29 +226,14 @@ services:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
-      MYSQL_DATABASE: ${DB_NAME:-go_order_management_system}
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
+      test: ["CMD-SHELL", "mysqladmin ping --protocol=tcp -h 127.0.0.1 -P 3306 -uroot -p$${MYSQL_ROOT_PASSWORD} || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
-
-  redis:
-    image: redis:7.2-alpine
-    container_name: go-order-management-system-redis
-    ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   rabbitmq:
@@ -237,5 +257,4 @@ services:
 
 volumes:
   mysql_data:
-  redis_data:
   rabbitmq_data:

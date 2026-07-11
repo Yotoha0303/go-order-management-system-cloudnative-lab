@@ -2,11 +2,11 @@ package main
 
 import (
 	"os"
+	"time"
 
 	"go-order-management-system/config"
-	"go-order-management-system/internal/ordertimeout"
+	"go-order-management-system/internal/ordersvc"
 	"go-order-management-system/internal/platform/servicehost"
-	"go-order-management-system/internal/service"
 	"go-order-management-system/pkg/database"
 )
 
@@ -25,17 +25,22 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
+	if err := ordersvc.Migrate(db); err != nil {
+		logger.Error("migrate order database", "error", err)
+		os.Exit(1)
+	}
 
-	orderService := service.NewOrderServiceWithTimeout(db, cfg.RabbitMQ.OrderTimeout.Delay)
-	worker, err := ordertimeout.NewWorker(ordertimeout.Config{
-		URL:                cfg.RabbitMQ.URL,
-		ConnectTimeout:     cfg.RabbitMQ.ConnectTimeout,
-		ReconnectDelay:     cfg.RabbitMQ.ReconnectDelay,
-		OutboxPollInterval: cfg.RabbitMQ.OrderTimeout.OutboxPollInterval,
-		OutboxRetryDelay:   cfg.RabbitMQ.OrderTimeout.OutboxRetryDelay,
-		PublishBatchSize:   cfg.RabbitMQ.OrderTimeout.PublishBatchSize,
-		ConsumerPrefetch:   cfg.RabbitMQ.OrderTimeout.ConsumerPrefetch,
-	}, db, orderService, logger)
+	worker, err := ordersvc.NewWorker(ordersvc.WorkerConfig{
+		URL:             cfg.RabbitMQ.URL,
+		ReconnectDelay:  cfg.RabbitMQ.ReconnectDelay,
+		PollInterval:    cfg.RabbitMQ.OrderTimeout.OutboxPollInterval,
+		RetryDelay:      cfg.RabbitMQ.OrderTimeout.OutboxRetryDelay,
+		BatchSize:       cfg.RabbitMQ.OrderTimeout.PublishBatchSize,
+		Prefetch:        cfg.RabbitMQ.OrderTimeout.ConsumerPrefetch,
+		OrderServiceURL: os.Getenv("ORDER_SERVICE_URL"),
+		InternalToken:   os.Getenv("INTERNAL_SERVICE_TOKEN"),
+		CallTimeout:     10 * time.Second,
+	}, db, logger)
 	if err != nil {
 		logger.Error("initialize timeout worker", "error", err)
 		os.Exit(1)
