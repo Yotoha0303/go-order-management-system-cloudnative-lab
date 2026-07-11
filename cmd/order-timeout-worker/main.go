@@ -38,6 +38,21 @@ func main() {
 		logger.Error("invalid RABBITMQ_PUBLISH_CONFIRM_TIMEOUT", "error", err)
 		os.Exit(1)
 	}
+	indicatorInterval, err := durationFromEnv("ORDER_RELIABILITY_LOG_INTERVAL", time.Minute)
+	if err != nil {
+		logger.Error("invalid ORDER_RELIABILITY_LOG_INTERVAL", "error", err)
+		os.Exit(1)
+	}
+	stuckThreshold, err := durationFromEnv("ORDER_TRANSIENT_STUCK_THRESHOLD", 5*time.Minute)
+	if err != nil {
+		logger.Error("invalid ORDER_TRANSIENT_STUCK_THRESHOLD", "error", err)
+		os.Exit(1)
+	}
+	reliabilityReporter, err := ordersvc.NewReliabilityReporter(db, stuckThreshold)
+	if err != nil {
+		logger.Error("initialize reliability reporter", "error", err)
+		os.Exit(1)
+	}
 
 	worker, err := ordersvc.NewWorker(ordersvc.WorkerConfig{
 		URL:                   cfg.RabbitMQ.URL,
@@ -60,7 +75,13 @@ func main() {
 
 	ctx, stop := servicehost.SignalContext()
 	defer stop()
-	logger.Info("order timeout worker starting")
+	go ordersvc.RunReliabilityLogLoop(ctx, reliabilityReporter, indicatorInterval, logger)
+
+	logger.Info(
+		"order timeout worker starting",
+		"reliability_log_interval", indicatorInterval,
+		"transient_stuck_threshold", stuckThreshold,
+	)
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("order timeout worker stopped", "error", err)
 		os.Exit(1)
