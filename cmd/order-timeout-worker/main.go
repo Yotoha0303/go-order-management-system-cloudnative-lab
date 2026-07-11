@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"go-order-management-system/config"
@@ -25,9 +26,15 @@ func main() {
 		logger.Error("initialize database", "error", err)
 		os.Exit(1)
 	}
-	if err := ordersvc.Migrate(db); err != nil {
-		logger.Error("migrate order database", "error", err)
-		os.Exit(1)
+
+	leaseDuration := 30 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("OUTBOX_LEASE_DURATION")); raw != "" {
+		parsed, parseErr := time.ParseDuration(raw)
+		if parseErr != nil || parsed <= 0 {
+			logger.Error("invalid OUTBOX_LEASE_DURATION", "value", raw)
+			os.Exit(1)
+		}
+		leaseDuration = parsed
 	}
 
 	worker, err := ordersvc.NewWorker(ordersvc.WorkerConfig{
@@ -40,6 +47,8 @@ func main() {
 		OrderServiceURL: os.Getenv("ORDER_SERVICE_URL"),
 		InternalToken:   os.Getenv("INTERNAL_SERVICE_TOKEN"),
 		CallTimeout:     10 * time.Second,
+		WorkerID:        os.Getenv("WORKER_ID"),
+		LeaseDuration:   leaseDuration,
 	}, db, logger)
 	if err != nil {
 		logger.Error("initialize timeout worker", "error", err)
