@@ -224,12 +224,12 @@ func TestReconciliationWorkerRepairsSupportedActions(t *testing.T) {
 
 func TestReconciliationWorkerKeepsFailedRepairRetryable(t *testing.T) {
 	db := openReconciliationTestDB(t)
+	fixed := time.Now().UTC().Truncate(time.Millisecond)
 	insertReconciliationOrder(t, db, 200, OrderStatusReconciliationRequired, "reservation-200")
-	insertReconciliationTask(t, db, 200, ReconciliationActionReleaseInventoryAndFail, ReconciliationTaskPending, time.Now().Add(-time.Second))
+	insertReconciliationTask(t, db, 200, ReconciliationActionReleaseInventoryAndFail, ReconciliationTaskPending, fixed.Add(-time.Second))
 	inventoryErr := errors.New("inventory temporarily unavailable")
 	inventory := &stubReconciliationInventory{releaseErr: inventoryErr}
 	worker := mustReconciliationWorker(t, db, inventory, slog.New(slog.NewTextHandler(io.Discard, nil)), "retry-worker", 1)
-	fixed := time.Date(2026, time.July, 11, 12, 0, 0, 0, time.UTC)
 	worker.now = func() time.Time { return fixed }
 
 	tasks, err := worker.claim(context.Background())
