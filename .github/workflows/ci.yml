@@ -19,7 +19,7 @@ env:
   RUN_REDIS_TEST: "1"
   RUN_RABBITMQ_TEST: "1"
   MYSQL_TEST_PASSWORD: ci-password
-  MYSQL_TEST_DATABASE: go-order-management-system_test
+  MYSQL_TEST_DATABASE: go_order_management_system_test
   REDIS_ADDR: 127.0.0.1:6379
   RABBITMQ_URL: amqp://order_app:ci-rabbit-password@127.0.0.1:5672/
 
@@ -33,7 +33,7 @@ jobs:
         image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: ci-password
-          MYSQL_DATABASE: go_order_inventory_test
+          MYSQL_DATABASE: go_order_management_system_test
         ports:
           - 3306:3306
         options: >-
