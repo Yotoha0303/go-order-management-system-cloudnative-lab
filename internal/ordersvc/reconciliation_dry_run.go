@@ -2,6 +2,7 @@ package ordersvc
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 )
@@ -36,7 +37,7 @@ type reconciliationDryRunRow struct {
 	OrderID     int64
 	Action      string
 	TaskStatus  string
-	OrderStatus *string
+	OrderStatus sql.NullString
 }
 
 func (worker *ReconciliationWorker) DryRun(ctx context.Context) (ReconciliationDryRunReport, error) {
@@ -97,21 +98,21 @@ func planReconciliation(row reconciliationDryRunRow) ReconciliationDryRunItem {
 	if !supported {
 		item.Classification = ReconciliationPlanUnsupported
 		item.Reason = ErrUnsupportedReconciliationAction.Error()
-		if row.OrderStatus != nil {
-			item.CurrentOrderStatus = *row.OrderStatus
+		if row.OrderStatus.Valid {
+			item.CurrentOrderStatus = row.OrderStatus.String
 		}
 		return item
 	}
 	item.IntendedTargetState = target
 
-	if row.OrderStatus == nil {
+	if !row.OrderStatus.Valid {
 		item.Classification = ReconciliationPlanOrderMissing
 		item.Reason = "order not found"
 		return item
 	}
-	item.CurrentOrderStatus = *row.OrderStatus
+	item.CurrentOrderStatus = row.OrderStatus.String
 
-	switch *row.OrderStatus {
+	switch row.OrderStatus.String {
 	case OrderStatusReconciliationRequired:
 		return item
 	case target:
