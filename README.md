@@ -1,6 +1,6 @@
 # Go Order Management Cloud-Native Lab
 
-> 一个从 Go 分层单体持续演进而来的云原生实验项目，重点展示微服务数据边界、Inventory Reservation、Order Saga、Transactional Outbox、RabbitMQ Publisher Confirms、请求预算、有限重试、熔断、限流、自动对账、多 Worker 租约、Kubernetes 交付，以及 Prometheus/Grafana 可观测性基础。
+> 一个从 Go 分层单体持续演进而来的云原生实验项目，重点展示微服务数据边界、Inventory Reservation、Order Saga、Transactional Outbox、RabbitMQ Publisher Confirms、请求预算、有限重试、熔断、限流、自动对账、多 Worker 租约、Kubernetes 交付，以及 Prometheus、Grafana 和 OpenTelemetry 可观测性。
 
 本仓库不是完整电商平台，也不宣称已经达到生产级云原生标准。当前已经完成：
 
@@ -13,10 +13,11 @@
 - Kubernetes Kustomize base/local/test、Ingress/PDB 合同、kind 部署、失败 rollout 与 `rollout undo`；
 - 五个 HTTP 服务和两个 Worker 的 Prometheus 指标；
 - Prometheus recording rules、九条基础 alert rules 和确定性规则测试；
-- 自动 Provisioning 的 Grafana 数据源与 `Go Order Management Overview` Dashboard；
-- Observability Stack CI：完整 Saga、七 target、规则健康、recording series 和 Grafana API 验收。
+- 自动 Provisioning 的 Grafana Prometheus/Tempo 数据源与应用总览 Dashboard；
+- OpenTelemetry SDK、W3C Trace Context、OTLP Collector、Tempo 和日志 Trace 关联；
+- Observability Stack CI：完整 Saga、七 target、规则健康、Grafana API 和五服务 Trace 验收。
 
-OpenTelemetry、W3C Trace Context、Alertmanager 通知、生产 SLO、基础设施 exporter、HPA、NetworkPolicy、GHCR 和正式环境持续交付仍在后续阶段。
+Alertmanager 通知、生产 SLO/错误预算、基础设施 exporter、Kubernetes 内监控/追踪栈、RabbitMQ 消息 Trace Context、HPA、NetworkPolicy、GHCR 和正式环境持续交付仍在后续阶段。
 
 ## 当前能力矩阵
 
@@ -35,7 +36,8 @@ OpenTelemetry、W3C Trace Context、Alertmanager 通知、生产 SLO、基础设
 | 指标 | HTTP server/client、Order、Outbox、Saga、Reconciliation、Worker、RabbitMQ Confirm |
 | Dashboard | Grafana 文件 Provisioning，稳定 UID `go-order-overview`，16 个核心面板 |
 | 规则 | 6 条 recording rules、9 条 alert rules、全部显式 `for` 窗口 |
-| 可观测性验收 | Prometheus 七 target、规则健康、recording series、Grafana 数据源/Dashboard API |
+| 分布式追踪 | W3C Trace Context + OpenTelemetry SDK + OTLP Collector + Tempo |
+| Trace 验收 | 固定 Trace ID 下验证 Gateway、Identity、Catalog、Inventory、Order 和 Saga span |
 
 ## 运行拓扑
 
@@ -73,9 +75,19 @@ flowchart LR
     Prometheus -. scrape :9091 .-> TimeoutWorker
     Prometheus -. scrape :9092 .-> ReconcileWorker
     Grafana[Grafana] --> Prometheus
+
+    Gateway -. OTLP .-> Collector[OpenTelemetry Collector]
+    Identity -. OTLP .-> Collector
+    Catalog -. OTLP .-> Collector
+    Inventory -. OTLP .-> Collector
+    Order -. OTLP .-> Collector
+    TimeoutWorker -. OTLP .-> Collector
+    ReconcileWorker -. OTLP .-> Collector
+    Collector --> Tempo[Tempo]
+    Grafana --> Tempo
 ```
 
-只有 API Gateway 对外提供业务入口。Prometheus 和 Grafana 是可选观测组件，不参与业务 readiness 链路。
+只有 API Gateway 对外提供业务入口。Prometheus、Grafana、Collector 和 Tempo 是可选观测组件，不参与业务 readiness 链路。
 
 ## 核心一致性与可靠性
 
@@ -127,7 +139,7 @@ sh scripts/smoke/microservices-saga.sh
 docker compose down -v --remove-orphans
 ```
 
-## Prometheus 与 Grafana
+## Observability Stack
 
 可观测性通过独立 overlay 加入：
 
@@ -142,20 +154,13 @@ docker compose -f compose.yml -f compose.observability.yml up -d --build --wait 
 ```text
 Prometheus: http://127.0.0.1:9090
 Grafana:    http://127.0.0.1:3000
+Tempo:      http://127.0.0.1:3200
+OTLP/HTTP:  http://127.0.0.1:14318
 ```
 
-本地端口和 Grafana 管理员信息可通过以下变量覆盖：
+本地端口和 Grafana 管理员信息可通过部署环境变量覆盖。非本地环境必须使用部署系统的 Secret 机制注入凭据。
 
-```text
-PROMETHEUS_HOST_PORT
-GRAFANA_HOST_PORT
-GRAFANA_ADMIN_USER
-GRAFANA_ADMIN_PASSWORD
-```
-
-非本地环境必须使用部署系统的 Secret 机制注入凭据。
-
-### Scrape endpoints
+### Prometheus scrape endpoints
 
 | 目标 | 端点 |
 | --- | --- |
@@ -175,16 +180,7 @@ Dashboard UID：
 go-order-overview
 ```
 
-覆盖：
-
-- target 状态；
-- 服务请求率、5xx 比例和 p95 延迟；
-- 内部 HTTP 调用；
-- Order/Saga 状态；
-- Outbox 状态、超时与最老年龄；
-- Reconciliation backlog；
-- RabbitMQ Publisher Confirm outcome；
-- Worker availability。
+覆盖 target 状态、HTTP RED 信号、内部调用、Order/Saga、Outbox、Reconciliation、RabbitMQ Publisher Confirm 和 Worker availability。
 
 ### Recording rules
 
@@ -213,14 +209,53 @@ GoOrderMetricsCollectionFailing
 
 这些阈值是实验项目默认值，不是生产 SLO。当前未配置 Alertmanager receiver 或通知渠道。
 
-### 本地验证
+## OpenTelemetry 与 Tempo
+
+所有 HTTP 服务和 Worker 安装共享 OpenTelemetry SDK。无 OTLP exporter 时仍生成有效本地 Trace Context；配置 exporter 后通过 OTLP/HTTP 发送到 Collector，再由 Collector 转发到 Tempo。
+
+传播标准：
+
+```text
+traceparent
+tracestate
+```
+
+响应诊断头：
+
+```text
+X-Trace-ID
+X-Span-ID
+```
+
+Request ID 与 Trace ID 是不同的标识：Request ID 用于应用请求预算和日志关联，Trace ID 用于跨服务调用图。
+
+当前 span 采用有限名称：
+
+```text
+POST api_orders
+GET api_products
+POST internal_inventory
+order.create_saga
+timeout_worker.publish_batch
+timeout_worker.consume
+reconciliation_worker.process_batch
+reconciliation_worker.process_task
+```
+
+禁止把用户 ID、订单 ID、预占 ID、请求体、Token、原始 URL、查询参数或错误文本写入 span name/attribute。
+
+本地 Trace 验证：
 
 ```bash
-python3 scripts/verify/observability-contracts.py
+export TRACE_ID=0123456789abcdef0123456789abcdef
+export TRACEPARENT=00-${TRACE_ID}-0123456789abcdef-01
+export TRACESTATE=goorder=local
+
 sh scripts/smoke/microservices-saga.sh
-python3 scripts/smoke/prometheus-metrics.py
-python3 scripts/smoke/grafana-provisioning.py
+python3 scripts/smoke/tempo-trace.py
 ```
+
+当前 RabbitMQ 消息尚未携带 W3C Trace Context；消息发布和消费由 Worker 本地 span 表示。
 
 ## Kubernetes
 
@@ -240,15 +275,9 @@ sh scripts/k8s/deploy-local.sh
 sh scripts/smoke/microservices-saga-kubernetes.sh
 ```
 
-Test overlay 提供：
+Test overlay 提供七个应用运行单元 2 副本、七个 `minAvailable: 1` PDB、一个 `nginx` Gateway Ingress、默认主机名 `go-order.test.local` 和内部 ClusterIP 边界。
 
-- 七个应用运行单元 2 副本；
-- 七个 `minAvailable: 1` PDB；
-- 一个 `nginx` Gateway Ingress；
-- 默认主机名 `go-order.test.local`；
-- 内部 ClusterIP 服务边界。
-
-Kubernetes base 已提供 Prometheus scrape annotations 和 Worker metrics ports；仓库尚未在 Kubernetes 内安装 Prometheus、Grafana 或 Prometheus Operator。
+Kubernetes base 已提供 Prometheus scrape annotations 和 Worker metrics ports；仓库尚未在 Kubernetes 内安装 Prometheus、Grafana、Collector、Tempo 或对应 Operator。
 
 ## CI 质量门禁
 
@@ -279,12 +308,12 @@ Prometheus annotations 与 Worker metrics ports
 ```text
 Compose overlay 合同
 Dashboard/Provisioning/Cardinality 静态检查
-promtool check config
-promtool firing/non-firing rule tests
-完整应用 + Prometheus + Grafana
-完整 Order Saga
+promtool check config 与规则夹具
+完整应用 + Prometheus + Grafana + Collector + Tempo
+完整 Order Saga with W3C context
 七 target、规则健康与 recording series
-Grafana datasource 与 Dashboard API
+Grafana Prometheus/Tempo datasource 与 Dashboard API
+Tempo 五服务跨服务 Trace、Saga span 和有界 span name
 ```
 
 ## 文档入口
@@ -298,6 +327,7 @@ Grafana datasource 与 Dashboard API
 - [Kubernetes 基础与运行验收](docs/architecture/kubernetes-foundation.md)
 - [Prometheus 指标基础](docs/architecture/prometheus-metrics.md)
 - [Grafana Dashboard 与告警规则](docs/architecture/grafana-alerts.md)
+- [OpenTelemetry 分布式追踪](docs/architecture/opentelemetry-tracing.md)
 - [云原生完成度与缺口](docs/architecture/cloud-native-status.md)
 - [项目演进记录](docs/project_evolution.md)
 
@@ -310,16 +340,17 @@ Grafana datasource 与 Dashboard API
 - Compose 与 Kubernetes 双环境完整 Saga；
 - Kubernetes base/local/test、Ingress/PDB、kind 部署和回滚；
 - Prometheus 应用指标、七 target 抓取、recording/alert rules；
-- Grafana 自动数据源、Dashboard 和可重复 API 验收。
+- Grafana 自动数据源、Dashboard 和可重复 API 验收；
+- OpenTelemetry SDK、W3C HTTP 传播、OTLP Collector、Tempo、日志关联和跨服务 Trace 验收。
 
 尚未完成：
 
-- OpenTelemetry、W3C Trace Context、跨服务 Trace 与 trace/log 关联；
-- Alertmanager 通知和生产 SLO/错误预算；
+- RabbitMQ 消息级 Trace Context 传播；
+- Alertmanager 通知、生产 SLO/错误预算、tail sampling 和生产 Trace retention；
 - RabbitMQ consumer 细粒度计数与基础设施 exporter；
-- Kubernetes 内 Prometheus/Grafana、HPA、NetworkPolicy 和多节点故障；
+- Kubernetes 内可观测性栈、HPA、NetworkPolicy 和多节点故障；
 - GHCR、测试环境持续部署和不可变版本推广；
 - 最小权限账号、mTLS/Workload Identity；
 - 备份恢复、Runbook、压测和故障演练。
 
-> **当前已完成微服务可靠性、Kubernetes 基础交付，以及 Prometheus/Grafana 应用级可观测性基础；仍未达到生产级云原生交付状态。**
+> **当前已完成微服务可靠性、Kubernetes 基础交付，以及 Prometheus/Grafana/OpenTelemetry 应用级可观测性；仍未达到生产级云原生交付状态。**
