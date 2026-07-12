@@ -40,6 +40,28 @@ EXPECTED_ALERTS = {
     "GoOrderMigrationJobFailed",
 }
 
+REQUIRED_APPLICATION_PANELS = {
+    "Application targets down",
+    "HTTP request rate by service",
+    "HTTP 5xx ratio by service",
+    "HTTP p95 latency by service",
+    "Orders by status",
+    "Outbox events by status",
+    "Reconciliation required",
+    "Stuck transient Sagas",
+    "RabbitMQ publisher-confirm outcomes",
+    "Worker availability",
+}
+
+REQUIRED_INFRASTRUCTURE_PANELS = {
+    "RabbitMQ Application Session",
+    "RabbitMQ Management Collector",
+    "Ready Queue Messages",
+    "RabbitMQ Queue Consumers",
+    "Timeout Delivery Outcomes",
+    "Terminally Failed Migration Jobs",
+}
+
 REQUIRED_APPLICATION_TERMS = {
     "service:http_requests:rate5m",
     "service:http_server_error_ratio:rate5m",
@@ -86,7 +108,14 @@ def collect_expressions(dashboard: dict) -> list[str]:
     return expressions
 
 
-def validate_dashboard(path: pathlib.Path, expected_uid: str, expected_title: str, required_terms: set[str], minimum_panels: int) -> None:
+def validate_dashboard(
+    path: pathlib.Path,
+    expected_uid: str,
+    expected_title: str,
+    required_panels: set[str],
+    required_terms: set[str],
+    minimum_panels: int,
+) -> None:
     dashboard = json.loads(read_text(path))
     require(dashboard.get("uid") == expected_uid, f"unexpected dashboard uid in {path.name}")
     require(dashboard.get("title") == expected_title, f"unexpected dashboard title in {path.name}")
@@ -95,6 +124,9 @@ def validate_dashboard(path: pathlib.Path, expected_uid: str, expected_title: st
     require(len(panels) >= minimum_panels, f"expected at least {minimum_panels} panels in {path.name}, got {len(panels)}")
     panel_ids = [panel.get("id") for panel in panels]
     require(len(panel_ids) == len(set(panel_ids)), f"dashboard panel ids must be unique in {path.name}")
+    panel_titles = {panel.get("title") for panel in panels}
+    missing_panels = sorted(required_panels - panel_titles)
+    require(not missing_panels, f"dashboard {path.name} is missing required panels: {missing_panels}")
 
     expressions = collect_expressions(dashboard)
     joined = "\n".join(expressions)
@@ -168,6 +200,7 @@ def main() -> int:
         APPLICATION_DASHBOARD_PATH,
         "go-order-overview",
         "Go Order Management Overview",
+        REQUIRED_APPLICATION_PANELS,
         REQUIRED_APPLICATION_TERMS,
         12,
     )
@@ -175,6 +208,7 @@ def main() -> int:
         INFRASTRUCTURE_DASHBOARD_PATH,
         "go-order-infrastructure",
         "Go Order Infrastructure Signals",
+        REQUIRED_INFRASTRUCTURE_PANELS,
         REQUIRED_INFRASTRUCTURE_TERMS,
         6,
     )
