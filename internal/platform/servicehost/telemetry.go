@@ -14,7 +14,9 @@ func SetupTelemetry(service string, logger *slog.Logger) func() {
 	}
 	shutdown, err := platformtelemetry.Setup(context.Background(), service)
 	if err != nil {
-		logger.Warn("initialize tracing", "error", err)
+		logger.Warn("initialize trace export", "error", err)
+	}
+	if shutdown == nil {
 		return func() {}
 	}
 	return func() {
