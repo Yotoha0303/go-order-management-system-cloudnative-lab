@@ -6,7 +6,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [../README.md](../README.md) | 当前项目定位、运行拓扑、Compose/kind/Prometheus 启动方式和能力边界 |
+| [../README.md](../README.md) | 当前项目定位、运行拓扑、Compose/kind/Prometheus/Grafana 启动方式和能力边界 |
 | [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、服务调用、Inventory Reservation 和 Order Saga |
 | [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 独立 Goose 迁移、Outbox 租约、多 Worker 和 Publisher Confirms |
 | [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | 请求预算、Transport 超时、有限重试和安全边界 |
@@ -14,7 +14,8 @@
 | [architecture/reliability-indicators.md](architecture/reliability-indicators.md) | Outbox/Saga 聚合指标、内部端点和周期日志 |
 | [architecture/reconciliation-worker.md](architecture/reconciliation-worker.md) | 对账任务、事务触发器、租约 Worker、修复动作和 dry-run |
 | [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize base/local/test、StatefulSet、Migration Job、Deployment、Ingress、PDB、kind 部署和回滚验收 |
-| [architecture/prometheus-metrics.md](architecture/prometheus-metrics.md) | Prometheus registry、scrape endpoints、HTTP/Order/Outbox/Worker/RabbitMQ 指标、标签基数和部署合同 |
+| [architecture/prometheus-metrics.md](architecture/prometheus-metrics.md) | Prometheus registry、scrape endpoints、HTTP/Order/Outbox/Worker/RabbitMQ 指标与标签基数 |
+| [architecture/grafana-alerts.md](architecture/grafana-alerts.md) | Grafana Provisioning、总览 Dashboard、recording rules、alert rules、阈值和边界 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 云原生完成度、已完成能力和生产级缺口 |
 | [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性、Kubernetes 和可观测性基础的演进记录 |
 
@@ -28,9 +29,12 @@
 | [verification/circuit-breaker-rate-limit.md](verification/circuit-breaker-rate-limit.md) | 熔断状态、Token Bucket 和 HTTP 429 |
 | [verification/reliability-indicators.md](verification/reliability-indicators.md) | 聚合查询、内部鉴权和年龄边界 |
 | [verification/reconciliation-worker.md](verification/reconciliation-worker.md) | 对账映射、事务回滚、租约和修复动作 |
+| [verification/grafana-alerts.md](verification/grafana-alerts.md) | Dashboard 合同、promtool 规则测试、Prometheus/Grafana 运行验收和诊断边界 |
 | `scripts/smoke/microservices-saga.sh` | Compose 与 Kubernetes 共用的微服务业务断言 |
 | `scripts/smoke/microservices-saga-kubernetes.sh` | Kubernetes Saga 包装入口 |
-| `scripts/smoke/prometheus-metrics.py` | Prometheus readiness、七 target 健康和关键时序查询 |
+| `scripts/smoke/prometheus-metrics.py` | 七 target、规则健康、基础指标和 recording series 查询 |
+| `scripts/smoke/grafana-provisioning.py` | Grafana 健康、Prometheus 数据源和 Dashboard Provisioning API |
+| `scripts/verify/observability-contracts.py` | Dashboard JSON、规则名称、显式 `for` 窗口和高基数标签静态合同 |
 | `scripts/k8s/deploy-local.sh` | 已进入 CI 实机验收的 kind 部署流程 |
 | `deploy/kubernetes/overlays/test/README.md` | test overlay 的 Ingress、PDB、DNS、Secret 和控制器前置条件 |
 
@@ -62,6 +66,11 @@ migrations/
 deploy/
 ├── docker
 ├── prometheus
+│   ├── rules
+│   └── tests
+├── grafana
+│   ├── dashboards
+│   └── provisioning
 └── kubernetes
     ├── base
     └── overlays
@@ -90,20 +99,27 @@ deploy/
 - Prometheus scrape annotations 和 Worker metrics ports 可渲染；
 - 渲染 YAML 作为 artifact 保存。
 
-### Prometheus Metrics workflow 已通过
+### Observability Stack workflow 已通过
 
 - 默认 Compose 与 observability overlay 合并校验；
-- 完整应用、两个双副本 Worker 和 Prometheus 启动；
+- Dashboard JSON、Provisioning、规则名称和标签基数静态合同；
+- `promtool check config`；
+- target down 触发、健康 target 不触发和 Outbox overdue 触发夹具；
+- 完整应用、两个双副本 Worker、Prometheus 和 Grafana 启动；
 - 完整 Order Saga；
 - 七个 application scrape target 全部 `up`；
-- HTTP server duration/count、Order、Outbox 和 Worker 指标可由 Prometheus API 查询；
-- 失败时保存 Compose、target 和 query diagnostics。
+- 四个规则组和九条 alert rules 健康加载；
+- 六类 recording series 可查询；
+- Grafana Prometheus 数据源 UID、URL 和默认状态经 API 验证；
+- Dashboard UID `go-order-overview` 自动 Provisioning，无需手动导入；
+- 失败时保存 Compose、Prometheus 和 Grafana diagnostics。
 
 ### 尚未完成
 
-- Grafana Dashboard 和正式 Prometheus alert rules；
-- OpenTelemetry、W3C Trace Context 与 `trace_id` / `span_id` 日志字段；
+- OpenTelemetry SDK/exporters、W3C Trace Context 与 `trace_id` / `span_id` 日志字段；
+- Alertmanager receiver、通知路由和生产 SLO/错误预算；
 - RabbitMQ consumer 细粒度计数和基础设施 exporter；
+- Kubernetes 内 Prometheus/Grafana 或 Prometheus Operator；
 - Ingress Controller 真实流量、TLS、HPA、NetworkPolicy 和多节点故障；
 - Registry 不可变镜像、测试环境 CD 和正式环境 overlay；
 - 托管云存储、负载均衡和 Workload Identity。
