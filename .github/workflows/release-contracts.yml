@@ -1,0 +1,50 @@
+name: Release Contracts
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/publish-images.yml"
+      - ".github/workflows/release-contracts.yml"
+      - "deploy/docker/Dockerfile.service"
+      - "scripts/release/**"
+      - "scripts/verify/release-contracts.py"
+      - "docs/verification/ghcr-release-images.md"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/publish-images.yml"
+      - ".github/workflows/release-contracts.yml"
+      - "deploy/docker/Dockerfile.service"
+      - "scripts/release/**"
+      - "scripts/verify/release-contracts.py"
+      - "docs/verification/ghcr-release-images.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify immutable image release contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile release tooling
+        run: python3 -m compileall -q scripts/release scripts/verify/release-contracts.py
+
+      - name: Test release manifest tooling
+        run: python3 -m unittest discover -s scripts/release -p "test_*.py" -v
+
+      - name: Verify release workflow contracts
+        run: python3 scripts/verify/release-contracts.py
