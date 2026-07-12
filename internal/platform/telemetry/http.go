@@ -36,13 +36,14 @@ func InstrumentHTTP(service string, next http.Handler) http.Handler {
 
 		parent := otel.GetTextMapPropagator().Extract(request.Context(), propagation.HeaderCarrier(request.Header))
 		routeGroup := platformmetrics.RouteGroup(request.URL.Path)
-		spanName := request.Method + " " + routeGroup
+		method := boundedMethod(request.Method)
+		spanName := method + " " + routeGroup
 		ctx, span := Tracer().Start(
 			parent,
 			spanName,
 			trace.WithSpanKind(trace.SpanKindServer),
 			trace.WithAttributes(
-				attribute.String("http.request.method", boundedMethod(request.Method)),
+				attribute.String("http.request.method", method),
 				attribute.String("go_order.route_group", routeGroup),
 			),
 		)
@@ -85,12 +86,13 @@ func (transport *tracingRoundTripper) RoundTrip(request *http.Request) (*http.Re
 			upstream = request.URL.Host
 		}
 	}
+	method := boundedMethod(request.Method)
 	ctx, span := Tracer().Start(
 		request.Context(),
-		request.Method+" "+routeGroup,
+		method+" "+routeGroup,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
-			attribute.String("http.request.method", boundedMethod(request.Method)),
+			attribute.String("http.request.method", method),
 			attribute.String("server.address", bounded(upstream, 120)),
 			attribute.String("go_order.route_group", routeGroup),
 		),
