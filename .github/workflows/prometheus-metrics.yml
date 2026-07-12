@@ -1,0 +1,73 @@
+name: Prometheus Metrics
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prometheus-metrics-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MYSQL_PASSWORD: ci-password
+  JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
+  INTERNAL_SERVICE_TOKEN: ci-internal-service-token-must-be-long-and-random
+  ORDER_TIMEOUT_DELAY: 3s
+  RABBITMQ_USER: order_app
+  RABBITMQ_PASSWORD: ci-rabbit-password
+  MYSQL_HOST_PORT: "13306"
+  RABBITMQ_HOST_PORT: "15673"
+  RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
+  OUTBOX_LEASE_DURATION: 30s
+  PROMETHEUS_HOST_PORT: "19090"
+  PROMETHEUS_URL: http://127.0.0.1:19090
+
+jobs:
+  scrape:
+    name: Compose scrape and metric assertions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate observability Compose configuration
+        run: docker compose -f compose.yml -f compose.observability.yml config --quiet
+
+      - name: Start application and Prometheus
+        run: |
+          docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
+            --scale order-timeout-worker=2 \
+            --scale order-reconciliation-worker=2
+
+      - name: Run complete Order Saga
+        run: sh scripts/smoke/microservices-saga.sh
+
+      - name: Verify Prometheus targets and metrics
+        run: python3 scripts/smoke/prometheus-metrics.py
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          mkdir -p diagnostics/prometheus
+          docker compose -f compose.yml -f compose.observability.yml ps -a > diagnostics/prometheus/compose-ps.txt || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color > diagnostics/prometheus/compose.log 2>&1 || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" > diagnostics/prometheus/targets.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_http_server_requests_total" > diagnostics/prometheus/http-metrics.json || true
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prometheus-metrics-diagnostics
+          path: diagnostics/prometheus
+          retention-days: 7
+
+      - name: Stop application and Prometheus
+        if: always()
+        run: docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans
