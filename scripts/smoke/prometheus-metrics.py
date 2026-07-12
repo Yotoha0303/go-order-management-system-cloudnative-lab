@@ -17,6 +17,23 @@ EXPECTED_JOBS = {
     "order-timeout-worker",
     "order-reconciliation-worker",
 }
+EXPECTED_RULE_GROUPS = {
+    "go-order-service-recording",
+    "go-order-availability",
+    "go-order-http",
+    "go-order-reliability",
+}
+EXPECTED_ALERTS = {
+    "GoOrderTargetDown",
+    "GoOrderWorkerDown",
+    "GoOrderElevatedHTTP5xxRatio",
+    "GoOrderHighP95Latency",
+    "GoOrderOutboxOverdue",
+    "GoOrderOutboxActionableAgeHigh",
+    "GoOrderReconciliationBacklog",
+    "GoOrderSagaStuck",
+    "GoOrderMetricsCollectionFailing",
+}
 
 
 def get_json(path: str) -> dict:
@@ -59,6 +76,23 @@ def wait_targets(timeout_seconds: int = 120) -> None:
     raise RuntimeError(f"Prometheus targets did not become healthy: {last_state}")
 
 
+def wait_rules(timeout_seconds: int = 120) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_state = {}
+    while time.monotonic() < deadline:
+        payload = get_json("/api/v1/rules")
+        groups = payload.get("data", {}).get("groups", [])
+        group_names = {group.get("name") for group in groups}
+        rules = [rule for group in groups for rule in group.get("rules", [])]
+        alerts = {rule.get("name") for rule in rules if rule.get("type") == "alerting"}
+        unhealthy = [rule.get("name") for rule in rules if rule.get("health") not in (None, "ok")]
+        last_state = {"groups": sorted(group_names), "alerts": sorted(alerts), "unhealthy": unhealthy}
+        if EXPECTED_RULE_GROUPS.issubset(group_names) and EXPECTED_ALERTS.issubset(alerts) and not unhealthy:
+            return
+        time.sleep(2)
+    raise RuntimeError(f"Prometheus rules did not become healthy: {last_state}")
+
+
 def query(metric: str) -> list:
     encoded = urllib.parse.urlencode({"query": metric})
     payload = get_json("/api/v1/query?" + encoded)
@@ -67,24 +101,33 @@ def query(metric: str) -> list:
     return payload.get("data", {}).get("result", [])
 
 
-def assert_metric(metric: str) -> None:
-    result = query(metric)
-    if not result:
-        raise RuntimeError(f"metric query returned no series: {metric}")
+def wait_metric(metric: str, timeout_seconds: int = 120) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if query(metric):
+            return
+        time.sleep(2)
+    raise RuntimeError(f"metric query returned no series: {metric}")
 
 
 def main() -> int:
     wait_ready()
     wait_targets()
+    wait_rules()
     for metric in (
         "go_order_http_server_requests_total",
         "go_order_http_server_request_duration_seconds_count",
         "go_order_orders",
         "go_order_outbox_events",
         "go_order_worker_up",
+        "service:http_requests:rate5m",
+        "service:http_server_error_ratio:rate5m",
+        "service:http_server_request_duration_seconds:p95",
+        "service:http_client_attempts:rate5m",
+        "worker:up:max",
     ):
-        assert_metric(metric)
-    print("Prometheus targets and bounded application metrics verified")
+        wait_metric(metric)
+    print("Prometheus targets, rules, alerts and bounded application metrics verified")
     return 0
 
 
