@@ -76,7 +76,7 @@ func main() {
 	})
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
-		Handler:           budgetedHandler,
+		Handler:           servicehost.ObserveHTTP("api-gateway", budgetedHandler),
 		ReadTimeout:       5 * time.Second,
 		WriteTimeout:      20 * time.Second,
 		IdleTimeout:       60 * time.Second,

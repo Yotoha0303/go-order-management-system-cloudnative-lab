@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    environment: compose-local
+
+scrape_configs:
+  - job_name: api-gateway
+    static_configs:
+      - targets: ["api-gateway:8082"]
+
+  - job_name: identity-service
+    static_configs:
+      - targets: ["identity-service:8083"]
+
+  - job_name: catalog-service
+    static_configs:
+      - targets: ["catalog-service:8084"]
+
+  - job_name: inventory-service
+    static_configs:
+      - targets: ["inventory-service:8085"]
+
+  - job_name: order-service
+    static_configs:
+      - targets: ["order-service:8086"]
+
+  - job_name: order-timeout-worker
+    static_configs:
+      - targets: ["order-timeout-worker:9091"]
+
+  - job_name: order-reconciliation-worker
+    static_configs:
+      - targets: ["order-reconciliation-worker:9092"]

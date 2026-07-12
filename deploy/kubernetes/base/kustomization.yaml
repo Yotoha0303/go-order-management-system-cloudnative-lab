@@ -10,6 +10,9 @@ resources:
   - migrations.yaml
   - applications.yaml
 
+patches:
+  - path: metrics-patches.yaml
+
 commonLabels:
   app.kubernetes.io/part-of: go-order-management-system
   app.kubernetes.io/managed-by: kustomize

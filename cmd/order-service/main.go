@@ -78,10 +78,12 @@ func main() {
 		Default: cfg.HttpServer.Server.Timeout,
 		Maximum: 30 * time.Second,
 	})
-	server := servicehost.NewHTTPServer(
+	server := servicehost.NewObservedHTTPServer(
+		"order-service",
 		cfg.Server.Port,
 		budgetedHandler,
 		cfg.HttpServer.Server,
+		ordersvc.ReliabilityPrometheusCollector(reliabilityReporter),
 	)
 	if err := servicehost.RunHTTP(logger, server); err != nil {
 		logger.Error("order service stopped", "error", err)

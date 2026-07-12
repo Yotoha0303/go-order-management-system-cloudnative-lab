@@ -93,7 +93,8 @@ func main() {
 		Default: cfg.HttpServer.Server.Timeout,
 		Maximum: 30 * time.Second,
 	})
-	server := servicehost.NewHTTPServer(
+	server := servicehost.NewObservedHTTPServer(
+		"identity-service",
 		cfg.Server.Port,
 		budgetedHandler,
 		cfg.HttpServer.Server,
