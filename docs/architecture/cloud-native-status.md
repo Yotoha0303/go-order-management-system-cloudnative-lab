@@ -4,20 +4,19 @@
 
 当前项目已经完成：
 
-- 微服务核心改造；
-- 容器化与四库数据所有权；
+- 微服务核心改造与四库数据所有权；
 - 应用可靠性收口；
-- Docker Compose 完整业务验证；
-- Kubernetes Kustomize base、local 和 test overlays；
-- disposable kind 集群自动部署；
-- 失败 revision 检测、`kubectl rollout undo` 和完整 Kubernetes Saga；
-- Gateway Ingress 交付合同；
-- 多副本应用 PodDisruptionBudget 合同；
-- local/test overlay 自动渲染与资源边界验证。
+- Compose 完整业务验证；
+- Kubernetes base/local/test overlays；
+- disposable kind 部署、失败 revision 检测、`rollout undo` 和完整 Kubernetes Saga；
+- Gateway Ingress 与多副本 PDB 交付合同；
+- Prometheus 应用指标基础；
+- 七个应用 target 的真实抓取和关键时序自动验收；
+- Kubernetes Pod scrape annotations 与 Worker metrics ports。
 
 最准确的定位是：
 
-> 具备独立服务与数据库、Order Saga、Transactional Outbox、Publisher Confirms、多 Worker、请求预算、有限重试、基础熔断、Gateway 限流、运行指标、自动对账，以及可重复 Kubernetes 部署、回滚和交付合同验证的云原生演进实验项目。
+> 具备独立服务与数据库、Order Saga、Transactional Outbox、Publisher Confirms、多 Worker、请求预算、有限重试、熔断、限流、自动对账、可重复 Kubernetes 部署/回滚，以及 Prometheus 应用指标和自动抓取验证的云原生演进实验项目。
 
 仍不应描述为：
 
@@ -33,94 +32,86 @@
 | 分布式一致性 | 已完成基础版 | Inventory Reservation、Order Saga、补偿和明确对账状态 |
 | 异步消息 | 已完成基础版 | RabbitMQ TTL/DLX、Transactional Outbox、Publisher Confirms、手动 ACK |
 | Worker 弹性 | 已完成基础版 | 租约、`SKIP LOCKED`、多副本、租约恢复 |
-| 自动对账 | 已完成基础版 | 结构化任务、事务触发器、已知修复动作、租约 Worker、多副本、dry-run |
+| 自动对账 | 已完成基础版 | 结构化任务、事务触发器、已知修复动作、多副本、dry-run |
 | HTTP 可靠性 | 已完成基础版 | Request ID、deadline、细分超时、有限重试、操作级熔断 |
 | 入口保护 | 已完成基础版 | Gateway 客户端/全局 Token Bucket、429/Retry-After |
-| 运行指标 | 已完成基础版 | Outbox/Saga 聚合 SQL、内部端点、周期结构化日志 |
 | 数据库迁移 | 已完成 | 服务独立 Goose migration、Compose Job 和 Kubernetes Job |
 | Compose CI | 已完成 | lint、test、race、build、迁移、镜像、四库、四个 Worker 副本、完整 Saga |
-| Kubernetes 清单 | 已完成基础版 | Namespace、ConfigMap/Secret、StatefulSet、Deployment、Service、Migration Job、Probe、资源限制、Ingress、PDB |
-| Kubernetes 运行验收 | 已完成基础版 | kind 部署、迁移、rollout、暴露面、双 Worker、失败 revision、undo 与完整 Saga |
-| Kubernetes 环境合同 | 已完成基础版 | local NodePort overlay、test Ingress/PDB overlay、独立契约 CI |
-| Kubernetes 弹性治理 | 部分完成 | 有 RollingUpdate 和 PDB；无 HPA、NetworkPolicy、多节点故障验证 |
-| 完整可观测性 | 未完成 | 无 Prometheus、Grafana、OpenTelemetry 和正式告警 |
-| 持续部署 | 未完成 | 无 GHCR 发布、自动测试环境部署和不可变版本推广 |
+| Kubernetes 基础 | 已完成基础版 | StatefulSet、Deployment、Service、Migration Job、Probe、resources、Ingress、PDB、local/test overlays |
+| Kubernetes 运行验收 | 已完成基础版 | kind 部署、暴露面、双 Worker、失败 revision、undo 与完整 Saga |
+| Prometheus endpoints | 已完成基础版 | 5 个 HTTP 服务 `/metrics`，2 个 Worker 独立 metrics listener |
+| HTTP 指标 | 已完成基础版 | server count/bytes/duration、client attempt/outcome/duration，有限标签 |
+| Saga/Outbox 指标 | 已完成基础版 | 状态、积压、租约、超时、年龄、失败尝试、对账和卡住状态 Gauge |
+| Worker/RabbitMQ 指标 | 已完成基础版 | Worker up/listener、Publisher Confirm outcome/duration |
+| Prometheus 运行验收 | 已完成基础版 | Compose Prometheus、7 targets up、Saga 后关键 metric query |
+| Kubernetes scrape 合同 | 已完成基础版 | Pod annotations 与 Worker metrics ports，可由 local/test overlay 渲染 |
+| Grafana 与告警 | 未完成 | 无 Dashboard、recording rule 和正式 alert rule |
+| 分布式追踪 | 未完成 | 无 OpenTelemetry、W3C Trace Context、trace/span 日志字段 |
+| 持续部署 | 未完成 | 无 GHCR、自动测试环境部署和不可变版本推广 |
 | 生产安全 | 未完成 | 静态内部 Token、数据库 root 账号、无 mTLS/Workload Identity |
 | 运行保障 | 未完成 | 无正式备份恢复演练、Runbook、压测报告和故障演练 |
 
-## Kubernetes 已验证范围
+## Prometheus 已验证范围
 
-### Local runtime
-
-CI 会：
-
-1. 创建干净 kind 集群；
-2. 构建并加载 7 个应用镜像；
-3. 应用 local overlay；
-4. 等待 MySQL、RabbitMQ 和 4 个 Migration Job；
-5. 等待 7 个 Deployment；
-6. 验证只有 Gateway 使用 NodePort；
-7. 验证两个 Timeout Worker 和两个 Reconciliation Worker；
-8. 发布不可用 Gateway revision 并确认 rollout 失败；
-9. 执行 `kubectl rollout undo`；
-10. 确认原镜像和 Gateway readiness 恢复；
-11. 执行完整 Kubernetes Order Saga；
-12. 清理集群，失败时上传诊断。
-
-### Test delivery contract
-
-独立 Kubernetes Contracts workflow 会验证：
-
-- local 和 test overlay 都能由 Kustomize 渲染；
-- test overlay 只有一个 Gateway Ingress；
-- Ingress 使用 `nginx` class 和 `go-order.test.local`；
-- Gateway、四个业务服务和两个 Worker 类型均为 2 副本；
-- 七个 PDB 均为 `minAvailable: 1`；
-- test overlay 不包含 NodePort；
-- MySQL 和 RabbitMQ 不会被错误应用 PDB；
-- 渲染结果作为 CI artifact 保存。
-
-该验证证明清单和资源合同正确，但不等于真实 Ingress Controller 已安装，也不等于 Ingress 流量已在 CI 中通过。
-
-## 应用可靠性链
-
-### 异步发布
+### Scrape targets
 
 ```text
-Order local transaction
-  -> timeout Outbox
-  -> lease claim
-  -> RabbitMQ publish
-  -> Broker ACK
-  -> published
+api-gateway                  :8082/metrics
+identity-service             :8083/metrics
+catalog-service              :8084/metrics
+inventory-service            :8085/metrics
+order-service                :8086/metrics
+order-timeout-worker         :9091/metrics
+order-reconciliation-worker  :9092/metrics
 ```
 
-NACK、确认超时、通道关闭和直接发布错误都会进入失败重试。语义仍是 at-least-once。
+Prometheus Metrics workflow 会：
 
-### 同步调用
+1. 合并默认 Compose 与 observability overlay；
+2. 启动完整应用拓扑、两个双副本 Worker 和 Prometheus；
+3. 运行完整 Order Saga；
+4. 验证七个 application targets 全部 `up`；
+5. 查询 HTTP server count/duration、Order、Outbox 和 Worker 指标；
+6. 失败时上传 targets、query 和 Compose diagnostics。
 
-内部客户端具备：
+### 指标域
 
-- Request ID 和绝对 deadline 传播；
-- TCP、TLS、响应头和总超时；
-- 502/503/504 与选定网络错误的有限重试；
-- 指数退避与有限抖动；
-- 剩余预算判断；
-- 按 `<upstream>/<operation>` 隔离的熔断器。
+```text
+go_order_http_server_requests_total
+go_order_http_server_response_bytes_total
+go_order_http_server_request_duration_seconds
+go_order_http_client_attempts_total
+go_order_http_client_attempt_duration_seconds
+go_order_orders{status}
+go_order_outbox_events{status}
+go_order_reconciliation_required
+go_order_saga_stuck_transient
+go_order_worker_up{worker}
+go_order_rabbitmq_publish_total{outcome}
+go_order_rabbitmq_publish_duration_seconds{outcome}
+```
 
-Gateway 不重放外部业务请求。
+标签明确禁止使用：request ID、trace ID、用户/订单/预占/事件 ID、Worker 实例 ID、原始 URL、查询字符串和错误消息。
 
-### 自动对账
+### 边界
 
-Reconciliation Worker：
+当前指标 registry 使用标准库输出 Prometheus text format，足以支持本项目的固定指标合同和并发测试。当前没有：
 
-- 使用租约和 `FOR UPDATE SKIP LOCKED`；
-- 支持多个副本和过期租约恢复；
-- 复用 deadline、重试和熔断；
-- 重复执行幂等 release/confirm；
-- 本地订单最终状态、Outbox 完成和任务完成同事务；
-- 未知动作保持 `unresolved`；
-- 支持非变更式 dry-run。
+- Grafana；
+- alert rules；
+- Prometheus Operator / ServiceMonitor；
+- Kubernetes 内 Prometheus Server；
+- RabbitMQ exporter、MySQL exporter、kube-state-metrics；
+- consumer delivery 的细粒度计数；
+- 长期保留、HA Prometheus 或远程存储。
+
+## Kubernetes 已验证范围
+
+主 CI 会创建干净 kind 集群，运行基础设施、四个 Migration Job、七个 Deployment，验证 Service 暴露和双 Worker，执行失败 rollout、`kubectl rollout undo` 和完整 Kubernetes Saga。
+
+Kubernetes Contracts workflow 会验证 local/test overlays、Ingress、七个 PDB、副本数、ClusterIP/NodePort 边界，以及 Prometheus annotations/ports 可正确渲染。
+
+Ingress Controller、TLS、HPA、NetworkPolicy、多节点故障和托管云集成仍属于增强项。
 
 ## 阶段判断
 
@@ -130,57 +121,26 @@ Reconciliation Worker：
 
 ### Phase 6：Kubernetes 基础
 
-按原始跟踪范围已完成：
-
-- Deployment；
-- Service；
-- ConfigMap；
-- Secret contract；
-- Migration Job；
-- Ingress contract；
-- startup/liveness/readiness Probe；
-- requests/limits；
-- RollingUpdate；
-- rollout undo；
-- PDB；
-- local/test overlays；
-- kind 实际部署和完整 Saga。
-
-仍属于后续增强而不是 Phase 6 基础验收的内容：
-
-- Ingress Controller 安装与真实流量验收；
-- TLS；
-- HPA；
-- NetworkPolicy；
-- 多节点和节点故障验证；
-- Registry 不可变镜像；
-- 托管云存储、负载均衡和 Workload Identity。
+已完成原始跟踪范围。
 
 ### Phase 7：完整可观测性
 
-尚未完成：
+部分完成：
 
-- Prometheus；
-- Grafana；
-- OpenTelemetry；
-- W3C Trace Context；
-- `trace_id` / `span_id` 日志字段；
-- Saga、Outbox、RabbitMQ 和 Reconciliation 指标；
-- 基础告警。
+- [x] Prometheus 应用指标；
+- [x] Compose Prometheus 抓取；
+- [x] 七 target 与关键指标自动验收；
+- [x] Kubernetes scrape 合同；
+- [ ] Grafana Dashboard；
+- [ ] Prometheus alert rules；
+- [ ] OpenTelemetry；
+- [ ] W3C Trace Context；
+- [ ] `trace_id` / `span_id` 日志字段；
+- [ ] RabbitMQ consumer 与基础设施 exporter。
 
 ### Phase 8：持续交付与运行保障
 
-尚未完成：
-
-- GHCR 镜像；
-- 测试环境自动部署；
-- 部署后 Smoke Test；
-- 环境级自动回滚；
-- MySQL 备份恢复；
-- 故障演练；
-- Runbook；
-- 压测与容量报告；
-- 最小权限账号和 Workload Identity。
+尚未完成：GHCR、测试环境 CD、部署后 Smoke、环境级回滚、MySQL 备份恢复、故障演练、Runbook、压测与最小权限身份体系。
 
 ## 完成度估算
 
@@ -189,15 +149,15 @@ Reconciliation Worker：
 | 目标 | 估算完成度 |
 | --- | ---: |
 | 微服务核心改造 | 约 94% |
-| 容器化应用开发 | 约 93% |
-| 应用可靠性基础 | 约 94% |
-| 云原生应用基础 | 约 90%–93% |
-| Kubernetes 基础部署与合同 | 约 85%–90% |
-| 完整可观测性 | 约 25% |
-| 生产级云原生交付 | 约 65%–72% |
+| 容器化应用开发 | 约 94% |
+| 应用可靠性基础 | 约 95% |
+| Kubernetes 基础部署与合同 | 约 88%–92% |
+| 完整可观测性 | 约 45%–55% |
+| 云原生应用基础 | 约 92%–94% |
+| 生产级云原生交付 | 约 68%–75% |
 
 ## 简历表述
 
 推荐：
 
-> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ Publisher Confirms、Timeout/Reconciliation Worker 多副本租约、请求预算、有限重试、操作级熔断、Gateway 限流、自动对账、独立迁移，以及 Compose/kind 双环境端到端 CI；在 Kubernetes 中验证 Migration Job、探针、RollingUpdate、失败 revision 检测、`rollout undo`、Ingress/PDB 交付合同和完整订单 Saga。
+> 将 Go 订单库存单体系统演进为容器化微服务架构，完成服务与数据库边界拆分、库存预占 Saga、Transactional Outbox、RabbitMQ Publisher Confirms、Timeout/Reconciliation Worker 多副本租约、请求预算、有限重试、熔断、限流、自动对账和独立迁移；建立 Compose/kind 双环境端到端 CI，并为七个运行单元实现有限基数 Prometheus 指标、Outbox/Saga 业务 Gauge、RabbitMQ Confirm 指标及七 target 自动抓取验收。
