@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	platformmetrics "go-order-management-system/internal/platform/metrics"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -15,6 +17,8 @@ var (
 	errPublisherConfirmClosed  = errors.New("rabbitmq publisher confirmation channel closed")
 	errPublisherConfirmTimeout = errors.New("rabbitmq publisher confirmation timed out")
 )
+
+var rabbitPublishDurationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5}
 
 type timeoutEventPublisher interface {
 	Publish(ctx context.Context, event TimeoutOutbox, payload []byte, delay time.Duration) error
@@ -49,6 +53,7 @@ func newConfirmedAMQPPublisher(channel *amqp.Channel, exchange, routingKey strin
 }
 
 func (p *confirmedAMQPPublisher) Publish(ctx context.Context, event TimeoutOutbox, payload []byte, delay time.Duration) error {
+	started := time.Now()
 	if delay < time.Second {
 		delay = time.Second
 	}
@@ -63,11 +68,14 @@ func (p *confirmedAMQPPublisher) Publish(ctx context.Context, event TimeoutOutbo
 		Timestamp:    time.Now(),
 		Body:         payload,
 	}); err != nil {
+		recordRabbitPublish("publish_error", time.Since(started))
 		return fmt.Errorf("publish rabbitmq message: %w", err)
 	}
 	if err := waitForPublisherConfirmation(publishCtx, p.confirmations); err != nil {
+		recordRabbitPublish(publisherOutcome(err), time.Since(started))
 		return err
 	}
+	recordRabbitPublish("ack", time.Since(started))
 	return nil
 }
 
@@ -84,4 +92,33 @@ func waitForPublisherConfirmation(ctx context.Context, confirmations <-chan amqp
 	case <-ctx.Done():
 		return fmt.Errorf("%w: %w", errPublisherConfirmTimeout, ctx.Err())
 	}
+}
+
+func publisherOutcome(err error) string {
+	switch {
+	case errors.Is(err, errPublisherNacked):
+		return "nack"
+	case errors.Is(err, errPublisherConfirmClosed):
+		return "channel_closed"
+	case errors.Is(err, errPublisherConfirmTimeout):
+		return "timeout"
+	default:
+		return "other_error"
+	}
+}
+
+func recordRabbitPublish(outcome string, duration time.Duration) {
+	labels := platformmetrics.Labels{"outcome": outcome}
+	platformmetrics.Default.IncCounter(
+		"go_order_rabbitmq_publish_total",
+		"Total RabbitMQ timeout event publish attempts by confirm outcome.",
+		labels,
+	)
+	platformmetrics.Default.ObserveHistogram(
+		"go_order_rabbitmq_publish_duration_seconds",
+		"RabbitMQ timeout event publish and confirmation duration in seconds by outcome.",
+		labels,
+		duration.Seconds(),
+		rabbitPublishDurationBuckets,
+	)
 }
