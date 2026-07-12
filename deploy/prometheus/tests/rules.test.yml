@@ -1,0 +1,52 @@
+rule_files:
+  - ../rules/recording-rules.yml
+  - ../rules/alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: target-down-fires-after-for-window
+    interval: 1m
+    input_series:
+      - series: 'up{job="api-gateway",instance="api-gateway:8082"}'
+        values: '0+0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GoOrderTargetDown
+        exp_alerts:
+          - exp_labels:
+              alertname: GoOrderTargetDown
+              category: availability
+              instance: api-gateway:8082
+              job: api-gateway
+              severity: critical
+            exp_annotations:
+              summary: Go Order target is unavailable
+              description: Prometheus cannot scrape api-gateway at api-gateway:8082 for two minutes.
+
+  - name: healthy-target-does-not-fire
+    interval: 1m
+    input_series:
+      - series: 'up{job="api-gateway",instance="api-gateway:8082"}'
+        values: '1+0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GoOrderTargetDown
+        exp_alerts: []
+
+  - name: overdue-outbox-fires-after-for-window
+    interval: 1m
+    input_series:
+      - series: 'go_order_outbox_overdue{job="order-service",instance="order-service:8086"}'
+        values: '1+0x6'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: GoOrderOutboxOverdue
+        exp_alerts:
+          - exp_labels:
+              alertname: GoOrderOutboxOverdue
+              category: outbox
+              severity: warning
+            exp_annotations:
+              summary: Go Order Outbox contains overdue events
+              description: At least one timeout Outbox event has remained overdue for three minutes.
