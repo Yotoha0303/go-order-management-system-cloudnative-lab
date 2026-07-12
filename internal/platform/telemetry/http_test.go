@@ -53,8 +53,9 @@ func TestInstrumentHTTPContinuesW3CTraceWithBoundedSpanName(t *testing.T) {
 		t.Fatalf("unexpected span name: %q", spans[0].Name())
 	}
 	for _, attr := range spans[0].Attributes() {
-		if strings.Contains(attr.Value.Emit(), "12345") || strings.Contains(attr.Value.Emit(), "secret") {
-			t.Fatalf("unbounded request data leaked into span attribute: %s=%s", attr.Key, attr.Value.Emit())
+		value := attr.Value.String()
+		if strings.Contains(value, "12345") || strings.Contains(value, "secret") {
+			t.Fatalf("unbounded request data leaked into span attribute: %s=%s", attr.Key, value)
 		}
 	}
 }
