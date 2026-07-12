@@ -25,7 +25,9 @@ Kubernetes 基础与交付合同
   ↓
 Prometheus 指标基础
   ↓
-【当前下一阶段：Grafana/告警与 OpenTelemetry】
+Grafana Dashboard 与告警规则
+  ↓
+【当前下一阶段：OpenTelemetry 分布式追踪】
   ↓
 持续交付与运行保障
 ```
@@ -220,46 +222,103 @@ order-reconciliation-worker  :9092/metrics
 - Worker 进程与 metrics listener；
 - RabbitMQ Publisher Confirm 的 ACK/NACK/timeout/channel-close/publish-error。
 
-标签基数规则明确禁止：
+标签基数规则明确禁止 request/trace/user/order/reservation/event/Worker 实例 ID、原始 URL、查询字符串和错误消息。
 
-```text
-request_id
-trace_id
-user_id
-order_id
-reservation_id
-event_id
-worker_id
-raw URL
-query string
-error message
-```
-
-### Compose 与 Kubernetes 合同
+Compose 与 Kubernetes 合同：
 
 - `compose.observability.yml` 可选叠加 Prometheus；
 - `deploy/prometheus/prometheus.yml` 定义七个应用 scrape target；
 - Kubernetes base 为七个应用 Pod 添加 scrape annotations；
 - 两个 Worker 声明 metrics container port。
 
-### 自动验收
+Phase 7.1 CI 会启动完整业务拓扑和 Prometheus，运行完整 Order Saga，验证七个 targets 全部 `up` 并查询关键时序。
 
-独立 Prometheus Metrics workflow 会：
+### 7.2 Grafana Dashboard 与告警规则——已完成
 
-1. 启动完整业务拓扑和 Prometheus；
-2. 运行完整 Order Saga；
-3. 验证七个 application targets 全部 `up`；
-4. 查询 HTTP、Order、Outbox 和 Worker 关键时序；
-5. 失败时保存 target、query 和 Compose diagnostics。
+新增自动 Provisioning：
 
-### 7.2/7.3 待完成
+```text
+deploy/grafana/provisioning/datasources/prometheus.yml
+deploy/grafana/provisioning/dashboards/dashboards.yml
+deploy/grafana/dashboards/go-order-overview.json
+```
 
-- Grafana Dashboard；
-- Prometheus alert rules；
-- OpenTelemetry SDK/exporters；
+稳定合同：
+
+```text
+Grafana datasource UID: prometheus
+Dashboard UID:           go-order-overview
+Dashboard title:         Go Order Management Overview
+```
+
+Dashboard 包含 16 个面板，覆盖：
+
+- 七个应用 target 可用性；
+- 服务请求率、5xx 比例和 p95 延迟；
+- 内部 HTTP 调用；
+- Order 状态与 Saga 卡住状态；
+- Outbox 状态、overdue 和最老可执行年龄；
+- Reconciliation backlog；
+- RabbitMQ Publisher Confirm outcome；
+- Worker availability。
+
+新增六条 recording rules：
+
+```text
+service:http_requests:rate5m
+service:http_server_errors:rate5m
+service:http_server_error_ratio:rate5m
+service:http_server_request_duration_seconds:p95
+service:http_client_attempts:rate5m
+worker:up:max
+```
+
+新增九条基础 alert rules：
+
+```text
+GoOrderTargetDown
+GoOrderWorkerDown
+GoOrderElevatedHTTP5xxRatio
+GoOrderHighP95Latency
+GoOrderOutboxOverdue
+GoOrderOutboxActionableAgeHigh
+GoOrderReconciliationBacklog
+GoOrderSagaStuck
+GoOrderMetricsCollectionFailing
+```
+
+每条告警都包含显式 `for` 窗口。健康服务无 5xx 时会输出明确的零错误率序列，而不是缺失时序。
+
+Observability Stack workflow 会：
+
+1. 校验 Compose、Dashboard、Provisioning、规则名称和高基数标签合同；
+2. 运行 `promtool check config`；
+3. 运行 target down 触发/不触发与 Outbox overdue 触发夹具；
+4. 启动完整应用、Prometheus 和 Grafana；
+5. 执行完整 Order Saga；
+6. 验证七个 targets、四个规则组、九条告警和 recording series；
+7. 通过 Grafana API 验证数据源和文件 Provisioning Dashboard。
+
+边界：当前规则是实验项目默认阈值，不是生产 SLO；尚未接入 Alertmanager receiver 或通知渠道。
+
+### 7.3 OpenTelemetry 分布式追踪——待完成
+
+- OpenTelemetry SDK 和 OTLP exporter；
 - W3C Trace Context；
-- `trace_id` / `span_id` 日志关联；
-- RabbitMQ consumer 细粒度指标和基础设施 exporter。
+- HTTP server/client span；
+- Gateway 到业务服务的跨服务 Trace；
+- `trace_id` / `span_id` 结构化日志关联；
+- Worker、RabbitMQ 和 Saga span/event 设计；
+- Collector 与 Trace backend；
+- Trace 合同和端到端验收。
+
+其他可观测性增强：
+
+- Alertmanager receiver 和通知路由；
+- 生产 SLO、错误预算和容量阈值；
+- RabbitMQ consumer 细粒度指标；
+- MySQL、RabbitMQ、Kubernetes 基础设施 exporter；
+- Kubernetes 内 Prometheus/Grafana 部署。
 
 ## 当前项目状态
 
@@ -272,7 +331,8 @@ error message
 - Compose 与 Kubernetes 双环境完整 Saga；
 - kind 失败 rollout 与 undo；
 - Ingress/PDB/test overlay 合同；
-- Prometheus 应用指标、七 target 抓取和指标自动验收。
+- Prometheus 应用指标、七 target 抓取和 recording/alert rules；
+- Grafana 自动数据源、应用总览 Dashboard 和 API 自动验收。
 
 当前仍不等于完整生产级云原生系统。
 
