@@ -4,14 +4,15 @@
 
 本仓库不是完整电商平台，也不宣称已经达到生产级云原生标准。当前已经完成：
 
-- 微服务核心改造；
-- 四库数据所有权；
+- 微服务核心改造与四库数据所有权；
 - 应用可靠性收口；
 - Compose 完整业务验证；
-- Kubernetes Kustomize 基础；
-- kind 实际部署、失败版本检测、`rollout undo` 和完整 Kubernetes Saga 自动验收。
+- Kubernetes Kustomize base、local 和 test overlays；
+- kind 实际部署、失败版本检测、`rollout undo` 和完整 Kubernetes Saga；
+- Gateway Ingress 合同与多副本工作负载 PodDisruptionBudget；
+- local/test overlay 的独立 CI 契约验证。
 
-Ingress、PDB、HPA、NetworkPolicy、Prometheus/Grafana、OpenTelemetry、GHCR 和正式环境持续交付仍在后续阶段。
+HPA、NetworkPolicy、多节点故障行为、Prometheus/Grafana、OpenTelemetry、GHCR 和正式环境持续交付仍在后续阶段。
 
 ## 当前能力矩阵
 
@@ -26,8 +27,9 @@ Ingress、PDB、HPA、NetworkPolicy、Prometheus/Grafana、OpenTelemetry、GHCR 
 | Worker 扩容 | Timeout/Reconciliation Worker 均使用租约与 `FOR UPDATE SKIP LOCKED` |
 | 数据库迁移 | 四套独立 Goose migration；Compose 和 Kubernetes 均使用一次性迁移任务 |
 | Compose 验证 | 四库、RabbitMQ、2 个 Timeout Worker、2 个 Reconciliation Worker、完整 Saga |
-| Kubernetes 基础 | Kustomize base/local overlay + StatefulSet + Deployment + Service + Migration Job + ConfigMap/Secret 合同 |
-| Kubernetes 验证 | CI 创建真实 kind 集群，验证部署、暴露面、双 Worker、失败 rollout、`rollout undo` 和完整 Saga |
+| Kubernetes 清单 | base + local/test overlays、StatefulSet、Deployment、Service、Migration Job、ConfigMap/Secret、Ingress、PDB |
+| Kubernetes 运行验证 | CI 创建真实 kind 集群，验证部署、暴露面、双 Worker、失败 rollout、`rollout undo` 和完整 Saga |
+| Kubernetes 契约验证 | CI 渲染 local/test overlays，并检查 Ingress、PDB、副本数和 Service 暴露边界 |
 
 ## 运行拓扑
 
@@ -86,7 +88,7 @@ Order pending + timeout Outbox
 - `lease_owner` / `lease_until` 支持多副本和崩溃恢复；
 - Broker ACK 后才将 Outbox 标记为 `published`；
 - NACK、确认超时和连接异常进入可重试失败；
-- 仍保持 at-least-once，消费者依靠幂等状态机处理重复消息。
+- 保持 at-least-once，消费者依靠幂等状态机处理重复消息。
 
 ### 自动对账
 
@@ -97,8 +99,6 @@ Ordering 数据库维护结构化 `order_reconciliation_tasks`。Reconciliation 
 - 执行幂等 confirm/release；
 - 未知动作保持 `unresolved`；
 - 支持真正只读的 dry-run 预演。
-
-Dry-run：
 
 ```bash
 docker compose run --rm \
@@ -146,28 +146,34 @@ deploy/kubernetes/
 │   ├── migrations.yaml
 │   ├── applications.yaml
 │   └── kustomization.yaml
-└── overlays/local/
-    ├── gateway-nodeport.yaml
-    ├── fast-timeout-config.yaml
-    ├── kind-config.yaml
-    └── kustomization.yaml
+└── overlays/
+    ├── local/
+    │   ├── gateway-nodeport.yaml
+    │   ├── fast-timeout-config.yaml
+    │   ├── kind-config.yaml
+    │   └── kustomization.yaml
+    └── test/
+        ├── ingress.yaml
+        ├── pod-disruption-budgets.yaml
+        ├── README.md
+        └── kustomization.yaml
 ```
 
-当前清单包含：
+### Local overlay
 
-- MySQL、RabbitMQ StatefulSet 与持久卷；
-- 四个服务独立 Migration Job；
-- Gateway、四个业务服务、两个 Worker Deployment；
-- HTTP startup/liveness/readiness probes；
-- Worker 进程探针；
-- CPU/内存 requests 与 limits；
-- HTTP Deployment RollingUpdate；
-- local overlay 开发 Secret 和 Gateway NodePort。
+用于 kind 自动验收：
+
+- Gateway NodePort；
+- 本地开发 Secret；
+- 两个 Timeout Worker；
+- 两个 Reconciliation Worker；
+- 可重复的失败 rollout 与 `rollout undo`；
+- 完整 Kubernetes Saga。
 
 渲染：
 
 ```bash
-kustomize build deploy/kubernetes/overlays/local >/tmp/go-order-kubernetes.yaml
+kustomize build deploy/kubernetes/overlays/local >/tmp/go-order-local.yaml
 ```
 
 本地 kind 部署：
@@ -182,18 +188,28 @@ Kubernetes Saga：
 sh scripts/smoke/microservices-saga-kubernetes.sh
 ```
 
-CI 会从干净 runner 创建 disposable kind 集群，并验证：
+### Test overlay
 
-1. MySQL、RabbitMQ、四个 Migration Job 和七个 Deployment；
-2. 只有 Gateway 使用 NodePort；
-3. 两个 Timeout Worker 和两个 Reconciliation Worker；
-4. 不可用 Gateway 镜像触发 rollout 失败；
-5. `kubectl rollout undo` 恢复原镜像和 readiness；
-6. 恢复后的注册、商品、库存、幂等下单、支付、取消和超时 Saga。
+用于非生产测试环境的交付合同：
+
+- API Gateway、四个业务服务和两个 Worker 类型均为 2 副本；
+- 七个 PDB，均为 `minAvailable: 1`；
+- 一个 `nginx` Ingress；
+- 默认测试主机名 `go-order.test.local`；
+- MySQL、RabbitMQ 和业务 Service 保持 ClusterIP；
+- Secret 值仅为占位符，部署系统必须替换。
+
+渲染：
+
+```bash
+kustomize build deploy/kubernetes/overlays/test >/tmp/go-order-test.yaml
+```
+
+Test overlay 不负责安装 Ingress Controller。目标集群必须提供 `nginx` ingress class，并将 `go-order.test.local` 解析到 Ingress 地址。
 
 ## CI 质量门禁
 
-GitHub Actions 当前包含两条独立验证链。
+GitHub Actions 包含三条验证职责。
 
 ### Go 与 Compose
 
@@ -206,7 +222,6 @@ go build ./...
 旧单体与四套服务 migration validate
 7 个服务/Worker 二进制构建
 Docker Compose 配置与镜像
-Kustomize render
 四库与 RabbitMQ
 2 个 Timeout Worker
 2 个 Reconciliation Worker
@@ -229,6 +244,19 @@ Gateway readiness
 kubectl rollout undo
 完整 Kubernetes Order Saga
 失败诊断与集群清理
+```
+
+### Kubernetes Contracts
+
+```text
+渲染 local overlay
+渲染 test overlay
+验证 test overlay 仅有一个 Gateway Ingress
+验证七个 PDB
+验证七个 Deployment 为 2 副本
+验证 test overlay 不包含 NodePort
+验证 MySQL/RabbitMQ 没有被错误应用 PDB
+上传渲染后的 YAML 工件
 ```
 
 ## 项目结构
@@ -269,16 +297,19 @@ docs/                        当前架构、历史基线和验证资料
 - 请求预算、有限重试、熔断和 Gateway 限流；
 - 运行指标、自动对账和 dry-run；
 - Compose 四库、四个 Worker 副本和完整 Saga；
-- Kubernetes Kustomize 基础、真实 kind 部署、失败 rollout 恢复和完整 Saga。
+- Kubernetes Kustomize base/local/test overlays；
+- 真实 kind 部署、失败 rollout 恢复和完整 Saga；
+- Gateway Ingress 合同和多副本 PDB；
+- local/test overlay 自动契约验证。
 
 尚未完成：
 
-- Ingress、PDB、HPA、NetworkPolicy；
-- 多节点和节点故障行为；
-- 不可变 Registry 镜像与非本地环境 overlay；
+- HPA、NetworkPolicy 和多节点故障行为；
+- Ingress Controller 的仓库内安装与真实 Ingress 流量验收；
+- 不可变 Registry 镜像与正式环境 overlay；
 - Prometheus、Grafana、OpenTelemetry 和正式告警；
 - GHCR 与测试环境持续部署；
 - 最小权限账号、mTLS/Workload Identity；
 - 备份恢复、Runbook、压测和故障演练。
 
-> **当前已完成应用可靠性收口和可重复的本地 Kubernetes 交付验收；仍未达到生产级云原生交付状态。**
+> **当前已完成应用可靠性收口和 Kubernetes 基础交付合同；仍未达到生产级云原生交付状态。**

@@ -2,9 +2,9 @@
 
 ## Scope
 
-The project mirrors its current Compose runtime in Kubernetes without changing application APIs, database schemas, Saga states or messaging contracts.
+The project mirrors its Compose runtime in Kubernetes without changing public APIs, database schemas, Saga states or messaging contracts.
 
-The manifests live under:
+The Kubernetes package now has three layers:
 
 ```text
 deploy/kubernetes/
@@ -15,32 +15,47 @@ deploy/kubernetes/
 │   ├── migrations.yaml
 │   ├── applications.yaml
 │   └── kustomization.yaml
-└── overlays/local/
-    ├── gateway-nodeport.yaml
-    ├── fast-timeout-config.yaml
-    ├── kind-config.yaml
-    └── kustomization.yaml
+└── overlays/
+    ├── local/
+    │   ├── gateway-nodeport.yaml
+    │   ├── fast-timeout-config.yaml
+    │   ├── kind-config.yaml
+    │   └── kustomization.yaml
+    └── test/
+        ├── ingress.yaml
+        ├── pod-disruption-budgets.yaml
+        ├── README.md
+        └── kustomization.yaml
 ```
 
-## Runtime topology
+## Shared runtime topology
 
-The local overlay deploys:
+The base defines:
 
-- one API Gateway;
+- API Gateway;
 - Identity, Catalog, Inventory and Order services;
-- two Timeout Worker replicas;
-- two Reconciliation Worker replicas;
-- one MySQL StatefulSet;
-- one RabbitMQ StatefulSet;
-- four service-owned Goose migration Jobs.
+- Timeout Worker and Reconciliation Worker;
+- MySQL and RabbitMQ StatefulSets;
+- four service-owned Goose migration Jobs;
+- internal Services;
+- startup, readiness and liveness probes;
+- CPU and memory requests/limits;
+- RollingUpdate strategies.
 
-Redis is intentionally absent because it is not part of the current `main` runtime.
+Redis is intentionally absent because it is not part of the current runtime.
 
-Only the Gateway Service becomes a NodePort in the local overlay. kind maps host port `8082` to NodePort `30082`. MySQL, RabbitMQ and business Services remain cluster-internal.
+## Data and migration ordering
+
+Kubernetes has no Docker Compose-style `depends_on`. The deployment uses two explicit controls:
+
+1. every migration Job waits for MySQL, creates only its owned logical database and runs its Goose directory;
+2. every database-backed application Pod has an initContainer that waits for a required table before starting the service binary.
+
+This prevents a workload from becoming ready merely because MySQL accepts connections while its schema is still absent.
 
 ## Secret contract
 
-The base references one Secret named `app-secrets`. The local overlay generates development-only values for:
+The base references one Secret named `app-secrets` with:
 
 ```text
 MYSQL_PASSWORD
@@ -51,31 +66,22 @@ RABBITMQ_PASSWORD
 RABBITMQ_URL
 ```
 
-These values are not production credentials. A test or production overlay must replace the local generator with a secret-management workflow and must not commit real values.
+The committed local and test values are development/test placeholders only. A real deployment workflow must replace them with credentials from its secret-management system.
 
-## Migration ordering
+## Local overlay
 
-Kubernetes has no Docker Compose-style `depends_on`. The deployment uses two explicit controls:
+The local overlay is optimized for disposable kind verification:
 
-1. each migration Job waits for MySQL, creates only its owned logical database and runs its Goose directory;
-2. each database-backed application Pod has an initContainer that waits for one required table before starting the service binary.
+- one Gateway exposed through NodePort;
+- host port `8082` mapped to NodePort `30082`;
+- local Secret values;
+- shortened timeout configuration for deterministic Saga smoke tests;
+- two Timeout Worker replicas;
+- two Reconciliation Worker replicas.
 
-This prevents a workload from becoming ready merely because MySQL accepts connections while its schema is still absent.
+MySQL, RabbitMQ and business Services remain cluster-internal.
 
-## Probes and rollout behavior
-
-HTTP workloads define:
-
-- `startupProbe`;
-- `readinessProbe`;
-- `livenessProbe`;
-- RollingUpdate with `maxUnavailable: 0` and `maxSurge: 1`.
-
-Workers do not expose HTTP ports. Their probes verify that PID 1 remains alive; operational correctness continues to rely on leases, structured logs and reliability indicators.
-
-All long-running workloads and migration Jobs define CPU and memory requests/limits.
-
-## Local deployment
+### Deploy locally
 
 Requirements:
 
@@ -86,29 +92,25 @@ kubectl
 curl
 ```
 
-Deploy:
-
 ```bash
 sh scripts/k8s/deploy-local.sh
 ```
 
 The script:
 
-1. creates `kind-go-order-local` when absent;
-2. builds the seven application images directly from the shared service Dockerfile;
+1. creates the kind cluster when absent;
+2. builds seven application images;
 3. loads them into kind;
 4. applies the local overlay;
 5. waits for MySQL and RabbitMQ;
-6. waits for all migration Jobs;
-7. waits for all application rollouts;
+6. waits for four Migration Jobs;
+7. waits for seven application Deployments;
 8. applies a bounded Gateway readiness retry window.
 
-Inspect:
+Run the Kubernetes Saga against the deployed cluster:
 
 ```bash
-kubectl -n go-order-system get pods,services,jobs
-kubectl -n go-order-system logs deployment/order-service
-kubectl -n go-order-system logs deployment/order-timeout-worker
+sh scripts/smoke/microservices-saga-kubernetes.sh
 ```
 
 Delete the cluster:
@@ -117,69 +119,98 @@ Delete the cluster:
 kind delete cluster --name go-order-local
 ```
 
-## Automated runtime verification
+## Test overlay
 
-CI now has two independent jobs.
+The test overlay is a non-production delivery contract. It adds:
 
-### Quality and Compose regression
+- two replicas for the Gateway, four business services and both Worker types;
+- one PDB per multi-replica Deployment with `minAvailable: 1`;
+- one Gateway Ingress;
+- `ingressClassName: nginx`;
+- host `go-order.test.local`;
+- test-only placeholder Secret values.
 
-This job validates:
+It intentionally leaves MySQL and RabbitMQ as single instances and does not apply PDBs to them.
 
-- Go lint, test, race, vet and build;
-- legacy and service-owned migrations;
-- Kustomize rendering;
-- all Compose images;
-- four databases, RabbitMQ and both Worker types;
-- the complete Compose Order Saga.
-
-### kind deployment, recovery and Saga
-
-After the quality job succeeds, CI creates a clean disposable kind cluster and verifies:
-
-1. the local overlay applies through the Kubernetes API;
-2. MySQL and RabbitMQ StatefulSets become ready;
-3. all four migration Jobs complete;
-4. Gateway, four business services and both Worker Deployments become ready;
-5. only the Gateway is a NodePort;
-6. two Timeout and two Reconciliation Worker replicas are ready;
-7. an unavailable Gateway image causes rollout failure;
-8. `kubectl rollout undo` restores the previous image and readiness;
-9. the complete register/catalog/inventory/order/pay/cancel/timeout Saga passes after recovery;
-10. the cluster is always deleted.
-
-Kubernetes administrator promotion uses an explicit TCP connection to MySQL inside the Pod. The common Saga script is shared with Compose so both environments execute the same business assertions.
-
-On failure, CI uploads:
-
-- Kubernetes resources and Services;
-- Jobs and PVCs;
-- sorted events;
-- Pod descriptions;
-- all container logs;
-- exported kind node logs.
-
-## Verification commands
+The test overlay keeps all Services as ClusterIP. Only the Gateway is reachable through the Ingress contract.
 
 Render:
 
 ```bash
-kustomize build deploy/kubernetes/overlays/local >/tmp/go-order-kubernetes.yaml
+kustomize build deploy/kubernetes/overlays/test >/tmp/go-order-test.yaml
 ```
 
-Kubernetes Saga against an already-running local cluster:
+The target cluster must already provide an ingress controller for the `nginx` class. The overlay does not install the controller, issue TLS certificates or configure DNS. Map `go-order.test.local` to the ingress address before sending traffic.
 
-```bash
-sh scripts/smoke/microservices-saga-kubernetes.sh
-```
+## Probes and rollout behavior
 
-## Remaining Kubernetes work
+HTTP workloads define:
 
-The following remain outside the verified foundation:
+- `startupProbe`;
+- `readinessProbe`;
+- `livenessProbe`;
+- RollingUpdate with `maxUnavailable: 0` and `maxSurge: 1`.
 
-- Ingress controller integration;
-- PodDisruptionBudget;
-- HorizontalPodAutoscaler;
+Workers use process probes because they do not expose HTTP endpoints. Their operational correctness still depends on leases, structured logs and reliability indicators.
+
+The test overlay PDBs protect voluntary disruptions for multi-replica application workloads. They do not provide node redundancy by themselves and do not protect against involuntary failures.
+
+## Automated verification
+
+### Main CI
+
+The existing CI validates:
+
+- Go lint, test, race, vet and build;
+- legacy and service-owned migrations;
+- all Compose images;
+- four databases, RabbitMQ and both Worker types;
+- complete Compose Order Saga;
+- live disposable kind deployment;
+- StatefulSets, Migration Jobs and application rollouts;
+- NodePort/internal Service exposure boundary;
+- dual Worker replicas;
+- unavailable Gateway revision detection;
+- `kubectl rollout undo` recovery;
+- complete Kubernetes Order Saga after recovery.
+
+### Kubernetes Contracts workflow
+
+The independent contract workflow validates:
+
+- local overlay rendering;
+- test overlay rendering;
+- exactly one Gateway Ingress;
+- exactly seven PDB resources;
+- seven application Deployments rendered with two replicas;
+- no NodePort in the test overlay;
+- no PDB applied to MySQL or RabbitMQ;
+- rendered manifests uploaded as CI artifacts.
+
+## Verified boundaries
+
+Completed:
+
+- Deployment;
+- Service;
+- ConfigMap and Secret contract;
+- service-owned Migration Jobs;
+- startup/liveness/readiness probes;
+- requests and limits;
+- RollingUpdate;
+- live kind deployment;
+- failed rollout detection and `rollout undo`;
+- Kubernetes Saga;
+- Gateway Ingress contract;
+- test overlay;
+- PDB contracts for multi-replica application workloads.
+
+Still deferred:
+
+- ingress-controller installation and real Ingress traffic in CI;
+- TLS and certificate management;
+- HPA;
 - NetworkPolicy;
-- immutable Registry image tags and non-local overlays;
-- multi-node failure behavior;
-- managed-cloud storage, load balancer and identity integration.
+- multi-node disruption tests;
+- immutable registry image tags;
+- managed-cloud storage, load balancer and workload identity integration.

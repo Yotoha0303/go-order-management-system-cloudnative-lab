@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - ingress.yaml
+  - pod-disruption-budgets.yaml
+
+secretGenerator:
+  - name: app-secrets
+    namespace: go-order-system
+    literals:
+      - MYSQL_PASSWORD=test-placeholder-password
+      - JWT_SECRET=test-placeholder-jwt-secret-at-least-32-characters
+      - INTERNAL_SERVICE_TOKEN=test-placeholder-internal-service-token
+      - RABBITMQ_USER=order_app
+      - RABBITMQ_PASSWORD=test-placeholder-rabbit-password
+      - RABBITMQ_URL=amqp://order_app:test-placeholder-rabbit-password@rabbitmq:5672/
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+replicas:
+  - name: api-gateway
+    count: 2
+  - name: identity-service
+    count: 2
+  - name: catalog-service
+    count: 2
+  - name: inventory-service
+    count: 2
+  - name: order-service
+    count: 2
+  - name: order-timeout-worker
+    count: 2
+  - name: order-reconciliation-worker
+    count: 2
