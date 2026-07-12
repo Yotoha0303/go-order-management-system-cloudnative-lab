@@ -20,7 +20,8 @@ func Recovery(logger *slog.Logger) gin.HandlerFunc {
 			if recovered := recover(); recovered != nil {
 				requestID := GetRequestID(c)
 
-				logger.Error(
+				logger.ErrorContext(
+					c.Request.Context(),
 					"request panic",
 					slog.String("request_id", requestID),
 					slog.String("method", c.Request.Method),

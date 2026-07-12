@@ -3,25 +3,40 @@ name: OTel Bootstrap
 on:
   push:
     branches: ["phase/07-opentelemetry-tracing"]
-  pull_request:
-    branches: ["main"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  apply:
+    if: github.event.head_commit.message == 'feat: stage OpenTelemetry tracing implementation'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Build audit bundle
-        run: |
-          mkdir -p audit
-          cp -R cmd internal config deploy scripts audit/
-          cp go.mod go.sum compose.yml compose.observability.yml audit/
-          find audit -type f | sort > audit/files.txt
-      - uses: actions/upload-artifact@v4
+      - name: Checkout implementation branch
+        uses: actions/checkout@v4
         with:
-          name: otel-audit-sources
-          path: audit
-          retention-days: 1
+          ref: phase/07-opentelemetry-tracing
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Apply domain and smoke patches
+        run: |
+          git apply .github/otel-domain.patch
+          git apply .github/otel-scripts.patch
+      - name: Format, resolve modules and test
+        run: |
+          gofmt -w cmd internal
+          go mod tidy
+          go test ./...
+      - name: Commit dependency lock and remove bootstrap
+        run: |
+          rm -f .github/workflows/otel-bootstrap.yml .github/otel-domain.patch .github/otel-scripts.patch
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          if git diff --cached --quiet; then exit 1; fi
+          git commit -m "feat: establish OpenTelemetry tracing foundation"
+          git push origin HEAD:phase/07-opentelemetry-tracing

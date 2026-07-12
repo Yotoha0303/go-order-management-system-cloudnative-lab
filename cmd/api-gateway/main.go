@@ -35,6 +35,8 @@ type gateway struct {
 
 func main() {
 	logger := servicehost.NewLogger("api-gateway")
+	shutdownTelemetry := servicehost.SetupTelemetry("api-gateway", logger)
+	defer shutdownTelemetry()
 
 	routes, err := buildRoutes(map[string]string{
 		"identity-service":  envOrDefault("IDENTITY_SERVICE_URL", "http://identity-service:8083"),
@@ -127,7 +129,7 @@ func newUpstream(name, rawURL string) (route, error) {
 	}
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.Transport = resiliencehttp.NewTransport(resiliencehttp.TransportConfig{
+	proxy.Transport = resiliencehttp.NewRoundTripper(resiliencehttp.TransportConfig{
 		ConnectTimeout:        500 * time.Millisecond,
 		TLSHandshakeTimeout:   time.Second,
 		ResponseHeaderTimeout: 8 * time.Second,

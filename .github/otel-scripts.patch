@@ -1,0 +1,52 @@
+--- a/scripts/smoke/microservices-saga.sh
++++ b/scripts/smoke/microservices-saga.sh
+@@ -7,6 +7,8 @@
+ SMOKE_RUNTIME="${SMOKE_RUNTIME:-compose}"
+ KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-go-order-system}"
+ SMOKE_RUN_SUFFIX="${SMOKE_RUN_SUFFIX:-}"
++TRACEPARENT="${TRACEPARENT:-}"
++TRACESTATE="${TRACESTATE:-}"
+ 
+ suffix=""
+ if [ -n "$SMOKE_RUN_SUFFIX" ]; then
+@@ -52,6 +54,12 @@
+   body="${4:-}"
+ 
+   set -- --fail-with-body --silent --show-error --request "$method" "${BASE_URL}${path}"
++  if [ -n "$TRACEPARENT" ]; then
++    set -- "$@" --header "traceparent: ${TRACEPARENT}"
++  fi
++  if [ -n "$TRACESTATE" ]; then
++    set -- "$@" --header "tracestate: ${TRACESTATE}"
++  fi
+   if [ -n "$token" ]; then
+     set -- "$@" --header "Authorization: Bearer ${token}"
+   fi
+--- a/scripts/smoke/grafana-provisioning.py
++++ b/scripts/smoke/grafana-provisioning.py
+@@ -56,6 +56,7 @@
+     while time.monotonic() < deadline:
+         try:
+             datasource = request_json("/api/datasources/uid/prometheus")
++            tempo_datasource = request_json("/api/datasources/uid/tempo")
+             dashboard_payload = request_json("/api/dashboards/uid/go-order-overview")
+             dashboard = dashboard_payload.get("dashboard", {})
+             meta = dashboard_payload.get("meta", {})
+@@ -64,6 +65,8 @@
+                 datasource.get("type") == "prometheus"
+                 and datasource.get("url") == "http://prometheus:9090"
+                 and datasource.get("isDefault") is True
++                and tempo_datasource.get("type") == "tempo"
++                and tempo_datasource.get("url") == "http://tempo:3200"
+                 and dashboard.get("title") == "Go Order Management Overview"
+                 and dashboard.get("uid") == "go-order-overview"
+                 and meta.get("provisioned") is True
+@@ -79,7 +82,7 @@
+ def main() -> int:
+     wait_ready()
+     wait_provisioned()
+-    print("Grafana Prometheus datasource and Go Order dashboard verified")
++    print("Grafana Prometheus/Tempo datasources and Go Order dashboard verified")
+     return 0
+ 
+ 

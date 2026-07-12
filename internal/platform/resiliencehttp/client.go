@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
 )
 
 var ErrInsufficientBudget = errors.New("insufficient request budget for another HTTP attempt")
@@ -63,9 +65,14 @@ func NewTransport(cfg TransportConfig) *http.Transport {
 	}
 }
 
+func NewRoundTripper(cfg TransportConfig) http.RoundTripper {
+	cfg = cfg.normalized()
+	return platformtelemetry.InstrumentTransport(ObserveTransport(NewTransport(cfg)))
+}
+
 func NewHTTPClient(cfg TransportConfig) *http.Client {
 	cfg = cfg.normalized()
-	return &http.Client{Transport: ObserveTransport(NewTransport(cfg)), Timeout: cfg.TotalTimeout}
+	return &http.Client{Transport: NewRoundTripper(cfg), Timeout: cfg.TotalTimeout}
 }
 
 type RetryPolicy struct {
@@ -118,13 +125,13 @@ func NewExecutor(client *http.Client, logger *slog.Logger) *Executor {
 		logger = slog.Default()
 	}
 	return &Executor{
-		client:         client,
-		logger:         logger,
-		sleep:          sleepWithContext,
-		jitter:         defaultJitter,
-		now:            time.Now,
+		client:        client,
+		logger:        logger,
+		sleep:         sleepWithContext,
+		jitter:        defaultJitter,
+		now:           time.Now,
 		breakerConfig: CircuitBreakerConfigFromEnvironment(),
-		breakers:       make(map[string]*circuitBreaker),
+		breakers:      make(map[string]*circuitBreaker),
 	}
 }
 
@@ -295,7 +302,8 @@ func (executor *Executor) logAttempt(
 	} else if status < 200 || status >= 300 {
 		outcome = "http_error"
 	}
-	executor.logger.Info(
+	executor.logger.InfoContext(
+		ctx,
 		"upstream HTTP attempt",
 		"request_id", RequestID(ctx),
 		"upstream", upstream,
@@ -321,7 +329,8 @@ func (executor *Executor) logCircuitOpen(
 	if remaining, ok := Remaining(ctx); ok {
 		remainingMS = remaining.Milliseconds()
 	}
-	executor.logger.Warn(
+	executor.logger.WarnContext(
+		ctx,
 		"upstream HTTP circuit rejected request",
 		"request_id", RequestID(ctx),
 		"upstream", upstream,

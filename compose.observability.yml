@@ -1,12 +1,40 @@
+x-otel-environment: &otel-environment
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
+  OTEL_DEPLOYMENT_ENVIRONMENT: compose-local
+
 services:
+  api-gateway:
+    environment:
+      <<: *otel-environment
+
+  identity-service:
+    environment:
+      <<: *otel-environment
+
+  catalog-service:
+    environment:
+      <<: *otel-environment
+
+  inventory-service:
+    environment:
+      <<: *otel-environment
+
+  order-service:
+    environment:
+      <<: *otel-environment
+
   order-timeout-worker:
     environment:
+      <<: *otel-environment
       METRICS_ADDR: :9091
     expose:
       - "9091"
 
   order-reconciliation-worker:
     environment:
+      <<: *otel-environment
       METRICS_ADDR: :9092
     expose:
       - "9092"
@@ -40,6 +68,32 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  tempo:
+    image: grafana/tempo:2.10.7
+    container_name: go-order-management-system-tempo
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./deploy/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "${TEMPO_HOST_PORT:-3200}:3200"
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.156.0
+    container_name: go-order-management-system-otel-collector
+    command:
+      - --config=/etc/otelcol-contrib/collector.yml
+    volumes:
+      - ./deploy/otel/collector.yml:/etc/otelcol-contrib/collector.yml:ro
+    ports:
+      - "${OTEL_COLLECTOR_HTTP_HOST_PORT:-14318}:4318"
+    depends_on:
+      tempo:
+        condition: service_started
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:12.1.0
     container_name: go-order-management-system-grafana
@@ -58,8 +112,11 @@ services:
     depends_on:
       prometheus:
         condition: service_started
+      tempo:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   prometheus_data:
   grafana_data:
+  tempo_data:

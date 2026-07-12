@@ -21,6 +21,8 @@ import (
 
 func main() {
 	logger := servicehost.NewLogger("identity-service")
+	shutdownTelemetry := servicehost.SetupTelemetry("identity-service", logger)
+	defer shutdownTelemetry()
 	config.LoadEnv()
 
 	cfg, err := config.LoadConfig("config.yml")

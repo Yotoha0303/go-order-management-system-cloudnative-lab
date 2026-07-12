@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"go-order-management-system/config"
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
 )
 
 func NewLogger(service string) *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stdout, nil)).With("service", service)
+	return slog.New(platformtelemetry.NewTraceHandler(slog.NewJSONHandler(os.Stdout, nil))).With("service", service)
 }
 
 func NewHTTPServer(port int, handler http.Handler, cfg config.HttpServerConfig) *http.Server {
