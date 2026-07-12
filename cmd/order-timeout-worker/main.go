@@ -76,6 +76,13 @@ func main() {
 	ctx, stop := servicehost.SignalContext()
 	defer stop()
 	go ordersvc.RunReliabilityLogLoop(ctx, reliabilityReporter, indicatorInterval, logger)
+	servicehost.StartMetricsHTTP(
+		ctx,
+		logger,
+		"order-timeout-worker",
+		envOrDefault("METRICS_ADDR", ":9091"),
+		ordersvc.ReliabilityPrometheusCollector(reliabilityReporter),
+	)
 
 	logger.Info(
 		"order timeout worker starting",
@@ -102,4 +109,11 @@ func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) 
 		return 0, fmt.Errorf("%s must be greater than zero", key)
 	}
 	return parsed, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
