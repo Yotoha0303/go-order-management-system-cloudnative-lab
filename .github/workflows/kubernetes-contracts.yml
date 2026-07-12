@@ -1,0 +1,78 @@
+name: Kubernetes Contracts
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kubernetes-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render-and-verify:
+    name: Render and verify overlays
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kustomize
+        run: go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
+
+      - name: Render local overlay
+        run: |
+          kustomize build deploy/kubernetes/overlays/local > kubernetes-local.yaml
+          test -s kubernetes-local.yaml
+          grep -q '^kind: StatefulSet$' kubernetes-local.yaml
+          grep -q '^kind: Deployment$' kubernetes-local.yaml
+          grep -q '^kind: Job$' kubernetes-local.yaml
+          grep -q '^kind: Secret$' kubernetes-local.yaml
+          grep -q 'type: NodePort' kubernetes-local.yaml
+          if grep -q '^kind: Ingress$' kubernetes-local.yaml; then
+            echo 'local overlay must keep NodePort access and must not require an ingress controller' >&2
+            exit 1
+          fi
+
+      - name: Render test overlay
+        run: |
+          kustomize build deploy/kubernetes/overlays/test > kubernetes-test.yaml
+          test -s kubernetes-test.yaml
+          test "$(grep -c '^kind: Ingress$' kubernetes-test.yaml)" -eq 1
+          test "$(grep -c '^kind: PodDisruptionBudget$' kubernetes-test.yaml)" -eq 7
+          test "$(grep -c '^  replicas: 2$' kubernetes-test.yaml)" -eq 7
+          grep -q 'ingressClassName: nginx' kubernetes-test.yaml
+          grep -q 'host: go-order.test.local' kubernetes-test.yaml
+          grep -q 'name: api-gateway' kubernetes-test.yaml
+          grep -q 'number: 8082' kubernetes-test.yaml
+          if grep -q 'type: NodePort' kubernetes-test.yaml; then
+            echo 'test overlay must expose the Gateway through Ingress, not NodePort' >&2
+            exit 1
+          fi
+
+      - name: Verify disruption budgets avoid stateful infrastructure
+        run: |
+          if awk '/^kind: PodDisruptionBudget$/{pdb=1; next} /^---$/{pdb=0} pdb && /name: (mysql|rabbitmq)/{found=1} END{exit found ? 0 : 1}' kubernetes-test.yaml; then
+            echo 'MySQL and RabbitMQ must not receive PDBs in this single-instance test topology' >&2
+            exit 1
+          fi
+
+      - name: Upload rendered contracts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-rendered-contracts
+          path: |
+            kubernetes-local.yaml
+            kubernetes-test.yaml
+          retention-days: 7
