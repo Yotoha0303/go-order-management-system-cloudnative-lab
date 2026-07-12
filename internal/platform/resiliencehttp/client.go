@@ -65,7 +65,7 @@ func NewTransport(cfg TransportConfig) *http.Transport {
 
 func NewHTTPClient(cfg TransportConfig) *http.Client {
 	cfg = cfg.normalized()
-	return &http.Client{Transport: NewTransport(cfg), Timeout: cfg.TotalTimeout}
+	return &http.Client{Transport: ObserveTransport(NewTransport(cfg)), Timeout: cfg.TotalTimeout}
 }
 
 type RetryPolicy struct {
