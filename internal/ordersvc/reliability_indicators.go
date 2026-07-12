@@ -39,11 +39,11 @@ type OrderStatusIndicators struct {
 }
 
 type OrderSagaIndicators struct {
-	ByStatus                         OrderStatusIndicators `json:"by_status"`
-	ReconciliationRequired          int64                 `json:"reconciliation_required"`
-	OldestReconciliationAgeSeconds  int64                 `json:"oldest_reconciliation_age_seconds"`
-	StuckTransient                  int64                 `json:"stuck_transient"`
-	TransientStuckThresholdSeconds  int64                 `json:"transient_stuck_threshold_seconds"`
+	ByStatus                       OrderStatusIndicators `json:"by_status"`
+	ReconciliationRequired         int64                 `json:"reconciliation_required"`
+	OldestReconciliationAgeSeconds int64                 `json:"oldest_reconciliation_age_seconds"`
+	StuckTransient                 int64                 `json:"stuck_transient"`
+	TransientStuckThresholdSeconds int64                 `json:"transient_stuck_threshold_seconds"`
 }
 
 type ReliabilitySnapshot struct {

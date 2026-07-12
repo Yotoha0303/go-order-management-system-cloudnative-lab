@@ -7,6 +7,8 @@ IDENTITY_DB_NAME="${IDENTITY_DB_NAME:-go_order_identity}"
 SMOKE_RUNTIME="${SMOKE_RUNTIME:-compose}"
 KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-go-order-system}"
 SMOKE_RUN_SUFFIX="${SMOKE_RUN_SUFFIX:-}"
+TRACEPARENT="${TRACEPARENT:-}"
+TRACESTATE="${TRACESTATE:-}"
 
 suffix=""
 if [ -n "$SMOKE_RUN_SUFFIX" ]; then
@@ -52,6 +54,12 @@ request() {
   body="${4:-}"
 
   set -- --fail-with-body --silent --show-error --request "$method" "${BASE_URL}${path}"
+  if [ -n "$TRACEPARENT" ]; then
+    set -- "$@" --header "traceparent: ${TRACEPARENT}"
+  fi
+  if [ -n "$TRACESTATE" ]; then
+    set -- "$@" --header "tracestate: ${TRACESTATE}"
+  fi
   if [ -n "$token" ]; then
     set -- "$@" --header "Authorization: Bearer ${token}"
   fi

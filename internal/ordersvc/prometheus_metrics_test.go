@@ -33,7 +33,7 @@ func TestReliabilityPrometheusCollectorExportsBoundedGauges(t *testing.T) {
 			TotalFailedAttempts:        7,
 		},
 		Orders: OrderSagaIndicators{
-			ByStatus:                        OrderStatusIndicators{Pending: 4, Paid: 2, ReconciliationRequired: 1},
+			ByStatus:                       OrderStatusIndicators{Pending: 4, Paid: 2, ReconciliationRequired: 1},
 			ReconciliationRequired:         1,
 			OldestReconciliationAgeSeconds: 30,
 			StuckTransient:                 2,

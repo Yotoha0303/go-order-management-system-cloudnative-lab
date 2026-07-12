@@ -13,9 +13,11 @@ import (
 	"go-order-management-system/internal/auth"
 	"go-order-management-system/internal/middleware"
 	"go-order-management-system/internal/platform/internalapi"
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 	"gorm.io/gorm"
 )
 
@@ -113,6 +115,9 @@ func Migrate(db *gorm.DB) error {
 }
 
 func (s *Service) Create(ctx context.Context, userID int64, req CreateOrderRequest) (*Order, error) {
+	ctx, span := platformtelemetry.Tracer().Start(ctx, "order.create_saga")
+	span.SetAttributes(attribute.String("go_order.saga.operation", "create"))
+	defer span.End()
 	if userID <= 0 {
 		return nil, ErrInvalidOrderRequest
 	}
@@ -170,7 +175,7 @@ func (s *Service) Create(ctx context.Context, userID int64, req CreateOrderReque
 		update := tx.Model(&Order{}).
 			Where("id = ? AND status = ?", order.ID, OrderStatusReserving).
 			Updates(map[string]any{
-				"status":          OrderStatusPending,
+				"status":         OrderStatusPending,
 				"reservation_id": reservation.ID,
 				"failure_reason": "",
 			})

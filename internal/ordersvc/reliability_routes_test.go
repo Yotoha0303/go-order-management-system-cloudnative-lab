@@ -56,7 +56,7 @@ func TestReliabilityEndpointReturnsStableSnapshot(t *testing.T) {
 		},
 		Orders: OrderSagaIndicators{
 			ReconciliationRequired: 1,
-			StuckTransient:          2,
+			StuckTransient:         2,
 		},
 	}}
 	router := gin.New()
