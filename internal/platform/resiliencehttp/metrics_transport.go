@@ -1,6 +1,7 @@
 package resiliencehttp
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -33,19 +34,21 @@ func (transport *metricsRoundTripper) RoundTrip(request *http.Request) (*http.Re
 		outcome = "http_error"
 	}
 	upstream := "unknown"
-	if request != nil && request.URL != nil {
-		upstream = strings.TrimSpace(request.URL.Host)
-	}
 	operation := "unmatched"
-	if request != nil && request.URL != nil {
-		operation = platformmetrics.RouteGroup(request.URL.Path)
+	requestContext := context.Background()
+	if request != nil {
+		requestContext = request.Context()
+		if request.URL != nil {
+			upstream = strings.TrimSpace(request.URL.Host)
+			operation = platformmetrics.RouteGroup(request.URL.Path)
+		}
 	}
 	platformmetrics.RecordHTTPClientAttempt(
 		upstream,
 		operation,
 		outcome,
 		status,
-		shouldRetry(request.Context(), response, err),
+		shouldRetry(requestContext, response, err),
 		time.Since(started),
 	)
 	return response, err
