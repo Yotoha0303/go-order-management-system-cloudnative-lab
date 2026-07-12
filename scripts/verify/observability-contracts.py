@@ -10,6 +10,7 @@ APPLICATION_DASHBOARD_PATH = ROOT / "deploy/grafana/dashboards/go-order-overview
 INFRASTRUCTURE_DASHBOARD_PATH = ROOT / "deploy/grafana/dashboards/go-order-infrastructure.json"
 DATASOURCE_PATH = ROOT / "deploy/grafana/provisioning/datasources/prometheus.yml"
 PROVIDER_PATH = ROOT / "deploy/grafana/provisioning/dashboards/dashboards.yml"
+PROMETHEUS_CONFIG_PATH = ROOT / "deploy/prometheus/prometheus.yml"
 RECORDING_RULES_PATH = ROOT / "deploy/prometheus/rules/recording-rules.yml"
 ALERT_RULES_PATH = ROOT / "deploy/prometheus/rules/alert-rules.yml"
 KUBE_STATE_METRICS_PATH = ROOT / "deploy/kubernetes/observability/kube-state-metrics.yaml"
@@ -57,7 +58,7 @@ REQUIRED_INFRASTRUCTURE_TERMS = {
     "go_order_rabbitmq_queue_messages",
     "go_order_rabbitmq_queue_consumers",
     "go_order_rabbitmq_delivery_total",
-    "kube_job_status_failed",
+    "kube_job_failed",
 }
 
 FORBIDDEN_LABEL_PATTERN = re.compile(
@@ -113,6 +114,21 @@ def validate_provisioning() -> None:
     require("allowUiUpdates: false" in provider, "provisioned dashboards must remain file-managed")
 
 
+def validate_prometheus_scrape_contract() -> None:
+    config = read_text(PROMETHEUS_CONFIG_PATH)
+    for worker, port in (
+        ("order-timeout-worker", 9091),
+        ("order-reconciliation-worker", 9092),
+    ):
+        require(f"job_name: {worker}" in config, f"missing Prometheus job for {worker}")
+        require(f'names: ["{worker}"]' in config, f"{worker} must use DNS service discovery")
+        require(f"port: {port}" in config, f"{worker} scrape port is incorrect")
+        require(
+            f'targets: ["{worker}:{port}"]' not in config,
+            f"{worker} must not collapse scaled replicas into one static target",
+        )
+
+
 def validate_rules() -> None:
     recording = read_text(RECORDING_RULES_PATH)
     records = set(re.findall(r"^\s*- record:\s*(\S+)\s*$", recording, re.MULTILINE))
@@ -124,6 +140,18 @@ def validate_rules() -> None:
     for_windows = re.findall(r"^\s*for:\s*\S+\s*$", alerts_text, re.MULTILINE)
     require(len(for_windows) == len(EXPECTED_ALERTS), "every alert must define an explicit for window")
     require(not FORBIDDEN_LABEL_PATTERN.search(alerts_text), "alert rules contain a forbidden high-cardinality label")
+    require(
+        'go_order_rabbitmq_queue_messages{queue_role="cancel",state="ready"}' in alerts_text,
+        "RabbitMQ backlog alert must only use the actionable cancellation queue",
+    )
+    require(
+        'kube_job_failed{condition="true"' in alerts_text,
+        "migration alert must use the terminal Kubernetes Job Failed condition",
+    )
+    require(
+        "kube_job_status_failed" not in alerts_text,
+        "migration alert must not fire from transient failed Pod counts",
+    )
 
 
 def validate_kube_state_metrics_contract() -> None:
@@ -151,6 +179,7 @@ def main() -> int:
         6,
     )
     validate_provisioning()
+    validate_prometheus_scrape_contract()
     validate_rules()
     validate_kube_state_metrics_contract()
     print("Grafana dashboards, provisioning, Prometheus rules and infrastructure contracts verified")
