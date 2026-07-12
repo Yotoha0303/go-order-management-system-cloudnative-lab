@@ -20,5 +20,18 @@ secretGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
-patches:
-  - path: replicas.yaml
+replicas:
+  - name: api-gateway
+    count: 2
+  - name: identity-service
+    count: 2
+  - name: catalog-service
+    count: 2
+  - name: inventory-service
+    count: 2
+  - name: order-service
+    count: 2
+  - name: order-timeout-worker
+    count: 2
+  - name: order-reconciliation-worker
+    count: 2
