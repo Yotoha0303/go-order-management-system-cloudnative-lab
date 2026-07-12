@@ -59,6 +59,32 @@ func TestInstrumentHTTPContinuesW3CTraceWithBoundedSpanName(t *testing.T) {
 	}
 }
 
+func TestInstrumentHTTPBoundsUnknownMethodInSpanName(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		_ = provider.Shutdown(context.Background())
+	})
+
+	handler := InstrumentHTTP("order-service", http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest("CUSTOM-"+strings.Repeat("X", 128), "/api/v1/orders/12345", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected one span, got %d", len(spans))
+	}
+	if spans[0].Name() != "OTHER api_orders" {
+		t.Fatalf("unknown HTTP method leaked into server span name: %q", spans[0].Name())
+	}
+}
+
 func TestInstrumentTransportInjectsChildTraceContext(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -102,6 +128,42 @@ func TestInstrumentTransportInjectsChildTraceContext(t *testing.T) {
 	}
 	if spans[0].Name() != "POST internal_inventory" {
 		t.Fatalf("unexpected client span name: %q", spans[0].Name())
+	}
+}
+
+func TestInstrumentTransportBoundsUnknownMethodInSpanName(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previousProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousProvider)
+		_ = provider.Shutdown(context.Background())
+	})
+
+	transport := InstrumentTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Request:    request,
+		}, nil
+	}))
+	request, err := http.NewRequest("CUSTOM-"+strings.Repeat("X", 128), "http://inventory-service:8085/internal/v1/inventory/reservations/12345", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	_ = response.Body.Close()
+
+	spans := recorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("expected one client span, got %d", len(spans))
+	}
+	if spans[0].Name() != "OTHER internal_inventory" {
+		t.Fatalf("unknown HTTP method leaked into client span name: %q", spans[0].Name())
 	}
 }
 
