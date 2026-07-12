@@ -76,10 +76,10 @@ tests:
         alertname: GoOrderRabbitMQSessionUnavailable
         exp_alerts: []
 
-  - name: migration-job-failure-fires
+  - name: migration-job-terminal-failure-fires
     interval: 1m
     input_series:
-      - series: 'kube_job_status_failed{namespace="go-order-system",job_name="ordering-migrate"}'
+      - series: 'kube_job_failed{condition="true",namespace="go-order-system",job_name="ordering-migrate"}'
         values: '1+0x4'
     alert_rule_test:
       - eval_time: 2m
@@ -92,4 +92,16 @@ tests:
               severity: critical
             exp_annotations:
               summary: Go Order database migration Job failed
-              description: Migration Job go-order-system/ordering-migrate reports a failed Pod completion.
+              description: Migration Job go-order-system/ordering-migrate reports a terminal Failed condition.
+
+  - name: retried-migration-that-recovers-does-not-fire
+    interval: 1m
+    input_series:
+      - series: 'kube_job_status_failed{reason="Error",namespace="go-order-system",job_name="ordering-migrate"}'
+        values: '1+0x4'
+      - series: 'kube_job_complete{condition="true",namespace="go-order-system",job_name="ordering-migrate"}'
+        values: '0 0 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GoOrderMigrationJobFailed
+        exp_alerts: []
