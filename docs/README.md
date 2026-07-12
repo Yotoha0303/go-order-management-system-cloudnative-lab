@@ -32,12 +32,15 @@
 | [verification/reconciliation-worker.md](verification/reconciliation-worker.md) | 对账映射、事务回滚、租约和修复动作 |
 | [verification/grafana-alerts.md](verification/grafana-alerts.md) | Dashboard 合同、promtool 规则测试、Prometheus/Grafana 运行验收和诊断边界 |
 | [verification/opentelemetry-tracing.md](verification/opentelemetry-tracing.md) | 无 exporter Trace Context、W3C 传播、Tempo 跨服务 Trace 和诊断证据 |
+| [verification/ghcr-release-images.md](verification/ghcr-release-images.md) | GHCR commit-SHA 标签、覆盖拒绝、OCI digest、发布清单、权限和首次实际验收边界 |
 | `scripts/smoke/microservices-saga.sh` | Compose 与 Kubernetes 共用的微服务业务断言；可注入 `traceparent`/`tracestate` |
 | `scripts/smoke/microservices-saga-kubernetes.sh` | Kubernetes Saga 包装入口 |
 | `scripts/smoke/prometheus-metrics.py` | 七 target、规则健康、基础指标和 recording series 查询 |
 | `scripts/smoke/grafana-provisioning.py` | Grafana 健康、Prometheus/Tempo 数据源和 Dashboard Provisioning API |
 | `scripts/smoke/tempo-trace.py` | 按 Trace ID 验证五服务 Trace、Saga span 和有界 span name |
 | `scripts/verify/observability-contracts.py` | Dashboard JSON、规则名称、显式 `for` 窗口和高基数标签静态合同 |
+| `scripts/verify/release-contracts.py` | 发布触发、最小权限、固定七服务、不可变标签、digest 清单和共享 Dockerfile 静态合同 |
+| `scripts/release/manifest.py` | 生成服务片段、聚合七镜像发布清单并输出 digest-qualified references |
 | `scripts/k8s/deploy-local.sh` | 已进入 CI 实机验收的 kind 部署流程 |
 | `deploy/kubernetes/overlays/test/README.md` | test overlay 的 Ingress、PDB、DNS、Secret 和控制器前置条件 |
 
@@ -66,6 +69,18 @@ migrations/
 ├── catalog
 ├── inventory
 └── ordering
+
+.github/workflows/
+├── ci.yml
+├── observability.yml
+├── kubernetes-contracts.yml
+├── publish-images.yml
+└── release-contracts.yml
+
+scripts/
+├── release
+├── smoke
+└── verify
 
 deploy/
 ├── docker
@@ -101,7 +116,7 @@ deploy/
 - Prometheus scrape annotations 和 Worker metrics ports 可渲染；
 - 渲染 YAML 作为 artifact 保存。
 
-### Observability Stack workflow 验收范围
+### Observability Stack workflow 已通过
 
 - Compose 与 observability overlay 合并校验；
 - Dashboard/Provisioning/规则与标签基数静态合同；
@@ -114,6 +129,15 @@ deploy/
 - `order.create_saga`、有界 HTTP span name 与无资源 ID 泄漏；
 - 失败时保存 Compose、Prometheus、Grafana 和 Tempo diagnostics。
 
+### Release Contracts workflow 的职责
+
+- 在 PR 中以只读权限编译和测试发布清单工具；
+- 拒绝缺失、重复、非法 digest、可变 tag 和大写 GHCR 路径；
+- 静态验证发布工作流没有 PR 写入路径；
+- 验证 `packages: write` 只属于镜像发布矩阵；
+- 验证七服务、commit-SHA 标签、覆盖拒绝、SBOM/provenance、digest 聚合和终检合同；
+- 不登录 GHCR、不推送镜像，也不把合同通过写成 Registry 运行成功。
+
 ### 尚未完成
 
 - RabbitMQ 消息头中的 W3C Context 传播；
@@ -122,8 +146,8 @@ deploy/
 - RabbitMQ consumer 细粒度计数和基础设施 exporter；
 - Kubernetes 内 Prometheus/Grafana/Collector/Tempo 或 Operator；
 - Ingress Controller 真实流量、TLS、HPA、NetworkPolicy 和多节点故障；
-- Registry 不可变镜像、测试环境 CD 和正式环境 overlay；
-- 托管云存储、负载均衡和 Workload Identity。
+- `main` 上首次真实 GHCR 七镜像 push、digest 清单 artifact 和重复运行拒绝验收；
+- 测试环境 CD、正式环境 overlay、托管云存储、负载均衡和 Workload Identity。
 
 ## 历史基线文档
 
