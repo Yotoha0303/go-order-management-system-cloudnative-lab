@@ -18,10 +18,10 @@ func TestRabbitMQManagementCollectorExportsBoundedQueueRoles(t *testing.T) {
 			http.Error(writer, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		switch request.URL.Path {
-		case "/api/queues///" + timeoutDelayQueue:
+		switch request.URL.EscapedPath() {
+		case "/api/queues/team%2Fblue/" + timeoutDelayQueue:
 			_, _ = writer.Write([]byte(`{"messages":3,"messages_ready":2,"messages_unacknowledged":1,"consumers":0}`))
-		case "/api/queues///" + timeoutCancelQueue:
+		case "/api/queues/team%2Fblue/" + timeoutCancelQueue:
 			_, _ = writer.Write([]byte(`{"messages":1,"messages_ready":0,"messages_unacknowledged":1,"consumers":2}`))
 		default:
 			http.NotFound(writer, request)
@@ -29,7 +29,11 @@ func TestRabbitMQManagementCollectorExportsBoundedQueueRoles(t *testing.T) {
 	}))
 	defer server.Close()
 
-	collector, err := RabbitMQManagementPrometheusCollector(server.URL, "metrics-user", "metrics-password", time.Second)
+	collector, err := RabbitMQManagementPrometheusCollector(
+		server.URL,
+		"amqp://metrics-user:metrics-password@rabbitmq:5672/team%2Fblue",
+		time.Second,
+	)
 	if err != nil {
 		t.Fatalf("create collector: %v", err)
 	}
@@ -53,13 +57,37 @@ func TestRabbitMQManagementCollectorExportsBoundedQueueRoles(t *testing.T) {
 	}
 }
 
+func TestRabbitMQManagementTargetUsesDefaultVhostAndDecodedCredentials(t *testing.T) {
+	username, password, vhost, err := rabbitMQManagementTarget("amqps://metrics%2Duser:p%40ssword@rabbitmq:5671/")
+	if err != nil {
+		t.Fatalf("parse management target: %v", err)
+	}
+	if username != "metrics-user" || password != "p@ssword" || vhost != "/" {
+		t.Fatalf("unexpected target: username=%q password=%q vhost=%q", username, password, vhost)
+	}
+}
+
+func TestRabbitMQManagementCollectorRejectsAMQPURLWithoutCredentials(t *testing.T) {
+	if _, err := RabbitMQManagementPrometheusCollector(
+		"http://rabbitmq:15672",
+		"amqp://rabbitmq:5672/",
+		time.Second,
+	); err == nil {
+		t.Fatal("expected missing AMQP credentials to be rejected")
+	}
+}
+
 func TestRabbitMQManagementCollectorMarksCollectionDown(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		http.Error(writer, "unavailable", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
-	collector, err := RabbitMQManagementPrometheusCollector(server.URL, "metrics-user", "metrics-password", time.Second)
+	collector, err := RabbitMQManagementPrometheusCollector(
+		server.URL,
+		"amqp://metrics-user:metrics-password@rabbitmq:5672/",
+		time.Second,
+	)
 	if err != nil {
 		t.Fatalf("create collector: %v", err)
 	}
