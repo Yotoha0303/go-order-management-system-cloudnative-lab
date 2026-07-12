@@ -3,6 +3,8 @@ name: OTel Bootstrap
 on:
   push:
     branches: ["phase/07-opentelemetry-tracing"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: read
