@@ -17,6 +17,15 @@ EXPECTED_JOBS = {
     "order-timeout-worker",
     "order-reconciliation-worker",
 }
+EXPECTED_MIN_TARGETS = {
+    "api-gateway": 1,
+    "identity-service": 1,
+    "catalog-service": 1,
+    "inventory-service": 1,
+    "order-service": 1,
+    "order-timeout-worker": 2,
+    "order-reconciliation-worker": 2,
+}
 EXPECTED_RULE_GROUPS = {
     "go-order-service-recording",
     "go-order-availability",
@@ -68,14 +77,23 @@ def wait_targets(timeout_seconds: int = 120) -> None:
     while time.monotonic() < deadline:
         payload = get_json("/api/v1/targets")
         active = payload.get("data", {}).get("activeTargets", [])
-        state = {}
+        state = {job: [] for job in EXPECTED_JOBS}
         for target in active:
             labels = target.get("labels", {})
             job = labels.get("job")
             if job in EXPECTED_JOBS:
-                state[job] = target.get("health")
+                state[job].append(
+                    {
+                        "instance": labels.get("instance"),
+                        "health": target.get("health"),
+                    }
+                )
         last_state = state
-        if set(state) == EXPECTED_JOBS and all(value == "up" for value in state.values()):
+        if all(
+            len(state[job]) >= EXPECTED_MIN_TARGETS[job]
+            and all(target["health"] == "up" for target in state[job])
+            for job in EXPECTED_JOBS
+        ):
             return
         time.sleep(2)
     raise RuntimeError(f"Prometheus targets did not become healthy: {last_state}")
@@ -137,7 +155,7 @@ def main() -> int:
         "worker:up:max",
     ):
         wait_metric(metric)
-    print("Prometheus targets, rules, alerts and bounded application/infrastructure metrics verified")
+    print("Prometheus targets, replica discovery, rules, alerts and bounded application/infrastructure metrics verified")
     return 0
 
 
