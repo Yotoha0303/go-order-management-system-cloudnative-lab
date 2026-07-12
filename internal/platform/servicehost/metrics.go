@@ -8,8 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"go-order-management-system/config"
 	platformmetrics "go-order-management-system/internal/platform/metrics"
 )
+
+func NewObservedHTTPServer(
+	service string,
+	port int,
+	handler http.Handler,
+	cfg config.HttpServerConfig,
+	collectors ...platformmetrics.Collector,
+) *http.Server {
+	return NewHTTPServer(port, platformmetrics.InstrumentHTTP(service, handler, collectors...), cfg)
+}
 
 func StartMetricsHTTP(
 	ctx context.Context,
