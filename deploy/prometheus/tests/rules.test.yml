@@ -15,7 +15,6 @@ tests:
         alertname: GoOrderTargetDown
         exp_alerts:
           - exp_labels:
-              alertname: GoOrderTargetDown
               category: availability
               instance: api-gateway:8082
               job: api-gateway
@@ -44,7 +43,6 @@ tests:
         alertname: GoOrderOutboxOverdue
         exp_alerts:
           - exp_labels:
-              alertname: GoOrderOutboxOverdue
               category: outbox
               severity: warning
             exp_annotations:
