@@ -48,3 +48,48 @@ tests:
             exp_annotations:
               summary: Go Order Outbox contains overdue events
               description: At least one timeout Outbox event has remained overdue for three minutes.
+
+  - name: rabbitmq-session-loss-fires-and-healthy-does-not
+    interval: 1m
+    input_series:
+      - series: 'go_order_rabbitmq_session_up{role="timeout_worker",instance="worker-a"}'
+        values: '0+0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GoOrderRabbitMQSessionUnavailable
+        exp_alerts:
+          - exp_labels:
+              category: rabbitmq
+              role: timeout_worker
+              severity: critical
+            exp_annotations:
+              summary: Go Order RabbitMQ application session is unavailable
+              description: All observed timeout_worker RabbitMQ sessions have remained disconnected for two minutes.
+
+  - name: healthy-rabbitmq-session-does-not-fire
+    interval: 1m
+    input_series:
+      - series: 'go_order_rabbitmq_session_up{role="timeout_worker",instance="worker-a"}'
+        values: '1+0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: GoOrderRabbitMQSessionUnavailable
+        exp_alerts: []
+
+  - name: migration-job-failure-fires
+    interval: 1m
+    input_series:
+      - series: 'kube_job_status_failed{namespace="go-order-system",job_name="ordering-migrate"}'
+        values: '1+0x4'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GoOrderMigrationJobFailed
+        exp_alerts:
+          - exp_labels:
+              category: migration
+              job_name: ordering-migrate
+              namespace: go-order-system
+              severity: critical
+            exp_annotations:
+              summary: Go Order database migration Job failed
+              description: Migration Job go-order-system/ordering-migrate reports a failed Pod completion.
