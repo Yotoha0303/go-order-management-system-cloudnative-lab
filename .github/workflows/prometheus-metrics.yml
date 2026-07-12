@@ -30,10 +30,16 @@ env:
   GRAFANA_URL: http://127.0.0.1:13000
   GRAFANA_ADMIN_USER: admin
   GRAFANA_ADMIN_PASSWORD: ci-grafana-password
+  TEMPO_HOST_PORT: "13200"
+  TEMPO_URL: http://127.0.0.1:13200
+  OTEL_COLLECTOR_HTTP_HOST_PORT: "14318"
+  TRACE_ID: 0123456789abcdef0123456789abcdef
+  TRACEPARENT: 00-0123456789abcdef0123456789abcdef-0123456789abcdef-01
+  TRACESTATE: goorder=ci
 
 jobs:
   stack:
-    name: Compose metrics, rules and Grafana assertions
+    name: Compose metrics, rules, dashboards and traces
     runs-on: ubuntu-latest
 
     steps:
@@ -63,13 +69,13 @@ jobs:
             prom/prometheus:v3.5.0 \
             test rules /etc/prometheus/tests/rules.test.yml
 
-      - name: Start application, Prometheus and Grafana
+      - name: Start application and observability stack
         run: |
           docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
             --scale order-timeout-worker=2 \
             --scale order-reconciliation-worker=2
 
-      - name: Run complete Order Saga
+      - name: Run complete Order Saga with W3C trace context
         run: sh scripts/smoke/microservices-saga.sh
 
       - name: Verify Prometheus targets, rules and metrics
@@ -77,6 +83,9 @@ jobs:
 
       - name: Verify Grafana provisioning
         run: python3 scripts/smoke/grafana-provisioning.py
+
+      - name: Verify Tempo cross-service trace
+        run: python3 scripts/smoke/tempo-trace.py
 
       - name: Collect diagnostics
         if: failure()
@@ -89,9 +98,13 @@ jobs:
           curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=service:http_requests:rate5m" > diagnostics/observability/recording-rules.json || true
           curl --silent --show-error "${GRAFANA_URL}/api/health" > diagnostics/observability/grafana-health.json || true
           curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
-            "${GRAFANA_URL}/api/datasources/uid/prometheus" > diagnostics/observability/grafana-datasource.json || true
+            "${GRAFANA_URL}/api/datasources/uid/prometheus" > diagnostics/observability/grafana-prometheus-datasource.json || true
+          curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+            "${GRAFANA_URL}/api/datasources/uid/tempo" > diagnostics/observability/grafana-tempo-datasource.json || true
           curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
             "${GRAFANA_URL}/api/dashboards/uid/go-order-overview" > diagnostics/observability/grafana-dashboard.json || true
+          curl --silent --show-error "${TEMPO_URL}/ready" > diagnostics/observability/tempo-ready.txt || true
+          curl --silent --show-error "${TEMPO_URL}/api/traces/${TRACE_ID}" > diagnostics/observability/tempo-trace.json || true
 
       - name: Upload diagnostics
         if: failure()

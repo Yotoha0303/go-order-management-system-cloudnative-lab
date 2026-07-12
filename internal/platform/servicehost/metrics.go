@@ -10,10 +10,11 @@ import (
 
 	"go-order-management-system/config"
 	platformmetrics "go-order-management-system/internal/platform/metrics"
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
 )
 
 func ObserveHTTP(service string, handler http.Handler, collectors ...platformmetrics.Collector) http.Handler {
-	return platformmetrics.InstrumentHTTP(service, handler, collectors...)
+	return platformtelemetry.InstrumentHTTP(service, platformmetrics.InstrumentHTTP(service, handler, collectors...))
 }
 
 func NewObservedHTTPServer(

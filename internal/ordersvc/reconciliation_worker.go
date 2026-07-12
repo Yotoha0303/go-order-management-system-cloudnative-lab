@@ -8,14 +8,17 @@ import (
 	"strings"
 	"time"
 
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+
+	"go.opentelemetry.io/otel/attribute"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const (
 	ReconciliationActionReleaseInventoryAndFail = "release_inventory_and_fail"
-	ReconciliationActionFinalizeCancel           = "finalize_cancel"
-	ReconciliationActionFinalizePayment          = "finalize_payment"
+	ReconciliationActionFinalizeCancel          = "finalize_cancel"
+	ReconciliationActionFinalizePayment         = "finalize_payment"
 
 	ReconciliationTaskPending    = "pending"
 	ReconciliationTaskFailed     = "failed"
@@ -150,7 +153,10 @@ func (worker *ReconciliationWorker) Run(ctx context.Context) error {
 }
 
 func (worker *ReconciliationWorker) processBatch(ctx context.Context) error {
+	ctx, span := platformtelemetry.Tracer().Start(ctx, "reconciliation.process_batch")
+	defer span.End()
 	tasks, err := worker.claim(ctx)
+	span.SetAttributes(attribute.Int("go_order.batch_size", len(tasks)))
 	if err != nil {
 		return err
 	}
@@ -209,6 +215,8 @@ func (worker *ReconciliationWorker) claim(ctx context.Context) ([]Reconciliation
 }
 
 func (worker *ReconciliationWorker) processTask(parent context.Context, task *ReconciliationTask) error {
+	parent, span := platformtelemetry.Tracer().Start(parent, "reconciliation.process_task")
+	defer span.End()
 	if task == nil {
 		return errors.New("reconciliation task is required")
 	}
@@ -235,7 +243,8 @@ func (worker *ReconciliationWorker) processTask(parent context.Context, task *Re
 		return worker.markUnresolved(task, fmt.Sprintf("%s: %s", ErrUnsupportedReconciliationAction, task.Action))
 	}
 	if err == nil {
-		worker.logger.Info(
+		worker.logger.InfoContext(
+			ctx,
 			"order reconciliation task completed",
 			"worker_id", worker.cfg.WorkerID,
 			"task_id", task.ID,

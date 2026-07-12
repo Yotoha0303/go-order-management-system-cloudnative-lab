@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/attribute"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -207,7 +210,10 @@ func declareTimeoutTopology(channel *amqp.Channel) error {
 }
 
 func (w *Worker) publishPending(ctx context.Context, publisher timeoutEventPublisher) error {
+	ctx, span := platformtelemetry.Tracer().Start(ctx, "timeout_worker.publish_batch")
+	defer span.End()
 	events, err := w.claimPending(ctx)
+	span.SetAttributes(attribute.Int("go_order.batch_size", len(events)))
 	if err != nil {
 		return err
 	}
@@ -232,7 +238,8 @@ func (w *Worker) publishPending(ctx context.Context, publisher timeoutEventPubli
 			if err := w.releaseClaimedLeases(ctx, events[index+1:]); err != nil {
 				return fmt.Errorf("release unprocessed outbox leases: %w", err)
 			}
-			w.logger.Error(
+			w.logger.ErrorContext(
+				ctx,
 				"timeout outbox publish not confirmed",
 				"event_id", event.ID,
 				"order_id", event.OrderID,
@@ -246,7 +253,8 @@ func (w *Worker) publishPending(ctx context.Context, publisher timeoutEventPubli
 		if err := w.markOutboxPublished(ctx, event.ID); err != nil {
 			return err
 		}
-		w.logger.Info(
+		w.logger.InfoContext(
+			ctx,
 			"timeout outbox publish confirmed",
 			"event_id", event.ID,
 			"order_id", event.OrderID,
@@ -341,11 +349,13 @@ func (w *Worker) markOutboxPublished(ctx context.Context, eventID uint64) error 
 }
 
 func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
+	ctx, span := platformtelemetry.Tracer().Start(ctx, "timeout_worker.consume")
+	defer span.End()
 	var payload struct {
 		OrderID int64 `json:"order_id"`
 	}
 	if err := json.Unmarshal(delivery.Body, &payload); err != nil || payload.OrderID <= 0 {
-		w.logger.Error("invalid timeout message", "error", err)
+		w.logger.ErrorContext(ctx, "invalid timeout message", "error", err)
 		_ = delivery.Reject(false)
 		return
 	}
@@ -354,7 +364,7 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	err := w.orderClient.TimeoutCancel(callCtx, payload.OrderID)
 	cancel()
 	if err != nil {
-		w.logger.Error("cancel timed out order", "order_id", payload.OrderID, "error", err)
+		w.logger.ErrorContext(ctx, "cancel timed out order", "order_id", payload.OrderID, "error", err)
 		_ = w.db.WithContext(context.Background()).Model(&TimeoutOutbox{}).
 			Where("order_id = ?", payload.OrderID).
 			Updates(map[string]any{
@@ -374,7 +384,7 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 			"lease_owner": "",
 			"lease_until": nil,
 		}).Error; err != nil {
-		w.logger.Error("mark timeout event completed", "order_id", payload.OrderID, "error", err)
+		w.logger.ErrorContext(ctx, "mark timeout event completed", "order_id", payload.OrderID, "error", err)
 		_ = delivery.Nack(false, true)
 		return
 	}

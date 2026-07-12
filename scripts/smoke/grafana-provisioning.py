@@ -56,6 +56,7 @@ def wait_provisioned(timeout_seconds: int = 120) -> None:
     while time.monotonic() < deadline:
         try:
             datasource = request_json("/api/datasources/uid/prometheus")
+            tempo_datasource = request_json("/api/datasources/uid/tempo")
             dashboard_payload = request_json("/api/dashboards/uid/go-order-overview")
             dashboard = dashboard_payload.get("dashboard", {})
             meta = dashboard_payload.get("meta", {})
@@ -64,6 +65,8 @@ def wait_provisioned(timeout_seconds: int = 120) -> None:
                 datasource.get("type") == "prometheus"
                 and datasource.get("url") == "http://prometheus:9090"
                 and datasource.get("isDefault") is True
+                and tempo_datasource.get("type") == "tempo"
+                and tempo_datasource.get("url") == "http://tempo:3200"
                 and dashboard.get("title") == "Go Order Management Overview"
                 and dashboard.get("uid") == "go-order-overview"
                 and meta.get("provisioned") is True
@@ -79,7 +82,7 @@ def wait_provisioned(timeout_seconds: int = 120) -> None:
 def main() -> int:
     wait_ready()
     wait_provisioned()
-    print("Grafana Prometheus datasource and Go Order dashboard verified")
+    print("Grafana Prometheus/Tempo datasources and Go Order dashboard verified")
     return 0
 
 

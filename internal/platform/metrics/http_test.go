@@ -65,9 +65,9 @@ func TestInstrumentHTTPServesMetricsWithoutInstrumentingScrape(t *testing.T) {
 
 func TestRouteGroupDoesNotExposeRawPaths(t *testing.T) {
 	cases := map[string]string{
-		"/api/v1/users/42":                         "api_users",
-		"/internal/v1/orders/99/cancel-timeout":    "internal_orders",
-		"/something/unbounded/123":                  "unmatched",
+		"/api/v1/users/42":                      "api_users",
+		"/internal/v1/orders/99/cancel-timeout": "internal_orders",
+		"/something/unbounded/123":              "unmatched",
 	}
 	for path, expected := range cases {
 		if actual := RouteGroup(path); actual != expected {

@@ -19,6 +19,8 @@ import (
 
 func main() {
 	logger := servicehost.NewLogger("catalog-service")
+	shutdownTelemetry := servicehost.SetupTelemetry("catalog-service", logger)
+	defer shutdownTelemetry()
 	config.LoadEnv()
 
 	cfg, err := config.LoadConfig("config.yml")

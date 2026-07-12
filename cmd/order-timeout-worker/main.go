@@ -14,6 +14,8 @@ import (
 
 func main() {
 	logger := servicehost.NewLogger("order-timeout-worker")
+	shutdownTelemetry := servicehost.SetupTelemetry("order-timeout-worker", logger)
+	defer shutdownTelemetry()
 	config.LoadEnv()
 
 	cfg, err := config.LoadConfig("config.yml")
