@@ -2,12 +2,20 @@ package telemetry
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"testing"
 
 	"go.opentelemetry.io/otel"
 )
 
-func TestSetupCreatesValidLocalTraceWithoutExporter(t *testing.T) {
+var (
+	traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	spanIDPattern  = regexp.MustCompile(`^[0-9a-f]{16}$`)
+)
+
+func TestSetupCreatesHTTPTraceContextWithoutExporter(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
 	t.Setenv("OTEL_TRACES_SAMPLER_ARG", "1")
@@ -24,13 +32,18 @@ func TestSetupCreatesValidLocalTraceWithoutExporter(t *testing.T) {
 		otel.SetTextMapPropagator(previousPropagator)
 	})
 
-	ctx, span := Tracer().Start(context.Background(), "local-span")
-	defer span.End()
-	traceID, spanID, ok := SpanIDs(ctx)
-	if !ok {
-		t.Fatal("expected a valid local span context")
-	}
-	if len(traceID) != 32 || len(spanID) != 16 {
-		t.Fatalf("unexpected trace identifiers: trace_id=%q span_id=%q", traceID, spanID)
+	handler := InstrumentHTTP("test-service", http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if _, _, ok := SpanIDs(request.Context()); !ok {
+			t.Fatal("expected handler context to contain a valid span")
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/orders", nil))
+
+	traceID := response.Header().Get(TraceIDHeader)
+	spanID := response.Header().Get(SpanIDHeader)
+	if !traceIDPattern.MatchString(traceID) || !spanIDPattern.MatchString(spanID) {
+		t.Fatalf("unexpected trace response headers: trace_id=%q span_id=%q", traceID, spanID)
 	}
 }
