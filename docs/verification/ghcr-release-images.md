@@ -24,10 +24,11 @@ order-reconciliation-worker
 
 `.github/workflows/publish-images.yml` 仅接受：
 
-1. 在 `main` 分支上手动执行 `workflow_dispatch`；
-2. 推送匹配 `release-*` 的 Git tag。
+1. 受保护的 `main` 路径触发：只有发布工作流、发布清单工具或共享服务 Dockerfile 的变更进入 `main` 时自动执行；
+2. 在 `main` 分支上手动执行 `workflow_dispatch`；
+3. 推送匹配 `release-*` 的 Git tag。
 
-该工作流没有 `pull_request` 触发器。普通 PR 只运行 `.github/workflows/release-contracts.yml`，后者只有 `contents: read`，不会获得 `packages: write`，也不会登录或写入 GHCR。
+普通业务代码合并到 `main` 不会自动触发七镜像发布；需要显式手动运行或使用受控 release tag。该工作流没有 `pull_request` 触发器。普通 PR 只运行 `.github/workflows/release-contracts.yml`，后者只有 `contents: read`，不会获得 `packages: write`，也不会登录或写入 GHCR。
 
 ## 权限边界
 
@@ -134,12 +135,15 @@ python3 scripts/verify/release-contracts.py
 - 缺失、重复、非法 digest、可变 tag、大小写错误均失败；
 - 发布工作流没有 PR 触发器；
 - `packages: write` 只存在于镜像发布任务；
+- 受保护的 `main` 路径触发只覆盖发布工作流、清单工具和共享 Dockerfile；
 - commit-SHA 标签、覆盖拒绝、digest 提取、片段聚合和 Registry 终检合同存在；
 - 共享 Dockerfile 仍构建选定服务并以非 root 用户运行。
 
 ## 首次实际验收
 
-代码合并到 `main` 后，需要在 GitHub Actions 中从 `main` 手动运行 **Publish Immutable Images**。验收证据应包括：
+本 PR 合并到 `main` 时，由于发布工作流、发布清单工具和共享发布合同属于受控路径，**Publish Immutable Images** 会自动执行首次真实 GHCR 验收。后续也可以从 `main` 手动运行，或通过 `release-*` tag 触发新的 source commit 发布。
+
+验收证据应包括：
 
 1. 七个矩阵任务全部成功；
 2. GHCR 中存在七个 `sha-<commit>` 标签；
