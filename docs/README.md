@@ -13,9 +13,9 @@
 | [architecture/circuit-breaker-rate-limit.md](architecture/circuit-breaker-rate-limit.md) | 操作级熔断与 Gateway Token Bucket 限流 |
 | [architecture/reliability-indicators.md](architecture/reliability-indicators.md) | Outbox/Saga 聚合指标、内部端点和周期日志 |
 | [architecture/reconciliation-worker.md](architecture/reconciliation-worker.md) | 对账任务、事务触发器、租约 Worker、修复动作和 dry-run |
-| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize、StatefulSet、Migration Job、Deployment、探针、kind 实际部署和回滚验收 |
+| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize base/local/test、StatefulSet、Migration Job、Deployment、探针、Ingress、PDB、kind 部署和回滚验收 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 云原生完成度、已完成能力和生产级缺口 |
-| [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性收口和 Kubernetes 运行验收的演进记录 |
+| [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性收口和 Kubernetes 交付基础的演进记录 |
 
 ## 验证资料
 
@@ -30,6 +30,7 @@
 | `scripts/smoke/microservices-saga.sh` | Compose 与 Kubernetes 共用的微服务业务断言 |
 | `scripts/smoke/microservices-saga-kubernetes.sh` | Kubernetes Saga 包装入口 |
 | `scripts/k8s/deploy-local.sh` | 已进入 CI 实机验收的 kind 本地部署流程 |
+| `deploy/kubernetes/overlays/test/README.md` | test overlay 的 Ingress、PDB、DNS、Secret 和控制器前置条件 |
 
 ## 当前代码与交付路径
 
@@ -59,12 +60,14 @@ deploy/
 ├── docker
 └── kubernetes
     ├── base
-    └── overlays/local
+    └── overlays
+        ├── local
+        └── test
 ```
 
 ## 当前验证边界
 
-已实际通过 GitHub Actions：
+### 已实际通过主 CI
 
 - lint、unit/integration test、race、vet 和 build；
 - 单体历史迁移与四套服务迁移校验；
@@ -82,14 +85,26 @@ deploy/
 - 恢复后的完整 Kubernetes Order Saga；
 - 失败诊断收集和集群清理。
 
-尚未完成：
+### 已实际通过 Kubernetes Contracts workflow
 
-- Ingress Controller 与域名入口；
-- PodDisruptionBudget；
+- local overlay 渲染；
+- test overlay 渲染；
+- test overlay 仅包含一个 Gateway Ingress；
+- `nginx` ingress class 与 `go-order.test.local`；
+- 七个应用 Deployment 均为 2 副本；
+- 七个匹配的 PodDisruptionBudget；
+- test overlay 不包含 NodePort；
+- MySQL/RabbitMQ 不会被错误应用 PDB；
+- 渲染后的 YAML 作为 CI artifact 保存。
+
+### 尚未完成
+
+- Ingress Controller 的仓库内安装和真实 Ingress 流量验收；
+- TLS 与证书管理；
 - HorizontalPodAutoscaler；
 - NetworkPolicy；
 - 多节点和节点失效验证；
-- Registry 不可变镜像与非本地环境 overlay；
+- Registry 不可变镜像与正式环境 overlay；
 - 托管云存储、负载均衡和 Workload Identity 集成。
 
 ## 历史基线文档
