@@ -1,0 +1,234 @@
+name: Publish Immutable Images
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "release-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-images-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  PACKAGE_PREFIX: go-order-management-system-cloudnative-lab
+
+jobs:
+  preflight:
+    name: Refuse existing immutable tags
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify all commit tags are unused
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          tag="sha-${GITHUB_SHA}"
+          services=(
+            api-gateway
+            identity-service
+            catalog-service
+            inventory-service
+            order-service
+            order-timeout-worker
+            order-reconciliation-worker
+          )
+          for service in "${services[@]}"; do
+            image="${REGISTRY}/${owner}/${PACKAGE_PREFIX}-${service}:${tag}"
+            if docker buildx imagetools inspect "${image}" >/dev/null 2>&1; then
+              echo "immutable image tag already exists; refusing overwrite: ${image}" >&2
+              exit 1
+            fi
+          done
+
+  publish:
+    name: Publish ${{ matrix.service }}
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - identity-service
+          - catalog-service
+          - inventory-service
+          - order-service
+          - order-timeout-worker
+          - order-reconciliation-worker
+
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare immutable image reference
+        id: reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          image="${REGISTRY}/${owner}/${PACKAGE_PREFIX}-${{ matrix.service }}"
+          tag="sha-${GITHUB_SHA}"
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "tagged_reference=${image}:${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recheck immutable tag before push
+        shell: bash
+        run: |
+          if docker buildx imagetools inspect "${{ steps.reference.outputs.tagged_reference }}" >/dev/null 2>&1; then
+            echo "immutable image tag appeared after preflight; refusing overwrite" >&2
+            exit 1
+          fi
+
+      - name: Build and push service image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.service
+          build-args: |
+            SERVICE=${{ matrix.service }}
+          push: true
+          tags: ${{ steps.reference.outputs.tagged_reference }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=${{ matrix.service }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Create service release fragment
+        shell: bash
+        run: |
+          python3 scripts/release/manifest.py fragment \
+            --service "${{ matrix.service }}" \
+            --image "${{ steps.reference.outputs.image }}" \
+            --tag "${{ steps.reference.outputs.tag }}" \
+            --digest "${{ steps.build.outputs.digest }}" \
+            --commit "${GITHUB_SHA}" \
+            --output "release-fragment-${{ matrix.service }}.json"
+
+      - name: Verify pushed digest-qualified image
+        shell: bash
+        run: |
+          docker buildx imagetools inspect \
+            "${{ steps.reference.outputs.image }}@${{ steps.build.outputs.digest }}"
+
+      - name: Upload service release fragment
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-fragment-${{ matrix.service }}
+          path: release-fragment-${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  manifest:
+    name: Assemble and verify release manifest
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout source commit
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download service release fragments
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-fragment-*
+          path: release-fragments
+          merge-multiple: true
+
+      - name: Assemble exact release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          created_at="$(git show -s --format=%cI "${GITHUB_SHA}")"
+          python3 scripts/release/manifest.py assemble \
+            --input-dir release-fragments \
+            --output release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${GITHUB_SHA}" \
+            --created-at "${created_at}"
+
+      - name: Verify every digest-qualified image
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release/manifest.py verify \
+            --manifest release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${GITHUB_SHA}" \
+            > release-references.txt
+          while IFS= read -r reference; do
+            docker buildx imagetools inspect "${reference}"
+          done < release-references.txt
+
+      - name: Publish manifest summary
+        shell: bash
+        run: |
+          {
+            echo '## Immutable GHCR release manifest'
+            echo
+            echo '```json'
+            cat release-manifest.json
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: |
+            release-manifest.json
+            release-references.txt
+          if-no-files-found: error
+          retention-days: 90
