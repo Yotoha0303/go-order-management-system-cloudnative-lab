@@ -62,8 +62,7 @@ func main() {
 	}
 	rabbitMQCollector, err := ordersvc.RabbitMQManagementPrometheusCollector(
 		envOrDefault("RABBITMQ_MANAGEMENT_URL", "http://rabbitmq:15672"),
-		envOrDefault("RABBITMQ_USER", "order_app"),
-		envOrDefault("RABBITMQ_PASSWORD", "order_dev_password"),
+		cfg.RabbitMQ.URL,
 		managementTimeout,
 	)
 	if err != nil {
