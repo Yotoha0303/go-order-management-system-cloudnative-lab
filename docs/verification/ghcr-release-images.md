@@ -123,7 +123,7 @@ release-tagged-references.txt
 聚合任务执行两层终检：
 
 1. 对七个 digest-qualified references 逐一执行 `docker buildx imagetools inspect`；
-2. 通过七个 commit-SHA 标签读取原始 OCI Manifest，对原始字节执行 SHA-256，确认每个标签的**实际 OCI Manifest 哈希**与发布清单中的 digest 完全一致。
+2. 通过七个 commit-SHA 标签读取 Buildx `.Manifest` JSON 中由 Registry 返回的 `digest`，确认每个标签的**实际 OCI Manifest digest**与发布清单中的 digest 完全一致。
 
 只有两层终检全部通过，才上传 90 天保留的发布清单 artifact。由于七个标签此时均已存在，工作流开头的同一预检规则会拒绝对该 source commit 的第二次发布，不会覆盖已有内容。
 
