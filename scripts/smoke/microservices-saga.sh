@@ -4,6 +4,19 @@ set -eu
 BASE_URL="${BASE_URL:-http://127.0.0.1:8082}"
 MYSQL_PASSWORD="${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}"
 IDENTITY_DB_NAME="${IDENTITY_DB_NAME:-go_order_identity}"
+SMOKE_RUNTIME="${SMOKE_RUNTIME:-compose}"
+KUBERNETES_NAMESPACE="${KUBERNETES_NAMESPACE:-go-order-system}"
+SMOKE_RUN_SUFFIX="${SMOKE_RUN_SUFFIX:-}"
+
+suffix=""
+if [ -n "$SMOKE_RUN_SUFFIX" ]; then
+  suffix="-$SMOKE_RUN_SUFFIX"
+fi
+admin_username="ci-admin${suffix}"
+buyer_username="ci-buyer${suffix}"
+paid_key="ci-order-pay${suffix}"
+cancel_key="ci-order-cancel${suffix}"
+timeout_key="ci-order-timeout${suffix}"
 
 json_get() {
   python3 -c '
@@ -76,23 +89,55 @@ order_status() {
   printf '%s' "$response" | json_get data.status
 }
 
-printf '%s\n' '1. Register and promote the smoke-test administrator'
-register_user ci-admin 'CiAdmin123!'
-
-docker compose exec -T mysql mysql \
-  -uroot \
-  -p"${MYSQL_PASSWORD}" \
-  "${IDENTITY_DB_NAME}" \
-  --batch --skip-column-names \
-  --execute="
+promote_admin() {
+  username="$1"
+  sql="
     UPDATE user_roles ur
     JOIN users u ON u.id = ur.user_id
     JOIN roles r ON r.role_name = 'admin'
     SET ur.role_id = r.id
-    WHERE u.username = 'ci-admin';
+    WHERE u.username = '${username}';
   "
 
-admin_token="$(login_user ci-admin 'CiAdmin123!')"
+  case "$SMOKE_RUNTIME" in
+    compose)
+      docker compose exec -T mysql mysql \
+        -uroot \
+        -p"${MYSQL_PASSWORD}" \
+        "${IDENTITY_DB_NAME}" \
+        --batch --skip-column-names \
+        --execute="$sql"
+      ;;
+    kubernetes)
+      mysql_pod="$(kubectl -n "$KUBERNETES_NAMESPACE" get pods \
+        -l app.kubernetes.io/name=mysql \
+        -o jsonpath='{.items[0].metadata.name}')"
+      [ -n "$mysql_pod" ] || {
+        printf '%s\n' 'MySQL Pod was not found' >&2
+        exit 1
+      }
+      kubectl -n "$KUBERNETES_NAMESPACE" exec "$mysql_pod" -- mysql \
+        --protocol=tcp \
+        --host=127.0.0.1 \
+        --port=3306 \
+        -uroot \
+        -p"${MYSQL_PASSWORD}" \
+        "${IDENTITY_DB_NAME}" \
+        --batch --skip-column-names \
+        --execute="$sql"
+      ;;
+    *)
+      printf 'unsupported SMOKE_RUNTIME: %s\n' "$SMOKE_RUNTIME" >&2
+      exit 1
+      ;;
+  esac
+}
+
+printf '%s\n' '1. Register and promote the smoke-test administrator'
+register_user "$admin_username" 'CiAdmin123!'
+promote_admin "$admin_username"
+
+admin_token="$(login_user "$admin_username" 'CiAdmin123!')"
 [ -n "$admin_token" ] || { printf '%s\n' 'administrator login returned an empty token' >&2; exit 1; }
 
 printf '%s\n' '2. Create a Catalog product and initialize Inventory'
@@ -104,11 +149,11 @@ assert_eq 10 "$(inventory_available "$product_id" "$admin_token")" 'initial avai
 assert_eq 0 "$(inventory_reserved "$product_id" "$admin_token")" 'initial reserved stock'
 
 printf '%s\n' '3. Register a buyer and verify idempotent reservation'
-register_user ci-buyer 'CiBuyer123!'
-buyer_token="$(login_user ci-buyer 'CiBuyer123!')"
+register_user "$buyer_username" 'CiBuyer123!'
+buyer_token="$(login_user "$buyer_username" 'CiBuyer123!')"
 [ -n "$buyer_token" ] || { printf '%s\n' 'buyer login returned an empty token' >&2; exit 1; }
 
-paid_order_body="{\"idempotency_key\":\"ci-order-pay\",\"items\":[{\"product_id\":${product_id},\"quantity\":2}]}"
+paid_order_body="{\"idempotency_key\":\"${paid_key}\",\"items\":[{\"product_id\":${product_id},\"quantity\":2}]}"
 paid_order_response="$(request POST /api/v1/orders "$buyer_token" "$paid_order_body")"
 paid_order_id="$(printf '%s' "$paid_order_response" | json_get data.id)"
 assert_eq pending "$(printf '%s' "$paid_order_response" | json_get data.status)" 'new order status'
@@ -125,7 +170,7 @@ assert_eq 8 "$(inventory_available "$product_id" "$buyer_token")" 'available sto
 assert_eq 0 "$(inventory_reserved "$product_id" "$buyer_token")" 'reserved stock after payment confirmation'
 
 printf '%s\n' '5. Cancel another order and release its reservation'
-cancel_body="{\"idempotency_key\":\"ci-order-cancel\",\"items\":[{\"product_id\":${product_id},\"quantity\":3}]}"
+cancel_body="{\"idempotency_key\":\"${cancel_key}\",\"items\":[{\"product_id\":${product_id},\"quantity\":3}]}"
 cancel_response="$(request POST /api/v1/orders "$buyer_token" "$cancel_body")"
 cancel_order_id="$(printf '%s' "$cancel_response" | json_get data.id)"
 assert_eq 5 "$(inventory_available "$product_id" "$buyer_token")" 'available stock while cancel order is reserved'
@@ -137,7 +182,7 @@ assert_eq 8 "$(inventory_available "$product_id" "$buyer_token")" 'available sto
 assert_eq 0 "$(inventory_reserved "$product_id" "$buyer_token")" 'reserved stock after cancellation'
 
 printf '%s\n' '6. Verify RabbitMQ timeout cancellation and compensation'
-timeout_body="{\"idempotency_key\":\"ci-order-timeout\",\"items\":[{\"product_id\":${product_id},\"quantity\":1}]}"
+timeout_body="{\"idempotency_key\":\"${timeout_key}\",\"items\":[{\"product_id\":${product_id},\"quantity\":1}]}"
 timeout_response="$(request POST /api/v1/orders "$buyer_token" "$timeout_body")"
 timeout_order_id="$(printf '%s' "$timeout_response" | json_get data.id)"
 assert_eq 7 "$(inventory_available "$product_id" "$buyer_token")" 'available stock while timeout order is reserved'
@@ -145,7 +190,7 @@ assert_eq 1 "$(inventory_reserved "$product_id" "$buyer_token")" 'reserved stock
 
 timeout_status="pending"
 attempt=0
-while [ "$attempt" -lt 30 ]; do
+while [ "$attempt" -lt 45 ]; do
   timeout_status="$(order_status "$timeout_order_id" "$buyer_token")"
   if [ "$timeout_status" = "cancelled" ]; then
     break

@@ -6,16 +6,16 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [../README.md](../README.md) | 当前项目定位、运行拓扑、启动方式和能力边界 |
+| [../README.md](../README.md) | 当前项目定位、运行拓扑、Compose/kind 启动方式和能力边界 |
 | [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、服务调用、Inventory Reservation 和 Order Saga |
 | [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 独立 Goose 迁移、Outbox 租约、多 Worker 和 Publisher Confirms |
 | [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | 请求预算、Transport 超时、有限重试和安全边界 |
 | [architecture/circuit-breaker-rate-limit.md](architecture/circuit-breaker-rate-limit.md) | 操作级熔断与 Gateway Token Bucket 限流 |
 | [architecture/reliability-indicators.md](architecture/reliability-indicators.md) | Outbox/Saga 聚合指标、内部端点和周期日志 |
 | [architecture/reconciliation-worker.md](architecture/reconciliation-worker.md) | 对账任务、事务触发器、租约 Worker、修复动作和 dry-run |
-| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize base/local overlay、StatefulSet、Migration Job、Deployment、探针和 kind 脚本 |
+| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize、StatefulSet、Migration Job、Deployment、探针、kind 实际部署和回滚验收 |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 云原生完成度、已完成能力和生产级缺口 |
-| [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性收口和 Kubernetes 基础的演进记录 |
+| [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性收口和 Kubernetes 运行验收的演进记录 |
 
 ## 验证资料
 
@@ -27,8 +27,9 @@
 | [verification/circuit-breaker-rate-limit.md](verification/circuit-breaker-rate-limit.md) | 熔断状态、Token Bucket 和 HTTP 429 |
 | [verification/reliability-indicators.md](verification/reliability-indicators.md) | 聚合查询、内部鉴权和年龄边界 |
 | [verification/reconciliation-worker.md](verification/reconciliation-worker.md) | 对账映射、事务回滚、租约和修复动作 |
-| `scripts/smoke/microservices-saga.sh` | Compose 完整微服务业务闭环 |
-| `scripts/k8s/deploy-local.sh` | kind 本地部署流程；当前尚未进入 CI 实机验收 |
+| `scripts/smoke/microservices-saga.sh` | Compose 与 Kubernetes 共用的微服务业务断言 |
+| `scripts/smoke/microservices-saga-kubernetes.sh` | Kubernetes Saga 包装入口 |
+| `scripts/k8s/deploy-local.sh` | 已进入 CI 实机验收的 kind 本地部署流程 |
 
 ## 当前代码与交付路径
 
@@ -63,20 +64,33 @@ deploy/
 
 ## 当前验证边界
 
-已实际通过 CI：
+已实际通过 GitHub Actions：
 
-- lint、unit/integration test、race、vet、build；
+- lint、unit/integration test、race、vet 和 build；
 - 单体历史迁移与四套服务迁移校验；
 - Docker 镜像构建；
 - Compose 四库、RabbitMQ、双类 Worker 副本和完整 Order Saga；
-- Kubernetes local overlay 的 Kustomize 渲染。
+- Kubernetes local overlay 的 Kustomize 渲染；
+- disposable kind 集群创建；
+- MySQL/RabbitMQ StatefulSet；
+- 四个 Migration Job；
+- 七个应用/Worker Deployment；
+- Gateway NodePort 与内部 ClusterIP 边界；
+- 两个 Timeout Worker 和两个 Reconciliation Worker；
+- 不可用 Gateway revision 检测；
+- `kubectl rollout undo` 恢复；
+- 恢复后的完整 Kubernetes Order Saga；
+- 失败诊断收集和集群清理。
 
-尚未在 CI 实际完成：
+尚未完成：
 
-- kind/k3d 集群部署；
-- Kubernetes 上的完整 Saga；
-- Ingress、PDB、HPA、NetworkPolicy；
-- 错误版本发布与 `rollout undo` 演练。
+- Ingress Controller 与域名入口；
+- PodDisruptionBudget；
+- HorizontalPodAutoscaler；
+- NetworkPolicy；
+- 多节点和节点失效验证；
+- Registry 不可变镜像与非本地环境 overlay；
+- 托管云存储、负载均衡和 Workload Identity 集成。
 
 ## 历史基线文档
 

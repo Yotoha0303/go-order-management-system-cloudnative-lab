@@ -208,3 +208,102 @@ jobs:
       - name: Stop microservices
         if: always()
         run: docker compose down -v --remove-orphans
+
+  kubernetes-runtime:
+    name: kind Deploy, Rollback, Saga
+    needs: quality
+    runs-on: ubuntu-latest
+    env:
+      CLUSTER_NAME: go-order-ci
+      KUBERNETES_NAMESPACE: go-order-system
+      MYSQL_PASSWORD: local-dev-password
+      BASE_URL: http://127.0.0.1:8082
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install kind
+        run: go install sigs.k8s.io/kind@v0.27.0
+
+      - name: Install kubectl
+        run: |
+          curl --fail --location --silent --show-error \
+            --output kubectl \
+            https://dl.k8s.io/release/v1.32.2/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Verify Kubernetes tools
+        run: |
+          kind version
+          kubectl version --client
+
+      - name: Deploy local Kubernetes topology
+        run: sh scripts/k8s/deploy-local.sh
+
+      - name: Verify exposure and worker replicas
+        run: |
+          test "$(kubectl -n "$KUBERNETES_NAMESPACE" get service api-gateway -o jsonpath='{.spec.type}')" = NodePort
+          for service in identity-service catalog-service inventory-service order-service mysql rabbitmq; do
+            test "$(kubectl -n "$KUBERNETES_NAMESPACE" get service "$service" -o jsonpath='{.spec.type}')" = ClusterIP
+          done
+          test "$(kubectl -n "$KUBERNETES_NAMESPACE" get deployment order-timeout-worker -o jsonpath='{.status.readyReplicas}')" = 2
+          test "$(kubectl -n "$KUBERNETES_NAMESPACE" get deployment order-reconciliation-worker -o jsonpath='{.status.readyReplicas}')" = 2
+          curl --fail --silent --show-error "$BASE_URL/readyz"
+
+      - name: Exercise failed rollout and rollback
+        run: |
+          kubectl -n "$KUBERNETES_NAMESPACE" set image \
+            deployment/api-gateway \
+            api-gateway=go-order-management-system/api-gateway:missing-ci-image
+
+          if kubectl -n "$KUBERNETES_NAMESPACE" rollout status \
+            deployment/api-gateway \
+            --timeout=45s; then
+            echo 'bad image rollout unexpectedly succeeded' >&2
+            exit 1
+          fi
+
+          kubectl -n "$KUBERNETES_NAMESPACE" rollout undo deployment/api-gateway
+          kubectl -n "$KUBERNETES_NAMESPACE" rollout status deployment/api-gateway --timeout=180s
+
+          current_image="$(kubectl -n "$KUBERNETES_NAMESPACE" get deployment api-gateway -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          test "$current_image" = go-order-management-system/api-gateway:local
+          curl --fail --silent --show-error "$BASE_URL/readyz"
+
+      - name: Verify Kubernetes Order Saga
+        run: sh scripts/smoke/microservices-saga-kubernetes.sh
+
+      - name: Collect Kubernetes diagnostics
+        if: failure()
+        run: |
+          mkdir -p kubernetes-diagnostics
+          kubectl -n "$KUBERNETES_NAMESPACE" get all -o wide > kubernetes-diagnostics/resources.txt 2>&1 || true
+          kubectl -n "$KUBERNETES_NAMESPACE" get jobs,pvc -o wide > kubernetes-diagnostics/jobs-pvc.txt 2>&1 || true
+          kubectl -n "$KUBERNETES_NAMESPACE" get events --sort-by=.lastTimestamp > kubernetes-diagnostics/events.txt 2>&1 || true
+          kubectl -n "$KUBERNETES_NAMESPACE" describe pods > kubernetes-diagnostics/pods-describe.txt 2>&1 || true
+          for pod in $(kubectl -n "$KUBERNETES_NAMESPACE" get pods -o name 2>/dev/null); do
+            name="$(printf '%s' "$pod" | tr '/' '-')"
+            kubectl -n "$KUBERNETES_NAMESPACE" logs "$pod" --all-containers --prefix > "kubernetes-diagnostics/${name}.log" 2>&1 || true
+          done
+          kind export logs kubernetes-diagnostics/kind --name "$CLUSTER_NAME" || true
+
+      - name: Upload Kubernetes diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-runtime-diagnostics
+          path: kubernetes-diagnostics
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Delete kind cluster
+        if: always()
+        run: kind delete cluster --name "$CLUSTER_NAME"

@@ -20,3 +20,4 @@ generatorOptions:
 
 patches:
   - path: gateway-nodeport.yaml
+  - path: fast-timeout-config.yaml

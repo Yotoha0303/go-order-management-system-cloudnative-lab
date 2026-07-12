@@ -12,6 +12,25 @@ require_command() {
   }
 }
 
+wait_for_http() {
+  url="$1"
+  attempts="${2:-30}"
+  delay="${3:-2}"
+  current=1
+  while [ "$current" -le "$attempts" ]; do
+    if curl --fail --silent --show-error "$url"; then
+      return 0
+    fi
+    if [ "$current" -eq "$attempts" ]; then
+      break
+    fi
+    current=$((current + 1))
+    sleep "$delay"
+  done
+  printf 'HTTP endpoint did not become ready: %s\n' "$url" >&2
+  return 1
+}
+
 require_command docker
 require_command kind
 require_command kubectl
@@ -86,6 +105,6 @@ for deployment in \
 done
 
 printf '%s\n' 'Checking Gateway readiness...'
-curl --fail --silent --show-error http://127.0.0.1:8082/readyz
+wait_for_http http://127.0.0.1:8082/readyz 30 2
 printf '\nKubernetes local topology is ready at http://127.0.0.1:8082\n'
 kubectl -n "$NAMESPACE" get pods,services,jobs

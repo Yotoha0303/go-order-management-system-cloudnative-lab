@@ -8,9 +8,10 @@
 - 四库数据所有权；
 - 应用可靠性收口；
 - Compose 完整业务验证；
-- Kubernetes Kustomize 基础清单与 CI 渲染验证。
+- Kubernetes Kustomize 基础；
+- kind 实际部署、失败版本检测、`rollout undo` 和完整 Kubernetes Saga 自动验收。
 
-kind 实际部署、Ingress、PDB、HPA、滚动失败回退、Prometheus/Grafana、OpenTelemetry 和正式持续交付仍在后续阶段。
+Ingress、PDB、HPA、NetworkPolicy、Prometheus/Grafana、OpenTelemetry、GHCR 和正式环境持续交付仍在后续阶段。
 
 ## 当前能力矩阵
 
@@ -25,8 +26,8 @@ kind 实际部署、Ingress、PDB、HPA、滚动失败回退、Prometheus/Grafan
 | Worker 扩容 | Timeout/Reconciliation Worker 均使用租约与 `FOR UPDATE SKIP LOCKED` |
 | 数据库迁移 | 四套独立 Goose migration；Compose 和 Kubernetes 均使用一次性迁移任务 |
 | Compose 验证 | 四库、RabbitMQ、2 个 Timeout Worker、2 个 Reconciliation Worker、完整 Saga |
-| Kubernetes 基础 | Kustomize base + local overlay + StatefulSet + Deployment + Service + Migration Job + ConfigMap/Secret 合同 |
-| Kubernetes 验证 | CI 已验证 overlay 可渲染；kind 实际集群部署尚未纳入 CI |
+| Kubernetes 基础 | Kustomize base/local overlay + StatefulSet + Deployment + Service + Migration Job + ConfigMap/Secret 合同 |
+| Kubernetes 验证 | CI 创建真实 kind 集群，验证部署、暴露面、双 Worker、失败 rollout、`rollout undo` 和完整 Saga |
 
 ## 运行拓扑
 
@@ -132,7 +133,7 @@ sh scripts/smoke/microservices-saga.sh
 docker compose down -v --remove-orphans
 ```
 
-## Kubernetes 基础
+## Kubernetes 运行与验证
 
 目录：
 
@@ -147,6 +148,7 @@ deploy/kubernetes/
 │   └── kustomization.yaml
 └── overlays/local/
     ├── gateway-nodeport.yaml
+    ├── fast-timeout-config.yaml
     ├── kind-config.yaml
     └── kustomization.yaml
 ```
@@ -160,25 +162,40 @@ deploy/kubernetes/
 - Worker 进程探针；
 - CPU/内存 requests 与 limits；
 - HTTP Deployment RollingUpdate；
-- local overlay 的开发 Secret 生成和 Gateway NodePort。
+- local overlay 开发 Secret 和 Gateway NodePort。
 
-渲染验证：
+渲染：
 
 ```bash
 kustomize build deploy/kubernetes/overlays/local >/tmp/go-order-kubernetes.yaml
 ```
 
-本地 kind 部署脚本：
+本地 kind 部署：
 
 ```bash
 sh scripts/k8s/deploy-local.sh
 ```
 
-该脚本会创建 kind 集群、构建并加载七个应用镜像、运行四个迁移 Job、等待所有工作负载，并检查 Gateway readiness。当前 CI 只验证 Kustomize 渲染；kind 实际部署将在后续 PR 纳入自动验收。
+Kubernetes Saga：
+
+```bash
+sh scripts/smoke/microservices-saga-kubernetes.sh
+```
+
+CI 会从干净 runner 创建 disposable kind 集群，并验证：
+
+1. MySQL、RabbitMQ、四个 Migration Job 和七个 Deployment；
+2. 只有 Gateway 使用 NodePort；
+3. 两个 Timeout Worker 和两个 Reconciliation Worker；
+4. 不可用 Gateway 镜像触发 rollout 失败；
+5. `kubectl rollout undo` 恢复原镜像和 readiness；
+6. 恢复后的注册、商品、库存、幂等下单、支付、取消和超时 Saga。
 
 ## CI 质量门禁
 
-GitHub Actions 当前执行：
+GitHub Actions 当前包含两条独立验证链。
+
+### Go 与 Compose
 
 ```text
 golangci-lint
@@ -188,14 +205,30 @@ go vet ./...
 go build ./...
 旧单体与四套服务 migration validate
 7 个服务/Worker 二进制构建
-Docker Compose 配置校验
-Kustomize local overlay 渲染校验
-全部镜像构建
-四库与 RabbitMQ 启动
+Docker Compose 配置与镜像
+Kustomize render
+四库与 RabbitMQ
 2 个 Timeout Worker
 2 个 Reconciliation Worker
 Gateway readiness
-完整 Order Saga smoke
+完整 Compose Order Saga
+```
+
+### kind Runtime
+
+```text
+创建 disposable kind 集群
+构建并加载 7 个应用镜像
+应用 Kustomize local overlay
+等待 2 个 StatefulSet
+等待 4 个 Migration Job
+等待 7 个 Deployment
+验证内部/外部 Service 边界
+验证双类 Worker 副本
+失败 rollout 检测
+kubectl rollout undo
+完整 Kubernetes Order Saga
+失败诊断与集群清理
 ```
 
 ## 项目结构
@@ -209,7 +242,7 @@ internal/platform/           HTTP 可靠性、内部认证等公共能力
 migrations/                  单体历史迁移与四套服务迁移
 deploy/docker/               通用服务镜像
 deploy/kubernetes/           Kustomize base 与 overlays
-scripts/smoke/               Compose 业务冒烟
+scripts/smoke/               Compose/Kubernetes 业务冒烟
 scripts/k8s/                 Kubernetes 本地部署
 docs/                        当前架构、历史基线和验证资料
 ```
@@ -223,7 +256,7 @@ docs/                        当前架构、历史基线和验证资料
 - [熔断与 Gateway 限流](docs/architecture/circuit-breaker-rate-limit.md)
 - [Outbox/Saga 运行指标](docs/architecture/reliability-indicators.md)
 - [自动 Order 对账 Worker](docs/architecture/reconciliation-worker.md)
-- [Kubernetes 基础](docs/architecture/kubernetes-foundation.md)
+- [Kubernetes 基础与运行验收](docs/architecture/kubernetes-foundation.md)
 - [云原生完成度与缺口](docs/architecture/cloud-native-status.md)
 - [项目演进记录](docs/project_evolution.md)
 
@@ -235,17 +268,17 @@ docs/                        当前架构、历史基线和验证资料
 - Reservation、Saga、Outbox、Publisher Confirms；
 - 请求预算、有限重试、熔断和 Gateway 限流；
 - 运行指标、自动对账和 dry-run；
-- Compose 四库、四个 Worker 副本和完整 Saga 验证；
-- Kubernetes Kustomize 基础清单与 CI 渲染验证。
+- Compose 四库、四个 Worker 副本和完整 Saga；
+- Kubernetes Kustomize 基础、真实 kind 部署、失败 rollout 恢复和完整 Saga。
 
 尚未完成：
 
-- kind/k3d 集群的自动部署和 Kubernetes Saga 验收；
 - Ingress、PDB、HPA、NetworkPolicy；
-- 错误镜像发布、`rollout undo` 和自动回滚演练；
+- 多节点和节点故障行为；
+- 不可变 Registry 镜像与非本地环境 overlay；
 - Prometheus、Grafana、OpenTelemetry 和正式告警；
-- GHCR、测试环境持续部署；
+- GHCR 与测试环境持续部署；
 - 最小权限账号、mTLS/Workload Identity；
 - 备份恢复、Runbook、压测和故障演练。
 
-> **当前是完成应用可靠性收口，并开始具备 Kubernetes 交付基础的云原生演进项目；仍未达到生产级云原生交付状态。**
+> **当前已完成应用可靠性收口和可重复的本地 Kubernetes 交付验收；仍未达到生产级云原生交付状态。**
