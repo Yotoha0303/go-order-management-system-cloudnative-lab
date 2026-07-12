@@ -12,6 +12,10 @@ import (
 	platformmetrics "go-order-management-system/internal/platform/metrics"
 )
 
+func ObserveHTTP(service string, handler http.Handler, collectors ...platformmetrics.Collector) http.Handler {
+	return platformmetrics.InstrumentHTTP(service, handler, collectors...)
+}
+
 func NewObservedHTTPServer(
 	service string,
 	port int,
@@ -19,7 +23,7 @@ func NewObservedHTTPServer(
 	cfg config.HttpServerConfig,
 	collectors ...platformmetrics.Collector,
 ) *http.Server {
-	return NewHTTPServer(port, platformmetrics.InstrumentHTTP(service, handler, collectors...), cfg)
+	return NewHTTPServer(port, ObserveHTTP(service, handler, collectors...), cfg)
 }
 
 func StartMetricsHTTP(
