@@ -3,8 +3,13 @@ name: Publish Immutable Images
 on:
   workflow_dispatch:
   push:
+    branches: ["main"]
     tags:
       - "release-*"
+    paths:
+      - ".github/workflows/publish-images.yml"
+      - "scripts/release/**"
+      - "deploy/docker/Dockerfile.service"
 
 permissions:
   contents: read
