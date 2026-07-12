@@ -23,6 +23,7 @@ env:
   MYSQL_HOST_PORT: "13306"
   RABBITMQ_HOST_PORT: "15673"
   RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
+  RABBITMQ_MANAGEMENT_URL: http://127.0.0.1:25673
   OUTBOX_LEASE_DURATION: 30s
   PROMETHEUS_HOST_PORT: "19090"
   PROMETHEUS_URL: http://127.0.0.1:19090
@@ -87,6 +88,16 @@ jobs:
       - name: Verify Tempo cross-service trace
         run: python3 scripts/smoke/tempo-trace.py
 
+      - name: Verify RabbitMQ delivery and queue metrics
+        run: python3 scripts/smoke/rabbitmq-observability.py verify-deliveries
+
+      - name: Verify RabbitMQ session loss and recovery
+        run: |
+          docker compose -f compose.yml -f compose.observability.yml stop rabbitmq
+          python3 scripts/smoke/rabbitmq-observability.py wait-session 0
+          docker compose -f compose.yml -f compose.observability.yml up -d --wait rabbitmq
+          python3 scripts/smoke/rabbitmq-observability.py wait-session 1
+
       - name: Collect diagnostics
         if: failure()
         run: |
@@ -95,7 +106,9 @@ jobs:
           docker compose -f compose.yml -f compose.observability.yml logs --no-color > diagnostics/observability/compose.log 2>&1 || true
           curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" > diagnostics/observability/targets.json || true
           curl --silent --show-error "${PROMETHEUS_URL}/api/v1/rules" > diagnostics/observability/rules.json || true
-          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=service:http_requests:rate5m" > diagnostics/observability/recording-rules.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_rabbitmq_session_up" > diagnostics/observability/rabbitmq-session.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_rabbitmq_delivery_total" > diagnostics/observability/rabbitmq-deliveries.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_rabbitmq_queue_messages" > diagnostics/observability/rabbitmq-queues.json || true
           curl --silent --show-error "${GRAFANA_URL}/api/health" > diagnostics/observability/grafana-health.json || true
           curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
             "${GRAFANA_URL}/api/datasources/uid/prometheus" > diagnostics/observability/grafana-prometheus-datasource.json || true
@@ -103,6 +116,8 @@ jobs:
             "${GRAFANA_URL}/api/datasources/uid/tempo" > diagnostics/observability/grafana-tempo-datasource.json || true
           curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
             "${GRAFANA_URL}/api/dashboards/uid/go-order-overview" > diagnostics/observability/grafana-dashboard.json || true
+          curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+            "${GRAFANA_URL}/api/dashboards/uid/go-order-infrastructure" > diagnostics/observability/grafana-infrastructure-dashboard.json || true
           curl --silent --show-error "${TEMPO_URL}/ready" > diagnostics/observability/tempo-ready.txt || true
           curl --silent --show-error "${TEMPO_URL}/api/traces/${TRACE_ID}" > diagnostics/observability/tempo-trace.json || true
 
