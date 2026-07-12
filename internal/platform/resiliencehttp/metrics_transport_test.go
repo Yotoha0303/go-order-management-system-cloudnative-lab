@@ -9,9 +9,9 @@ import (
 	platformmetrics "go-order-management-system/internal/platform/metrics"
 )
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
+type metricsRoundTripFunc func(*http.Request) (*http.Response, error)
 
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+func (function metricsRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return function(request)
 }
 
@@ -20,7 +20,7 @@ func TestObserveTransportRecordsBoundedAttemptMetrics(t *testing.T) {
 	platformmetrics.Default = platformmetrics.NewRegistry()
 	t.Cleanup(func() { platformmetrics.Default = previous })
 
-	transport := ObserveTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	transport := ObserveTransport(metricsRoundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusServiceUnavailable,
 			Body:       io.NopCloser(strings.NewReader("unavailable")),
