@@ -36,7 +36,14 @@ def read_text(path: pathlib.Path) -> str:
 def validate_publish_workflow() -> None:
     workflow = read_text(PUBLISH_WORKFLOW)
     require("workflow_dispatch:" in workflow, "image publishing must support an explicit manual run")
+    require('branches: ["main"]' in workflow, "protected main publishing trigger is missing")
     require('tags:\n      - "release-*"' in workflow, "image publishing tag trigger must remain release-*")
+    for path in (
+        '.github/workflows/publish-images.yml',
+        'scripts/release/**',
+        'deploy/docker/Dockerfile.service',
+    ):
+        require(f'- "{path}"' in workflow, f"protected main trigger is missing release path: {path}")
     require("pull_request:" not in workflow, "package publishing must never run in pull-request context")
     require("permissions:\n  contents: read" in workflow, "top-level workflow permissions must remain read-only")
     require(workflow.count("packages: write") == 1, "packages: write must exist only on the publish job")
@@ -117,6 +124,7 @@ def validate_release_files() -> None:
     require("同一 commit-SHA 标签" in documentation, "release documentation must explain immutable tag behavior")
     require("部分发布" in documentation, "release documentation must disclose partial-publication recovery")
     require("不执行 Kubernetes 部署" in documentation, "release documentation must preserve the phase boundary")
+    require("受保护的 `main` 路径触发" in documentation, "release documentation must explain protected main publishing")
 
 
 def main() -> int:
