@@ -1,4 +1,4 @@
-name: Prometheus Metrics
+name: Observability Stack
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: prometheus-metrics-${{ github.ref }}
+  group: observability-stack-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -26,10 +26,14 @@ env:
   OUTBOX_LEASE_DURATION: 30s
   PROMETHEUS_HOST_PORT: "19090"
   PROMETHEUS_URL: http://127.0.0.1:19090
+  GRAFANA_HOST_PORT: "13000"
+  GRAFANA_URL: http://127.0.0.1:13000
+  GRAFANA_ADMIN_USER: admin
+  GRAFANA_ADMIN_PASSWORD: ci-grafana-password
 
 jobs:
-  scrape:
-    name: Compose scrape and metric assertions
+  stack:
+    name: Compose metrics, rules and Grafana assertions
     runs-on: ubuntu-latest
 
     steps:
@@ -39,7 +43,27 @@ jobs:
       - name: Validate observability Compose configuration
         run: docker compose -f compose.yml -f compose.observability.yml config --quiet
 
-      - name: Start application and Prometheus
+      - name: Validate dashboard and provisioning contracts
+        run: python3 scripts/verify/observability-contracts.py
+
+      - name: Validate Prometheus configuration
+        run: |
+          docker run --rm \
+            -v "${PWD}/deploy/prometheus:/etc/prometheus:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: Test recording and alert rules
+        run: |
+          docker run --rm \
+            -v "${PWD}/deploy/prometheus:/etc/prometheus:ro" \
+            -w /etc/prometheus/tests \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 \
+            test rules /etc/prometheus/tests/rules.test.yml
+
+      - name: Start application, Prometheus and Grafana
         run: |
           docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
             --scale order-timeout-worker=2 \
@@ -48,26 +72,35 @@ jobs:
       - name: Run complete Order Saga
         run: sh scripts/smoke/microservices-saga.sh
 
-      - name: Verify Prometheus targets and metrics
+      - name: Verify Prometheus targets, rules and metrics
         run: python3 scripts/smoke/prometheus-metrics.py
+
+      - name: Verify Grafana provisioning
+        run: python3 scripts/smoke/grafana-provisioning.py
 
       - name: Collect diagnostics
         if: failure()
         run: |
-          mkdir -p diagnostics/prometheus
-          docker compose -f compose.yml -f compose.observability.yml ps -a > diagnostics/prometheus/compose-ps.txt || true
-          docker compose -f compose.yml -f compose.observability.yml logs --no-color > diagnostics/prometheus/compose.log 2>&1 || true
-          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" > diagnostics/prometheus/targets.json || true
-          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_http_server_requests_total" > diagnostics/prometheus/http-metrics.json || true
+          mkdir -p diagnostics/observability
+          docker compose -f compose.yml -f compose.observability.yml ps -a > diagnostics/observability/compose-ps.txt || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color > diagnostics/observability/compose.log 2>&1 || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" > diagnostics/observability/targets.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/rules" > diagnostics/observability/rules.json || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=service:http_requests:rate5m" > diagnostics/observability/recording-rules.json || true
+          curl --silent --show-error "${GRAFANA_URL}/api/health" > diagnostics/observability/grafana-health.json || true
+          curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+            "${GRAFANA_URL}/api/datasources/uid/prometheus" > diagnostics/observability/grafana-datasource.json || true
+          curl --silent --show-error --user "${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD}" \
+            "${GRAFANA_URL}/api/dashboards/uid/go-order-overview" > diagnostics/observability/grafana-dashboard.json || true
 
       - name: Upload diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: prometheus-metrics-diagnostics
-          path: diagnostics/prometheus
+          name: observability-stack-diagnostics
+          path: diagnostics/observability
           retention-days: 7
 
-      - name: Stop application and Prometheus
+      - name: Stop application and observability stack
         if: always()
         run: docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans
