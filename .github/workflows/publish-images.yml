@@ -221,6 +221,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          command -v jq >/dev/null
           python3 scripts/release/manifest.py tagged \
             --manifest release-manifest.json \
             --repository "${GITHUB_REPOSITORY}" \
@@ -230,7 +231,10 @@ jobs:
           paste release-tagged-references.txt release-references.txt |
             while IFS=$'\t' read -r tagged_reference digest_reference; do
               expected_digest="${digest_reference##*@}"
-              actual_digest="sha256:$(docker buildx imagetools inspect --raw "${tagged_reference}" | sha256sum | awk '{print $1}')"
+              actual_digest="$(
+                docker buildx imagetools inspect "${tagged_reference}" --format '{{json .Manifest}}' |
+                  jq -er '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))'
+              )"
               if [[ "${actual_digest}" != "${expected_digest}" ]]; then
                 echo "immutable tag digest mismatch: ${tagged_reference}" >&2
                 echo "expected ${expected_digest}, got ${actual_digest}" >&2
