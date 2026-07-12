@@ -1,6 +1,6 @@
 # Go Order Management Cloud-Native Lab
 
-> 一个从 Go 分层单体持续演进而来的云原生实验项目，重点展示微服务数据边界、Inventory Reservation、Order Saga、Transactional Outbox、RabbitMQ Publisher Confirms、请求预算、有限重试、熔断、限流、自动对账、多 Worker 租约、Kubernetes 交付，以及 Prometheus/Grafana 可观测性基础。
+> 一个从 Go 分层单体持续演进而来的云原生实验项目，重点展示微服务数据边界、Inventory Reservation、Order Saga、Transactional Outbox、RabbitMQ Publisher Confirms、请求预算、有限重试、熔断、限流、自动对账、多 Worker 租约、Kubernetes 交付，以及 Prometheus/Grafana/OpenTelemetry 可观测性基础。
 
 本仓库不是完整电商平台，也不宣称已经达到生产级云原生标准。当前已经完成：
 
@@ -13,10 +13,11 @@
 - Kubernetes Kustomize base/local/test、Ingress/PDB 合同、kind 部署、失败 rollout 与 `rollout undo`；
 - 五个 HTTP 服务和两个 Worker 的 Prometheus 指标；
 - Prometheus recording rules、九条基础 alert rules 和确定性规则测试；
-- 自动 Provisioning 的 Grafana 数据源与 `Go Order Management Overview` Dashboard；
-- Observability Stack CI：完整 Saga、七 target、规则健康、recording series 和 Grafana API 验收。
+- 自动 Provisioning 的 Grafana Prometheus/Tempo 数据源与 `Go Order Management Overview` Dashboard；
+- OpenTelemetry SDK、W3C Trace Context、HTTP/Worker/Saga spans 与 trace/log 关联；
+- Observability Stack CI：完整 Saga、七 target、规则健康、Grafana API 与 Tempo 五服务跨服务 Trace 验收。
 
-OpenTelemetry、W3C Trace Context、Alertmanager 通知、生产 SLO、基础设施 exporter、HPA、NetworkPolicy、GHCR 和正式环境持续交付仍在后续阶段。
+仓库还提供只读的 Release Contracts 门禁和 GHCR 不可变镜像发布工作流，但首次真实 Registry push 与 digest 清单 artifact 尚未在 `main` 上执行验收。Alertmanager 通知、生产 SLO、基础设施 exporter、HPA、NetworkPolicy、测试环境 CD 和正式环境持续交付仍在后续阶段。
 
 ## 当前能力矩阵
 
@@ -35,7 +36,9 @@ OpenTelemetry、W3C Trace Context、Alertmanager 通知、生产 SLO、基础设
 | 指标 | HTTP server/client、Order、Outbox、Saga、Reconciliation、Worker、RabbitMQ Confirm |
 | Dashboard | Grafana 文件 Provisioning，稳定 UID `go-order-overview`，16 个核心面板 |
 | 规则 | 6 条 recording rules、9 条 alert rules、全部显式 `for` 窗口 |
-| 可观测性验收 | Prometheus 七 target、规则健康、recording series、Grafana 数据源/Dashboard API |
+| Trace | OpenTelemetry + W3C Trace Context + OTLP/HTTP + Collector + Tempo + trace/log correlation |
+| 可观测性验收 | Prometheus 七 target、规则健康、recording series、Grafana 数据源/Dashboard API、Tempo 五服务 Trace |
+| 镜像发布合同 | PR 只读门禁；七服务 commit-SHA 标签、OCI digest 与发布清单工作流；真实 GHCR push 待验收 |
 
 ## 运行拓扑
 
@@ -72,10 +75,21 @@ flowchart LR
     Prometheus -. scrape .-> Order
     Prometheus -. scrape :9091 .-> TimeoutWorker
     Prometheus -. scrape :9092 .-> ReconcileWorker
+
+    Gateway -. OTLP/HTTP .-> Collector[OpenTelemetry Collector]
+    Identity -. OTLP/HTTP .-> Collector
+    Catalog -. OTLP/HTTP .-> Collector
+    Inventory -. OTLP/HTTP .-> Collector
+    Order -. OTLP/HTTP .-> Collector
+    TimeoutWorker -. OTLP/HTTP .-> Collector
+    ReconcileWorker -. OTLP/HTTP .-> Collector
+    Collector --> Tempo[Tempo]
+
     Grafana[Grafana] --> Prometheus
+    Grafana --> Tempo
 ```
 
-只有 API Gateway 对外提供业务入口。Prometheus 和 Grafana 是可选观测组件，不参与业务 readiness 链路。
+只有 API Gateway 对外提供业务入口。Prometheus、Grafana、Collector 和 Tempo 是可选观测组件，不参与业务 readiness 链路。
 
 ## 核心一致性与可靠性
 
@@ -127,7 +141,7 @@ sh scripts/smoke/microservices-saga.sh
 docker compose down -v --remove-orphans
 ```
 
-## Prometheus 与 Grafana
+## Prometheus、Grafana 与 Tempo
 
 可观测性通过独立 overlay 加入：
 
@@ -142,6 +156,7 @@ docker compose -f compose.yml -f compose.observability.yml up -d --build --wait 
 ```text
 Prometheus: http://127.0.0.1:9090
 Grafana:    http://127.0.0.1:3000
+Tempo API:  http://127.0.0.1:3200
 ```
 
 本地端口和 Grafana 管理员信息可通过以下变量覆盖：
@@ -151,6 +166,7 @@ PROMETHEUS_HOST_PORT
 GRAFANA_HOST_PORT
 GRAFANA_ADMIN_USER
 GRAFANA_ADMIN_PASSWORD
+TEMPO_HOST_PORT
 ```
 
 非本地环境必须使用部署系统的 Secret 机制注入凭据。
@@ -213,6 +229,17 @@ GoOrderMetricsCollectionFailing
 
 这些阈值是实验项目默认值，不是生产 SLO。当前未配置 Alertmanager receiver 或通知渠道。
 
+### OpenTelemetry Trace
+
+- 五个 HTTP 服务和两个 Worker 初始化共享 SDK；
+- 无 exporter 时仍生成有效本地 Trace Context；
+- 配置 OTLP/HTTP endpoint 后使用 parent-based ratio sampling 导出；
+- Gateway 与内部 HTTP client 提取/注入 W3C `traceparent` 和 `tracestate`；
+- HTTP span name 只使用有界 method 与 route group；
+- structured log 在有效 span 中加入 `trace_id` 与 `span_id`；
+- 不把 user/order/reservation/request body/token/raw query 放入 span attributes；
+- RabbitMQ 消息头传播、tail sampling 和生产 backend 仍未实现。
+
 ### 本地验证
 
 ```bash
@@ -220,6 +247,7 @@ python3 scripts/verify/observability-contracts.py
 sh scripts/smoke/microservices-saga.sh
 python3 scripts/smoke/prometheus-metrics.py
 python3 scripts/smoke/grafana-provisioning.py
+python3 scripts/smoke/tempo-trace.py
 ```
 
 ## Kubernetes
@@ -248,7 +276,26 @@ Test overlay 提供：
 - 默认主机名 `go-order.test.local`；
 - 内部 ClusterIP 服务边界。
 
-Kubernetes base 已提供 Prometheus scrape annotations 和 Worker metrics ports；仓库尚未在 Kubernetes 内安装 Prometheus、Grafana 或 Prometheus Operator。
+Kubernetes base 已提供 Prometheus scrape annotations 和 Worker metrics ports；仓库尚未在 Kubernetes 内安装 Prometheus、Grafana、Collector、Tempo 或 Prometheus Operator。
+
+## 不可变镜像发布合同
+
+`.github/workflows/publish-images.yml` 定义七个 GHCR 镜像的发布流程：
+
+```text
+workflow_dispatch on main 或 release-* tag
+commit-SHA immutable tag
+preflight + push 前二次覆盖检查
+OCI provenance + SBOM
+docker/build-push-action digest
+七个 JSON fragment
+release-manifest.json
+逐个 digest-qualified reference 终检
+```
+
+普通 PR 只运行 `.github/workflows/release-contracts.yml`，没有 `packages: write`，不会推送镜像。完整说明见 [GHCR 不可变镜像与发布清单](docs/verification/ghcr-release-images.md)。
+
+在 `main` 完成首次手动发布以前，只能声称发布合同已经实现，不能声称七个 GHCR 镜像已经真实发布。
 
 ## CI 质量门禁
 
@@ -281,10 +328,21 @@ Compose overlay 合同
 Dashboard/Provisioning/Cardinality 静态检查
 promtool check config
 promtool firing/non-firing rule tests
-完整应用 + Prometheus + Grafana
+完整应用 + Prometheus + Grafana + Collector + Tempo
 完整 Order Saga
 七 target、规则健康与 recording series
-Grafana datasource 与 Dashboard API
+Grafana Prometheus/Tempo datasource 与 Dashboard API
+固定 W3C 上下文的五服务跨服务 Trace
+```
+
+### Release Contracts
+
+```text
+Python 发布工具编译与单元测试
+固定七服务、顺序、tag、digest 与 reference 校验
+发布工作流触发与最小权限静态合同
+共享 Dockerfile 的选定服务和非 root 运行合同
+只读 PR 门禁，不登录或写入 GHCR
 ```
 
 ## 文档入口
@@ -298,6 +356,8 @@ Grafana datasource 与 Dashboard API
 - [Kubernetes 基础与运行验收](docs/architecture/kubernetes-foundation.md)
 - [Prometheus 指标基础](docs/architecture/prometheus-metrics.md)
 - [Grafana Dashboard 与告警规则](docs/architecture/grafana-alerts.md)
+- [OpenTelemetry 分布式追踪](docs/architecture/opentelemetry-tracing.md)
+- [GHCR 不可变镜像与发布清单](docs/verification/ghcr-release-images.md)
 - [云原生完成度与缺口](docs/architecture/cloud-native-status.md)
 - [项目演进记录](docs/project_evolution.md)
 
@@ -310,16 +370,18 @@ Grafana datasource 与 Dashboard API
 - Compose 与 Kubernetes 双环境完整 Saga；
 - Kubernetes base/local/test、Ingress/PDB、kind 部署和回滚；
 - Prometheus 应用指标、七 target 抓取、recording/alert rules；
-- Grafana 自动数据源、Dashboard 和可重复 API 验收。
+- Grafana 自动数据源、Dashboard 和可重复 API 验收；
+- OpenTelemetry、W3C HTTP 传播、trace/log 关联和 Tempo 五服务 Trace；
+- GHCR 发布工作流、不可变标签规则和发布清单的只读合同实现。
 
 尚未完成：
 
-- OpenTelemetry、W3C Trace Context、跨服务 Trace 与 trace/log 关联；
+- `main` 上首次真实 GHCR 七镜像 push、digest 清单 artifact 与重复运行覆盖拒绝验收；
+- RabbitMQ 消息头 W3C Context、consumer 细粒度计数与基础设施 exporter；
 - Alertmanager 通知和生产 SLO/错误预算；
-- RabbitMQ consumer 细粒度计数与基础设施 exporter；
-- Kubernetes 内 Prometheus/Grafana、HPA、NetworkPolicy 和多节点故障；
-- GHCR、测试环境持续部署和不可变版本推广；
+- Kubernetes 内 Prometheus/Grafana/Collector/Tempo、HPA、NetworkPolicy 和多节点故障；
+- 测试环境持续部署和正式环境不可变版本推广；
 - 最小权限账号、mTLS/Workload Identity；
 - 备份恢复、Runbook、压测和故障演练。
 
-> **当前已完成微服务可靠性、Kubernetes 基础交付，以及 Prometheus/Grafana 应用级可观测性基础；仍未达到生产级云原生交付状态。**
+> **当前已完成微服务可靠性、Kubernetes 基础交付和应用级指标/日志/Trace 可观测性；镜像发布合同已实现但 Registry 实跑与环境持续交付仍未完成，因此仍未达到生产级云原生交付状态。**
