@@ -1,0 +1,149 @@
+# RabbitMQ and migration observability
+
+## Scope
+
+Phase 7.4 closes the two observability items intentionally left open after Prometheus, Grafana and OpenTelemetry delivery:
+
+- application-owned RabbitMQ consumer/session and bounded queue signals;
+- a reproducible Kubernetes migration Job failure signal and alert contract.
+
+The change is additive. It does not change business APIs, database schemas, Saga states, RabbitMQ exchanges/queues, message payloads, acknowledgement policy or Kubernetes migration execution.
+
+## Timeout Worker delivery metrics
+
+The Timeout Worker records:
+
+```text
+go_order_rabbitmq_delivery_total{outcome}
+```
+
+Bounded outcomes:
+
+```text
+received
+acknowledged
+requeued
+rejected
+processing_failure
+settlement_error
+```
+
+Meaning:
+
+- `received`: a delivery was read from the cancel queue;
+- `acknowledged`: business processing and the final Outbox update succeeded, then `Ack` succeeded;
+- `requeued`: processing or persistence failed and `Nack(requeue=true)` succeeded;
+- `rejected`: an invalid payload was rejected without requeue;
+- `processing_failure`: decoding, Order cancellation or local persistence failed;
+- `settlement_error`: Ack/Nack/Reject itself returned an error.
+
+One message may increment `received`, one processing result and one settlement result. This is intentional; the metric describes stages rather than mutually exclusive final states.
+
+No delivery tag, message ID, Order ID, event ID, Worker ID or raw error text is used as a label.
+
+## RabbitMQ session signal
+
+```text
+go_order_rabbitmq_session_up{role="timeout_worker"}
+```
+
+The gauge is set to `1` only after both publisher/consumer channels, topology declaration, QoS and the consumer registration succeed. It returns to `0` whenever the session exits because of context cancellation, connection loss or Channel closure.
+
+Each Worker metrics target exports its own sample; PromQL uses `max by (role)` when determining whether any replica still has a live session.
+
+## Management API Collector
+
+The Timeout Worker metrics listener includes a scrape-time Collector using:
+
+```text
+RABBITMQ_MANAGEMENT_URL
+RABBITMQ_USER
+RABBITMQ_PASSWORD
+RABBITMQ_MANAGEMENT_METRICS_TIMEOUT
+```
+
+The Collector uses an independent two-second default HTTP timeout and queries only the two fixed timeout queues. It emits bounded roles instead of real queue names:
+
+```text
+go_order_rabbitmq_management_up
+go_order_rabbitmq_queue_messages{queue_role="delay|cancel",state="total|ready|unacknowledged"}
+go_order_rabbitmq_queue_consumers{queue_role="delay|cancel"}
+```
+
+A collection failure sets `management_up=0` and increments the existing `go_order_metrics_collection_errors_total{collector="rabbitmq_management"}` counter through the registry. It does not fail Worker processing or application readiness.
+
+The Collector reuses the existing RabbitMQ application credential in the local/test topology. Production should use a dedicated read-only monitoring user with permission limited to the target virtual host and management API.
+
+RabbitMQ management port `15672` remains internal in Kubernetes. Compose retains the existing optional host mapping for local administration and CI fixtures; this phase does not add a new public exposure.
+
+## Kubernetes migration Job signal
+
+The optional directory:
+
+```text
+deploy/kubernetes/observability
+```
+
+contains an explicitly versioned `kube-state-metrics:v2.14.0` contract restricted to:
+
+```text
+resource: Jobs
+namespace: go-order-system
+```
+
+Its Service is ClusterIP and its Pod carries standard Prometheus scrape annotations. The minimal ClusterRole grants only `list` and `watch` on batch Jobs.
+
+The migration alert consumes the standard signal:
+
+```text
+kube_job_status_failed{namespace="go-order-system",job_name=~".*-migrate"}
+```
+
+This optional contract is not included in the default local/test application overlays and does not claim cluster-wide monitoring parity. A target cluster must deploy a Prometheus instance or compatible collector capable of scraping the Service.
+
+## Dashboard and alerts
+
+Grafana automatically provisions:
+
+```text
+UID:   go-order-infrastructure
+Title: Go Order Infrastructure Signals
+```
+
+Panels cover RabbitMQ application session, management collection, ready messages, consumer counts, delivery outcomes and failed migration Jobs.
+
+New alerts:
+
+```text
+GoOrderRabbitMQSessionUnavailable
+GoOrderRabbitMQManagementCollectorDown
+GoOrderRabbitMQQueueBacklogHigh
+GoOrderMigrationJobFailed
+```
+
+All alerts define explicit `for` windows. The thresholds are local/test defaults, not production SLOs.
+
+## Verification
+
+Static and deterministic checks verify:
+
+- only bounded labels are used;
+- the infrastructure Dashboard contains all required signals;
+- all 13 alerts have explicit `for` windows;
+- RabbitMQ session loss fires and a healthy session does not;
+- migration Job failure fires after its window;
+- the kube-state-metrics image, resource filter, namespace and RBAC are explicit;
+- the optional Kubernetes observability Kustomization renders.
+
+The Observability Stack workflow also:
+
+1. executes the complete Order Saga and observes an acknowledged timeout delivery;
+2. publishes a controlled invalid payload through the RabbitMQ management API;
+3. verifies `processing_failure` and `rejected` increase;
+4. verifies queue depth and consumer-count metrics;
+5. stops RabbitMQ and waits for the application session gauge to become `0`;
+6. restarts RabbitMQ and waits for the gauge to return to `1` without restarting the Worker.
+
+## Failure and rollback boundary
+
+Reverting the consumer counters, session gauge, management Collector, optional kube-state-metrics contract, Dashboard and alert rules removes only observability. It does not alter RabbitMQ delivery semantics, queue topology, Order state transitions, Outbox persistence or Kubernetes migration Jobs.
