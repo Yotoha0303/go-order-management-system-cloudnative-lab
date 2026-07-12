@@ -68,6 +68,25 @@ jobs:
             exit 1
           fi
 
+      - name: Render migration observability contract
+        run: |
+          kustomize build deploy/kubernetes/observability > kubernetes-observability.yaml
+          test -s kubernetes-observability.yaml
+          grep -q '^kind: ClusterRole$' kubernetes-observability.yaml
+          grep -q '^kind: ClusterRoleBinding$' kubernetes-observability.yaml
+          grep -q '^kind: Deployment$' kubernetes-observability.yaml
+          grep -q '^kind: Service$' kubernetes-observability.yaml
+          grep -q 'kube-state-metrics:v2.14.0' kubernetes-observability.yaml
+          grep -q -- '--resources=jobs' kubernetes-observability.yaml
+          grep -q -- '--namespaces=go-order-system' kubernetes-observability.yaml
+          grep -q 'prometheus.io/scrape: "true"' kubernetes-observability.yaml
+          grep -q 'resources:' kubernetes-observability.yaml
+          grep -q 'jobs' kubernetes-observability.yaml
+          if grep -q 'type: NodePort' kubernetes-observability.yaml; then
+            echo 'kube-state-metrics must remain cluster-internal' >&2
+            exit 1
+          fi
+
       - name: Upload rendered contracts
         uses: actions/upload-artifact@v4
         with:
@@ -75,4 +94,5 @@ jobs:
           path: |
             kubernetes-local.yaml
             kubernetes-test.yaml
+            kubernetes-observability.yaml
           retention-days: 7
