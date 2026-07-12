@@ -29,7 +29,7 @@ EXPECTED_INFRASTRUCTURE_PANELS = {
     "Ready Queue Messages",
     "RabbitMQ Queue Consumers",
     "Timeout Delivery Outcomes",
-    "Failed Migration Jobs",
+    "Terminally Failed Migration Jobs",
 }
 
 
