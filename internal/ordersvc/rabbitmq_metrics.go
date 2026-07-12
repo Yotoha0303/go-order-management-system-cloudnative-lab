@@ -58,19 +58,23 @@ type rabbitMQManagementCollector struct {
 	baseURL  string
 	username string
 	password string
+	vhost    string
 	client   *http.Client
 }
 
-func RabbitMQManagementPrometheusCollector(baseURL, username, password string, timeout time.Duration) (platformmetrics.Collector, error) {
+func RabbitMQManagementPrometheusCollector(baseURL, amqpURL string, timeout time.Duration) (platformmetrics.Collector, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	username = strings.TrimSpace(username)
-	password = strings.TrimSpace(password)
-	if baseURL == "" || username == "" || password == "" {
-		return platformmetrics.Collector{}, errors.New("RabbitMQ management metrics configuration is incomplete")
+	if baseURL == "" {
+		return platformmetrics.Collector{}, errors.New("RabbitMQ management URL is required")
 	}
-	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	parsedManagementURL, err := url.Parse(baseURL)
+	if err != nil || parsedManagementURL.Scheme == "" || parsedManagementURL.Host == "" {
 		return platformmetrics.Collector{}, fmt.Errorf("invalid RabbitMQ management URL %q", baseURL)
+	}
+
+	username, password, vhost, err := rabbitMQManagementTarget(amqpURL)
+	if err != nil {
+		return platformmetrics.Collector{}, err
 	}
 	if timeout <= 0 {
 		timeout = 2 * time.Second
@@ -79,9 +83,34 @@ func RabbitMQManagementPrometheusCollector(baseURL, username, password string, t
 		baseURL:  baseURL,
 		username: username,
 		password: password,
+		vhost:    vhost,
 		client:   &http.Client{Timeout: timeout},
 	}
 	return platformmetrics.Collector{Name: "rabbitmq_management", Collect: collector.collect}, nil
+}
+
+func rabbitMQManagementTarget(amqpURL string) (string, string, string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(amqpURL))
+	if err != nil || (parsed.Scheme != "amqp" && parsed.Scheme != "amqps") || parsed.Host == "" {
+		return "", "", "", errors.New("invalid RabbitMQ AMQP URL")
+	}
+	if parsed.User == nil || parsed.User.Username() == "" {
+		return "", "", "", errors.New("RabbitMQ AMQP URL must include a username")
+	}
+	password, ok := parsed.User.Password()
+	if !ok || password == "" {
+		return "", "", "", errors.New("RabbitMQ AMQP URL must include a password")
+	}
+
+	escapedVhost := strings.TrimPrefix(parsed.EscapedPath(), "/")
+	vhost := "/"
+	if escapedVhost != "" {
+		vhost, err = url.PathUnescape(escapedVhost)
+		if err != nil || vhost == "" {
+			return "", "", "", errors.New("RabbitMQ AMQP URL contains an invalid virtual host")
+		}
+	}
+	return parsed.User.Username(), password, vhost, nil
 }
 
 func (collector *rabbitMQManagementCollector) collect(ctx context.Context, registry *platformmetrics.Registry) error {
@@ -125,7 +154,7 @@ func (collector *rabbitMQManagementCollector) collect(ctx context.Context, regis
 }
 
 func (collector *rabbitMQManagementCollector) fetchQueue(ctx context.Context, queueName string) (rabbitMQQueueSnapshot, error) {
-	endpoint := collector.baseURL + "/api/queues/%2F/" + url.PathEscape(queueName)
+	endpoint := collector.baseURL + "/api/queues/" + url.PathEscape(collector.vhost) + "/" + url.PathEscape(queueName)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return rabbitMQQueueSnapshot{}, fmt.Errorf("create RabbitMQ management request: %w", err)
