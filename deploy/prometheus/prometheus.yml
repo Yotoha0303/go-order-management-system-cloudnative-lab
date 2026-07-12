@@ -4,6 +4,10 @@ global:
   external_labels:
     environment: compose-local
 
+rule_files:
+  - /etc/prometheus/rules/recording-rules.yml
+  - /etc/prometheus/rules/alert-rules.yml
+
 scrape_configs:
   - job_name: api-gateway
     static_configs:

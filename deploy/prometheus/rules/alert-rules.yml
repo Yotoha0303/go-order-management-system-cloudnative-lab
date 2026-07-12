@@ -1,0 +1,99 @@
+groups:
+  - name: go-order-availability
+    interval: 30s
+    rules:
+      - alert: GoOrderTargetDown
+        expr: up{job=~"api-gateway|identity-service|catalog-service|inventory-service|order-service|order-timeout-worker|order-reconciliation-worker"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Go Order target is unavailable"
+          description: "Prometheus cannot scrape {{ $labels.job }} at {{ $labels.instance }} for two minutes."
+
+      - alert: GoOrderWorkerDown
+        expr: worker:up:max == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: worker
+        annotations:
+          summary: "Go Order worker process is not running"
+          description: "All scraped instances for worker type {{ $labels.worker }} report worker_up=0."
+
+  - name: go-order-http
+    interval: 30s
+    rules:
+      - alert: GoOrderElevatedHTTP5xxRatio
+        expr: service:http_server_error_ratio:rate5m > 0.05 and service:http_requests:rate5m > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: http
+        annotations:
+          summary: "Go Order service has elevated HTTP 5xx ratio"
+          description: "Service {{ $labels.service }} has exceeded a 5% server-error ratio for five minutes."
+
+      - alert: GoOrderHighP95Latency
+        expr: service:http_server_request_duration_seconds:p95 > 1
+        for: 10m
+        labels:
+          severity: warning
+          category: latency
+        annotations:
+          summary: "Go Order service p95 latency is high"
+          description: "Service {{ $labels.service }} p95 request latency has exceeded one second for ten minutes."
+
+  - name: go-order-reliability
+    interval: 30s
+    rules:
+      - alert: GoOrderOutboxOverdue
+        expr: max(go_order_outbox_overdue) > 0
+        for: 3m
+        labels:
+          severity: warning
+          category: outbox
+        annotations:
+          summary: "Go Order Outbox contains overdue events"
+          description: "At least one timeout Outbox event has remained overdue for three minutes."
+
+      - alert: GoOrderOutboxActionableAgeHigh
+        expr: max(go_order_outbox_oldest_actionable_age_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+          category: outbox
+        annotations:
+          summary: "Go Order Outbox actionable age is high"
+          description: "The oldest actionable timeout Outbox event has exceeded five minutes."
+
+      - alert: GoOrderReconciliationBacklog
+        expr: max(go_order_reconciliation_required) > 0
+        for: 5m
+        labels:
+          severity: warning
+          category: reconciliation
+        annotations:
+          summary: "Go Order reconciliation backlog exists"
+          description: "At least one Order requires reconciliation for five minutes."
+
+      - alert: GoOrderSagaStuck
+        expr: max(go_order_saga_stuck_transient) > 0
+        for: 5m
+        labels:
+          severity: critical
+          category: saga
+        annotations:
+          summary: "Go Order Saga is stuck in a transient state"
+          description: "At least one Order has exceeded the configured transient-state threshold."
+
+      - alert: GoOrderMetricsCollectionFailing
+        expr: increase(go_order_metrics_collection_errors_total{collector="order_reliability"}[10m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          category: observability
+        annotations:
+          summary: "Go Order reliability metric collection is failing"
+          description: "The Order reliability collector has reported a database collection error during the last ten minutes."
