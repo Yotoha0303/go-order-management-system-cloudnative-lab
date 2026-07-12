@@ -29,6 +29,10 @@ services:
     environment:
       <<: *otel-environment
       METRICS_ADDR: :9091
+      RABBITMQ_MANAGEMENT_URL: http://rabbitmq:15672
+      RABBITMQ_USER: ${RABBITMQ_USER:-order_app}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-order_dev_password}
+      RABBITMQ_MANAGEMENT_METRICS_TIMEOUT: ${RABBITMQ_MANAGEMENT_METRICS_TIMEOUT:-2s}
     expose:
       - "9091"
 
