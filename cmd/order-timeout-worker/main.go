@@ -50,9 +50,23 @@ func main() {
 		logger.Error("invalid ORDER_TRANSIENT_STUCK_THRESHOLD", "error", err)
 		os.Exit(1)
 	}
+	managementTimeout, err := durationFromEnv("RABBITMQ_MANAGEMENT_METRICS_TIMEOUT", 2*time.Second)
+	if err != nil {
+		logger.Error("invalid RABBITMQ_MANAGEMENT_METRICS_TIMEOUT", "error", err)
+		os.Exit(1)
+	}
 	reliabilityReporter, err := ordersvc.NewReliabilityReporter(db, stuckThreshold)
 	if err != nil {
 		logger.Error("initialize reliability reporter", "error", err)
+		os.Exit(1)
+	}
+	rabbitMQCollector, err := ordersvc.RabbitMQManagementPrometheusCollector(
+		envOrDefault("RABBITMQ_MANAGEMENT_URL", "http://rabbitmq:15672"),
+		cfg.RabbitMQ.URL,
+		managementTimeout,
+	)
+	if err != nil {
+		logger.Error("initialize RabbitMQ management collector", "error", err)
 		os.Exit(1)
 	}
 
@@ -84,6 +98,7 @@ func main() {
 		"order-timeout-worker",
 		envOrDefault("METRICS_ADDR", ":9091"),
 		ordersvc.ReliabilityPrometheusCollector(reliabilityReporter),
+		rabbitMQCollector,
 	)
 
 	logger.Info(

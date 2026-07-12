@@ -30,9 +30,13 @@ scrape_configs:
       - targets: ["order-service:8086"]
 
   - job_name: order-timeout-worker
-    static_configs:
-      - targets: ["order-timeout-worker:9091"]
+    dns_sd_configs:
+      - names: ["order-timeout-worker"]
+        type: A
+        port: 9091
 
   - job_name: order-reconciliation-worker
-    static_configs:
-      - targets: ["order-reconciliation-worker:9092"]
+    dns_sd_configs:
+      - names: ["order-reconciliation-worker"]
+        type: A
+        port: 9092

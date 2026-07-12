@@ -1,0 +1,64 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "RabbitMQ Application Session",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max(go_order_rabbitmq_session_up)", "legendFormat": "session"}],
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0}
+    },
+    {
+      "id": 2,
+      "title": "RabbitMQ Management Collector",
+      "type": "stat",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max(go_order_rabbitmq_management_up)", "legendFormat": "management"}],
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0}
+    },
+    {
+      "id": 3,
+      "title": "Ready Queue Messages",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max by (queue_role) (go_order_rabbitmq_queue_messages{state=\"ready\"})", "legendFormat": "{{queue_role}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "id": 4,
+      "title": "RabbitMQ Queue Consumers",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max by (queue_role) (go_order_rabbitmq_queue_consumers)", "legendFormat": "{{queue_role}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5}
+    },
+    {
+      "id": 5,
+      "title": "Timeout Delivery Outcomes",
+      "type": "timeseries",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (outcome) (rate(go_order_rabbitmq_delivery_total[5m]))", "legendFormat": "{{outcome}}"}],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    },
+    {
+      "id": 6,
+      "title": "Terminally Failed Migration Jobs",
+      "type": "table",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "kube_job_failed{condition=\"true\",namespace=\"go-order-system\",job_name=~\".*-migrate\"} > 0", "format": "table", "instant": true}],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": ["go-order", "rabbitmq", "migration"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "Go Order Infrastructure Signals",
+  "uid": "go-order-infrastructure",
+  "version": 1
+}

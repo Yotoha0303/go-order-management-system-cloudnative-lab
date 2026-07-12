@@ -17,11 +17,21 @@ EXPECTED_JOBS = {
     "order-timeout-worker",
     "order-reconciliation-worker",
 }
+EXPECTED_MIN_TARGETS = {
+    "api-gateway": 1,
+    "identity-service": 1,
+    "catalog-service": 1,
+    "inventory-service": 1,
+    "order-service": 1,
+    "order-timeout-worker": 2,
+    "order-reconciliation-worker": 2,
+}
 EXPECTED_RULE_GROUPS = {
     "go-order-service-recording",
     "go-order-availability",
     "go-order-http",
     "go-order-reliability",
+    "go-order-infrastructure",
 }
 EXPECTED_ALERTS = {
     "GoOrderTargetDown",
@@ -33,6 +43,10 @@ EXPECTED_ALERTS = {
     "GoOrderReconciliationBacklog",
     "GoOrderSagaStuck",
     "GoOrderMetricsCollectionFailing",
+    "GoOrderRabbitMQSessionUnavailable",
+    "GoOrderRabbitMQManagementCollectorDown",
+    "GoOrderRabbitMQQueueBacklogHigh",
+    "GoOrderMigrationJobFailed",
 }
 
 
@@ -63,14 +77,23 @@ def wait_targets(timeout_seconds: int = 120) -> None:
     while time.monotonic() < deadline:
         payload = get_json("/api/v1/targets")
         active = payload.get("data", {}).get("activeTargets", [])
-        state = {}
+        state = {job: [] for job in EXPECTED_JOBS}
         for target in active:
             labels = target.get("labels", {})
             job = labels.get("job")
             if job in EXPECTED_JOBS:
-                state[job] = target.get("health")
+                state[job].append(
+                    {
+                        "instance": labels.get("instance"),
+                        "health": target.get("health"),
+                    }
+                )
         last_state = state
-        if set(state) == EXPECTED_JOBS and all(value == "up" for value in state.values()):
+        if all(
+            len(state[job]) >= EXPECTED_MIN_TARGETS[job]
+            and all(target["health"] == "up" for target in state[job])
+            for job in EXPECTED_JOBS
+        ):
             return
         time.sleep(2)
     raise RuntimeError(f"Prometheus targets did not become healthy: {last_state}")
@@ -93,21 +116,21 @@ def wait_rules(timeout_seconds: int = 120) -> None:
     raise RuntimeError(f"Prometheus rules did not become healthy: {last_state}")
 
 
-def query(metric: str) -> list:
-    encoded = urllib.parse.urlencode({"query": metric})
+def query(expression: str) -> list:
+    encoded = urllib.parse.urlencode({"query": expression})
     payload = get_json("/api/v1/query?" + encoded)
     if payload.get("status") != "success":
-        raise RuntimeError(f"query failed for {metric}: {payload}")
+        raise RuntimeError(f"query failed for {expression}: {payload}")
     return payload.get("data", {}).get("result", [])
 
 
-def wait_metric(metric: str, timeout_seconds: int = 120) -> None:
+def wait_metric(expression: str, timeout_seconds: int = 120) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        if query(metric):
+        if query(expression):
             return
         time.sleep(2)
-    raise RuntimeError(f"metric query returned no series: {metric}")
+    raise RuntimeError(f"metric query returned no series: {expression}")
 
 
 def main() -> int:
@@ -120,6 +143,11 @@ def main() -> int:
         "go_order_orders",
         "go_order_outbox_events",
         "go_order_worker_up",
+        "go_order_rabbitmq_session_up",
+        "go_order_rabbitmq_management_up",
+        "go_order_rabbitmq_queue_messages",
+        "go_order_rabbitmq_queue_consumers",
+        "go_order_rabbitmq_delivery_total",
         "service:http_requests:rate5m",
         "service:http_server_error_ratio:rate5m",
         "service:http_server_request_duration_seconds:p95",
@@ -127,7 +155,7 @@ def main() -> int:
         "worker:up:max",
     ):
         wait_metric(metric)
-    print("Prometheus targets, rules, alerts and bounded application metrics verified")
+    print("Prometheus targets, replica discovery, rules, alerts and bounded application/infrastructure metrics verified")
     return 0
 
 

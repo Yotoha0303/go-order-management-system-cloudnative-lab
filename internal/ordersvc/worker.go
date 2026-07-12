@@ -84,6 +84,7 @@ func NewWorker(cfg WorkerConfig, db *gorm.DB, logger *slog.Logger) (*Worker, err
 	if logger == nil {
 		logger = slog.Default()
 	}
+	setRabbitMQSessionUp(false)
 	return &Worker{
 		cfg:         cfg,
 		db:          db,
@@ -147,6 +148,8 @@ func (w *Worker) runSession(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("consume timeout queue: %w", err)
 	}
+	setRabbitMQSessionUp(true)
+	defer setRabbitMQSessionUp(false)
 
 	consumerClosed := consumerChannel.NotifyClose(make(chan *amqp.Error, 1))
 	publisherClosed := publisherChannel.NotifyClose(make(chan *amqp.Error, 1))
@@ -351,12 +354,20 @@ func (w *Worker) markOutboxPublished(ctx context.Context, eventID uint64) error 
 func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	ctx, span := platformtelemetry.Tracer().Start(ctx, "timeout_worker.consume")
 	defer span.End()
+	recordRabbitMQDelivery("received")
+
 	var payload struct {
 		OrderID int64 `json:"order_id"`
 	}
 	if err := json.Unmarshal(delivery.Body, &payload); err != nil || payload.OrderID <= 0 {
+		recordRabbitMQDelivery("processing_failure")
 		w.logger.ErrorContext(ctx, "invalid timeout message", "error", err)
-		_ = delivery.Reject(false)
+		if rejectErr := delivery.Reject(false); rejectErr != nil {
+			recordRabbitMQDelivery("settlement_error")
+			w.logger.ErrorContext(ctx, "reject invalid timeout message", "error", rejectErr)
+		} else {
+			recordRabbitMQDelivery("rejected")
+		}
 		return
 	}
 
@@ -364,6 +375,7 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 	err := w.orderClient.TimeoutCancel(callCtx, payload.OrderID)
 	cancel()
 	if err != nil {
+		recordRabbitMQDelivery("processing_failure")
 		w.logger.ErrorContext(ctx, "cancel timed out order", "order_id", payload.OrderID, "error", err)
 		_ = w.db.WithContext(context.Background()).Model(&TimeoutOutbox{}).
 			Where("order_id = ?", payload.OrderID).
@@ -372,7 +384,12 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 				"last_error": truncate(err.Error(), 500),
 			}).Error
 		time.Sleep(w.cfg.RetryDelay)
-		_ = delivery.Nack(false, true)
+		if nackErr := delivery.Nack(false, true); nackErr != nil {
+			recordRabbitMQDelivery("settlement_error")
+			w.logger.ErrorContext(ctx, "requeue failed timeout message", "error", nackErr)
+		} else {
+			recordRabbitMQDelivery("requeued")
+		}
 		return
 	}
 
@@ -384,11 +401,22 @@ func (w *Worker) handleDelivery(ctx context.Context, delivery amqp.Delivery) {
 			"lease_owner": "",
 			"lease_until": nil,
 		}).Error; err != nil {
+		recordRabbitMQDelivery("processing_failure")
 		w.logger.ErrorContext(ctx, "mark timeout event completed", "order_id", payload.OrderID, "error", err)
-		_ = delivery.Nack(false, true)
+		if nackErr := delivery.Nack(false, true); nackErr != nil {
+			recordRabbitMQDelivery("settlement_error")
+			w.logger.ErrorContext(ctx, "requeue timeout message after persistence failure", "error", nackErr)
+		} else {
+			recordRabbitMQDelivery("requeued")
+		}
 		return
 	}
-	_ = delivery.Ack(false)
+	if ackErr := delivery.Ack(false); ackErr != nil {
+		recordRabbitMQDelivery("settlement_error")
+		w.logger.ErrorContext(ctx, "acknowledge timeout message", "error", ackErr)
+		return
+	}
+	recordRabbitMQDelivery("acknowledged")
 }
 
 func (w *Worker) markOutboxFailure(eventID uint64, cause error) error {

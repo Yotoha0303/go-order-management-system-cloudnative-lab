@@ -97,3 +97,46 @@ groups:
         annotations:
           summary: "Go Order reliability metric collection is failing"
           description: "The Order reliability collector has reported a database collection error during the last ten minutes."
+
+  - name: go-order-infrastructure
+    interval: 30s
+    rules:
+      - alert: GoOrderRabbitMQSessionUnavailable
+        expr: max by (role) (go_order_rabbitmq_session_up) == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: rabbitmq
+        annotations:
+          summary: "Go Order RabbitMQ application session is unavailable"
+          description: "All observed {{ $labels.role }} RabbitMQ sessions have remained disconnected for two minutes."
+
+      - alert: GoOrderRabbitMQManagementCollectorDown
+        expr: max(go_order_rabbitmq_management_up) == 0
+        for: 2m
+        labels:
+          severity: warning
+          category: rabbitmq
+        annotations:
+          summary: "Go Order RabbitMQ management collection is failing"
+          description: "The bounded RabbitMQ management collector has failed for two minutes."
+
+      - alert: GoOrderRabbitMQQueueBacklogHigh
+        expr: max by (queue_role) (go_order_rabbitmq_queue_messages{queue_role="cancel",state="ready"}) > 100
+        for: 5m
+        labels:
+          severity: warning
+          category: rabbitmq
+        annotations:
+          summary: "Go Order RabbitMQ cancellation backlog is high"
+          description: "The cancellation queue has more than 100 ready messages for five minutes."
+
+      - alert: GoOrderMigrationJobFailed
+        expr: max by (namespace, job_name) (kube_job_failed{condition="true",namespace="go-order-system",job_name=~".*-migrate"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: migration
+        annotations:
+          summary: "Go Order database migration Job failed"
+          description: "Migration Job {{ $labels.namespace }}/{{ $labels.job_name }} reports a terminal Failed condition."
