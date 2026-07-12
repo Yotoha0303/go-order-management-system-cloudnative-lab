@@ -6,7 +6,7 @@ groups:
         expr: sum by (service) (rate(go_order_http_server_requests_total[5m]))
 
       - record: service:http_server_errors:rate5m
-        expr: sum by (service) (rate(go_order_http_server_requests_total{status_class="5xx"}[5m]))
+        expr: sum by (service) (rate(go_order_http_server_requests_total{status_class="5xx"}[5m])) or on (service) (0 * service:http_requests:rate5m)
 
       - record: service:http_server_error_ratio:rate5m
         expr: service:http_server_errors:rate5m / clamp_min(service:http_requests:rate5m, 0.001)
