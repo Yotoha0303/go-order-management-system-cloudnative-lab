@@ -28,15 +28,6 @@ func Setup(ctx context.Context, service string) (ShutdownFunc, error) {
 	}
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
-	if !exportConfigured() {
-		return func(context.Context) error { return nil }, nil
-	}
-
-	exporter, err := otlptracehttp.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
-	}
-
 	ratio, err := sampleRatioFromEnvironment()
 	if err != nil {
 		return nil, err
@@ -45,20 +36,33 @@ func Setup(ctx context.Context, service string) (ShutdownFunc, error) {
 	if deployment == "" {
 		deployment = "unknown"
 	}
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter,
-			sdktrace.WithBatchTimeout(time.Second),
-			sdktrace.WithExportTimeout(5*time.Second),
-		),
+
+	options := []sdktrace.TracerProviderOption{
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))),
 		sdktrace.WithResource(resource.NewWithAttributes(
 			"",
 			attribute.String("service.name", service),
 			attribute.String("deployment.environment.name", deployment),
 		)),
-	)
+	}
+
+	var setupErr error
+	if exportConfigured() {
+		exporter, exporterErr := otlptracehttp.New(ctx)
+		if exporterErr != nil {
+			setupErr = fmt.Errorf("create OTLP trace exporter: %w", exporterErr)
+		} else {
+			options = append(options, sdktrace.WithBatcher(
+				exporter,
+				sdktrace.WithBatchTimeout(time.Second),
+				sdktrace.WithExportTimeout(5*time.Second),
+			))
+		}
+	}
+
+	provider := sdktrace.NewTracerProvider(options...)
 	otel.SetTracerProvider(provider)
-	return provider.Shutdown, nil
+	return provider.Shutdown, setupErr
 }
 
 func Tracer() trace.Tracer {
