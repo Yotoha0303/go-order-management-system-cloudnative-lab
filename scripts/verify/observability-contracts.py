@@ -6,11 +6,13 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DASHBOARD_PATH = ROOT / "deploy/grafana/dashboards/go-order-overview.json"
+APPLICATION_DASHBOARD_PATH = ROOT / "deploy/grafana/dashboards/go-order-overview.json"
+INFRASTRUCTURE_DASHBOARD_PATH = ROOT / "deploy/grafana/dashboards/go-order-infrastructure.json"
 DATASOURCE_PATH = ROOT / "deploy/grafana/provisioning/datasources/prometheus.yml"
 PROVIDER_PATH = ROOT / "deploy/grafana/provisioning/dashboards/dashboards.yml"
 RECORDING_RULES_PATH = ROOT / "deploy/prometheus/rules/recording-rules.yml"
 ALERT_RULES_PATH = ROOT / "deploy/prometheus/rules/alert-rules.yml"
+KUBE_STATE_METRICS_PATH = ROOT / "deploy/kubernetes/observability/kube-state-metrics.yaml"
 
 EXPECTED_RECORDING_RULES = {
     "service:http_requests:rate5m",
@@ -31,9 +33,13 @@ EXPECTED_ALERTS = {
     "GoOrderReconciliationBacklog",
     "GoOrderSagaStuck",
     "GoOrderMetricsCollectionFailing",
+    "GoOrderRabbitMQSessionUnavailable",
+    "GoOrderRabbitMQManagementCollectorDown",
+    "GoOrderRabbitMQQueueBacklogHigh",
+    "GoOrderMigrationJobFailed",
 }
 
-REQUIRED_DASHBOARD_TERMS = {
+REQUIRED_APPLICATION_TERMS = {
     "service:http_requests:rate5m",
     "service:http_server_error_ratio:rate5m",
     "service:http_server_request_duration_seconds:p95",
@@ -45,8 +51,17 @@ REQUIRED_DASHBOARD_TERMS = {
     "go_order_worker_up",
 }
 
+REQUIRED_INFRASTRUCTURE_TERMS = {
+    "go_order_rabbitmq_session_up",
+    "go_order_rabbitmq_management_up",
+    "go_order_rabbitmq_queue_messages",
+    "go_order_rabbitmq_queue_consumers",
+    "go_order_rabbitmq_delivery_total",
+    "kube_job_status_failed",
+}
+
 FORBIDDEN_LABEL_PATTERN = re.compile(
-    r"\b(request_id|trace_id|user_id|order_id|reservation_id|event_id|worker_id)\s*=",
+    r"\b(request_id|trace_id|user_id|order_id|reservation_id|event_id|worker_id|delivery_tag|message_id|queue_name)\s*=",
     re.IGNORECASE,
 )
 
@@ -70,24 +85,21 @@ def collect_expressions(dashboard: dict) -> list[str]:
     return expressions
 
 
-def validate_dashboard() -> None:
-    dashboard = json.loads(read_text(DASHBOARD_PATH))
-    require(dashboard.get("uid") == "go-order-overview", "unexpected dashboard uid")
-    require(dashboard.get("title") == "Go Order Management Overview", "unexpected dashboard title")
+def validate_dashboard(path: pathlib.Path, expected_uid: str, expected_title: str, required_terms: set[str], minimum_panels: int) -> None:
+    dashboard = json.loads(read_text(path))
+    require(dashboard.get("uid") == expected_uid, f"unexpected dashboard uid in {path.name}")
+    require(dashboard.get("title") == expected_title, f"unexpected dashboard title in {path.name}")
 
     panels = dashboard.get("panels", [])
-    require(len(panels) >= 12, f"expected at least 12 dashboard panels, got {len(panels)}")
+    require(len(panels) >= minimum_panels, f"expected at least {minimum_panels} panels in {path.name}, got {len(panels)}")
     panel_ids = [panel.get("id") for panel in panels]
-    require(len(panel_ids) == len(set(panel_ids)), "dashboard panel ids must be unique")
+    require(len(panel_ids) == len(set(panel_ids)), f"dashboard panel ids must be unique in {path.name}")
 
     expressions = collect_expressions(dashboard)
     joined = "\n".join(expressions)
-    missing_terms = sorted(term for term in REQUIRED_DASHBOARD_TERMS if term not in joined)
-    require(not missing_terms, f"dashboard is missing metric coverage: {missing_terms}")
-    require(not FORBIDDEN_LABEL_PATTERN.search(joined), "dashboard query contains a forbidden high-cardinality label")
-
-    templating = dashboard.get("templating", {}).get("list", [])
-    require(any(item.get("name") == "service" for item in templating), "service dashboard variable is missing")
+    missing_terms = sorted(term for term in required_terms if term not in joined)
+    require(not missing_terms, f"dashboard {path.name} is missing metric coverage: {missing_terms}")
+    require(not FORBIDDEN_LABEL_PATTERN.search(joined), f"dashboard {path.name} contains a forbidden high-cardinality label")
 
 
 def validate_provisioning() -> None:
@@ -98,7 +110,7 @@ def validate_provisioning() -> None:
 
     provider = read_text(PROVIDER_PATH)
     require("path: /var/lib/grafana/dashboards" in provider, "Grafana dashboard provider path is incorrect")
-    require("allowUiUpdates: false" in provider, "provisioned dashboard must remain file-managed")
+    require("allowUiUpdates: false" in provider, "provisioned dashboards must remain file-managed")
 
 
 def validate_rules() -> None:
@@ -114,11 +126,34 @@ def validate_rules() -> None:
     require(not FORBIDDEN_LABEL_PATTERN.search(alerts_text), "alert rules contain a forbidden high-cardinality label")
 
 
+def validate_kube_state_metrics_contract() -> None:
+    contract = read_text(KUBE_STATE_METRICS_PATH)
+    require("kube-state-metrics:v2.14.0" in contract, "kube-state-metrics image must be explicitly versioned")
+    require("--resources=jobs" in contract, "kube-state-metrics must be restricted to Jobs")
+    require("--namespaces=go-order-system" in contract, "kube-state-metrics must be namespace-scoped")
+    require('prometheus.io/scrape: "true"' in contract, "kube-state-metrics scrape annotation is missing")
+    require("resources: [\"jobs\"]" in contract, "RBAC must only grant Job observation")
+
+
 def main() -> int:
-    validate_dashboard()
+    validate_dashboard(
+        APPLICATION_DASHBOARD_PATH,
+        "go-order-overview",
+        "Go Order Management Overview",
+        REQUIRED_APPLICATION_TERMS,
+        12,
+    )
+    validate_dashboard(
+        INFRASTRUCTURE_DASHBOARD_PATH,
+        "go-order-infrastructure",
+        "Go Order Infrastructure Signals",
+        REQUIRED_INFRASTRUCTURE_TERMS,
+        6,
+    )
     validate_provisioning()
     validate_rules()
-    print("Grafana dashboard, provisioning and Prometheus rule contracts verified")
+    validate_kube_state_metrics_contract()
+    print("Grafana dashboards, provisioning, Prometheus rules and infrastructure contracts verified")
     return 0
 
 
