@@ -3,13 +3,21 @@ name: OTel Bootstrap
 on:
   push:
     branches: ["phase/07-opentelemetry-tracing"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: write
 
+concurrency:
+  group: otel-bootstrap-phase-07
+  cancel-in-progress: true
+
 jobs:
   apply:
-    if: github.event.head_commit.message == 'feat: stage OpenTelemetry tracing implementation'
+    if: >-
+      (github.event_name == 'push' && github.event.head_commit.message == 'feat: stage OpenTelemetry tracing implementation') ||
+      github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout implementation branch
