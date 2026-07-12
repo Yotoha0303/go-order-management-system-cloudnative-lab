@@ -22,6 +22,7 @@ EXPECTED_RULE_GROUPS = {
     "go-order-availability",
     "go-order-http",
     "go-order-reliability",
+    "go-order-infrastructure",
 }
 EXPECTED_ALERTS = {
     "GoOrderTargetDown",
@@ -33,6 +34,10 @@ EXPECTED_ALERTS = {
     "GoOrderReconciliationBacklog",
     "GoOrderSagaStuck",
     "GoOrderMetricsCollectionFailing",
+    "GoOrderRabbitMQSessionUnavailable",
+    "GoOrderRabbitMQManagementCollectorDown",
+    "GoOrderRabbitMQQueueBacklogHigh",
+    "GoOrderMigrationJobFailed",
 }
 
 
@@ -93,21 +98,21 @@ def wait_rules(timeout_seconds: int = 120) -> None:
     raise RuntimeError(f"Prometheus rules did not become healthy: {last_state}")
 
 
-def query(metric: str) -> list:
-    encoded = urllib.parse.urlencode({"query": metric})
+def query(expression: str) -> list:
+    encoded = urllib.parse.urlencode({"query": expression})
     payload = get_json("/api/v1/query?" + encoded)
     if payload.get("status") != "success":
-        raise RuntimeError(f"query failed for {metric}: {payload}")
+        raise RuntimeError(f"query failed for {expression}: {payload}")
     return payload.get("data", {}).get("result", [])
 
 
-def wait_metric(metric: str, timeout_seconds: int = 120) -> None:
+def wait_metric(expression: str, timeout_seconds: int = 120) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        if query(metric):
+        if query(expression):
             return
         time.sleep(2)
-    raise RuntimeError(f"metric query returned no series: {metric}")
+    raise RuntimeError(f"metric query returned no series: {expression}")
 
 
 def main() -> int:
@@ -120,6 +125,11 @@ def main() -> int:
         "go_order_orders",
         "go_order_outbox_events",
         "go_order_worker_up",
+        "go_order_rabbitmq_session_up",
+        "go_order_rabbitmq_management_up",
+        "go_order_rabbitmq_queue_messages",
+        "go_order_rabbitmq_queue_consumers",
+        "go_order_rabbitmq_delivery_total",
         "service:http_requests:rate5m",
         "service:http_server_error_ratio:rate5m",
         "service:http_server_request_duration_seconds:p95",
@@ -127,7 +137,7 @@ def main() -> int:
         "worker:up:max",
     ):
         wait_metric(metric)
-    print("Prometheus targets, rules, alerts and bounded application metrics verified")
+    print("Prometheus targets, rules, alerts and bounded application/infrastructure metrics verified")
     return 0
 
 
