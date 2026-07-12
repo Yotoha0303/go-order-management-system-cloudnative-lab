@@ -145,7 +145,7 @@ func (body *spanBody) Close() error {
 }
 
 func (body *spanBody) finish() {
-	body.once.Do(body.span.End)
+	body.once.Do(func() { body.span.End() })
 }
 
 func SpanIDs(ctx context.Context) (traceID string, spanID string, ok bool) {
