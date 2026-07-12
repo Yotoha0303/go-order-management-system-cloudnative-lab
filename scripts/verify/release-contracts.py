@@ -48,6 +48,7 @@ def validate_publish_workflow() -> None:
     require("permissions:\n  contents: read" in workflow, "top-level workflow permissions must remain read-only")
     require(workflow.count("packages: write") == 1, "packages: write must exist only on the publish job")
     require("packages: read" in workflow, "preflight and manifest verification need explicit package read access")
+    require(workflow.count("issues: write") == 1, "issues: write must exist only on the final evidence job")
     require("github.ref == 'refs/heads/main'" in workflow, "manual publishing must be restricted to main")
     require("cancel-in-progress: false" in workflow, "release publishing must not cancel an active run")
 
@@ -58,6 +59,7 @@ def validate_publish_workflow() -> None:
         "docker/build-push-action@v6",
         "actions/upload-artifact@v4",
         "actions/download-artifact@v4",
+        "actions/github-script@v7",
     )
     for action in required_actions:
         require(action in workflow, f"publishing workflow is missing pinned action major: {action}")
@@ -74,8 +76,19 @@ def validate_publish_workflow() -> None:
         "merge-multiple: true",
         "release-manifest.json",
         "release-references.txt",
+        "release-tagged-references.txt",
         "scripts/release/manifest.py assemble",
         "scripts/release/manifest.py verify",
+        "scripts/release/manifest.py tagged",
+        "--format '{{json .Manifest}}'",
+        "jq -er '.digest",
+        "All seven commit tags exist and resolve to the exact published digests.",
+        "Record GitHub runtime acceptance",
+        'ACCEPTANCE_ISSUE_NUMBER: "43"',
+        "ghcr-runtime-evidence:${context.sha}",
+        "release-manifest-${context.sha}",
+        "references.length !== 7",
+        "github.rest.issues.createComment",
     )
     for contract in required_contracts:
         require(contract in workflow, f"publishing workflow is missing contract: {contract}")
@@ -83,6 +96,8 @@ def validate_publish_workflow() -> None:
     require(":latest" not in workflow, "mutable latest tag is forbidden")
     require("secrets.GITHUB_TOKEN" in workflow, "GHCR login must use the scoped GitHub token")
     require("password:" in workflow and "username:" in workflow, "GHCR login configuration is incomplete")
+    require("needs: manifest" in workflow, "runtime evidence must only run after manifest verification")
+    require("issue.data.state !== 'open'" in workflow, "runtime evidence must not comment on a closed acceptance issue")
 
     for service in EXPECTED_SERVICES:
         occurrences = len(re.findall(rf"^\s*-?\s*{re.escape(service)}\s*$", workflow, re.MULTILINE))
@@ -92,9 +107,10 @@ def validate_publish_workflow() -> None:
 def validate_contract_workflow() -> None:
     workflow = read_text(CONTRACT_WORKFLOW)
     require("pull_request:" in workflow, "release contracts must run for pull requests")
-    require("branches: [\"main\"]" in workflow, "release contracts must target main")
+    require('branches: ["main"]' in workflow, "release contracts must target main")
     require("permissions:\n  contents: read" in workflow, "release contract workflow must remain read-only")
     require("packages: write" not in workflow, "release contract workflow must never receive package write access")
+    require("issues: write" not in workflow, "release contract workflow must never receive issue write access")
     require("python3 -m unittest" in workflow, "release manifest unit tests are not wired into CI")
     require("scripts/verify/release-contracts.py" in workflow, "static release contract check is not wired into CI")
 
@@ -105,7 +121,7 @@ def validate_dockerfile() -> None:
     require('"./cmd/${SERVICE}"' in dockerfile, "shared service Dockerfile must build the selected cmd target")
     require("CGO_ENABLED=0 GOOS=linux" in dockerfile, "release binary must remain a static Linux build")
     require("USER app" in dockerfile, "release image must run as the non-root app user")
-    require("CMD [\"./service\"]" in dockerfile, "release image entrypoint contract drifted")
+    require('CMD ["./service"]' in dockerfile, "release image entrypoint contract drifted")
 
 
 def validate_release_files() -> None:
@@ -117,7 +133,9 @@ def validate_release_files() -> None:
     require("sha256:" in manifest_tool, "manifest tool must validate OCI sha256 digests")
     require("sha-{commit_sha}" in manifest_tool, "manifest tool must bind tags to the source commit")
     require("manifest image order or service set drifted" in manifest_tool, "manifest order must be deterministic")
+    require("def tagged_references(" in manifest_tool, "manifest tool must emit validated immutable tag references")
     require("test_assemble_and_verify_exact_release" in manifest_test, "happy-path manifest test is missing")
+    require("test_tagged_references_match_commit_tags" in manifest_test, "immutable-tag reference test is missing")
     require("test_missing_service_is_rejected" in manifest_test, "missing-image manifest test is missing")
     require("test_duplicate_service_is_rejected" in manifest_test, "duplicate-image manifest test is missing")
     require("test_invalid_digest_is_rejected" in manifest_test, "invalid-digest manifest test is missing")
@@ -125,6 +143,8 @@ def validate_release_files() -> None:
     require("部分发布" in documentation, "release documentation must disclose partial-publication recovery")
     require("不执行 Kubernetes 部署" in documentation, "release documentation must preserve the phase boundary")
     require("受保护的 `main` 路径触发" in documentation, "release documentation must explain protected main publishing")
+    require("Issue #43" in documentation, "release documentation must explain GitHub-only runtime evidence")
+    require("实际 OCI Manifest digest" in documentation, "release documentation must explain exact tag-to-digest verification")
 
 
 def main() -> int:
@@ -132,7 +152,7 @@ def main() -> int:
     validate_contract_workflow()
     validate_dockerfile()
     validate_release_files()
-    print("Immutable GHCR publishing and release manifest contracts verified")
+    print("Immutable GHCR publishing, runtime evidence and release manifest contracts verified")
     return 0
 
 

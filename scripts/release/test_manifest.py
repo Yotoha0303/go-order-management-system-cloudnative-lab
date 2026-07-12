@@ -40,25 +40,25 @@ class ReleaseManifestTest(unittest.TestCase):
         for service in manifest.EXPECTED_SERVICES:
             self.create_fragment(directory, service)
 
+    def assemble_exact_release(self, root: pathlib.Path) -> dict:
+        fragments = root / "fragments"
+        fragments.mkdir()
+        self.create_all_fragments(fragments)
+        output = root / "release-manifest.json"
+        manifest.assemble_manifest(
+            argparse.Namespace(
+                input_dir=fragments,
+                output=output,
+                repository=REPOSITORY,
+                commit=COMMIT,
+                created_at=CREATED_AT,
+            )
+        )
+        return json.loads(output.read_text(encoding="utf-8"))
+
     def test_assemble_and_verify_exact_release(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = pathlib.Path(temp)
-            fragments = root / "fragments"
-            fragments.mkdir()
-            self.create_all_fragments(fragments)
-            output = root / "release-manifest.json"
-
-            manifest.assemble_manifest(
-                argparse.Namespace(
-                    input_dir=fragments,
-                    output=output,
-                    repository=REPOSITORY,
-                    commit=COMMIT,
-                    created_at=CREATED_AT,
-                )
-            )
-
-            document = json.loads(output.read_text(encoding="utf-8"))
+            document = self.assemble_exact_release(pathlib.Path(temp))
             references = manifest.validate_manifest(document, REPOSITORY, COMMIT)
             self.assertEqual(document["schema_version"], 1)
             self.assertEqual(
@@ -67,6 +67,19 @@ class ReleaseManifestTest(unittest.TestCase):
             )
             self.assertEqual(len(references), 7)
             self.assertTrue(all("@sha256:" in reference for reference in references))
+
+    def test_tagged_references_match_commit_tags(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            document = self.assemble_exact_release(pathlib.Path(temp))
+            references = manifest.tagged_references(document, REPOSITORY, COMMIT)
+            self.assertEqual(len(references), 7)
+            self.assertEqual(
+                references,
+                [
+                    f"ghcr.io/yotoha0303/go-order-management-system-cloudnative-lab-{service}:sha-{COMMIT}"
+                    for service in manifest.EXPECTED_SERVICES
+                ],
+            )
 
     def test_missing_service_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

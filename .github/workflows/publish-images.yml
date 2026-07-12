@@ -217,6 +217,35 @@ jobs:
             docker buildx imagetools inspect "${reference}"
           done < release-references.txt
 
+      - name: Verify immutable tags resolve to manifest digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v jq >/dev/null
+          python3 scripts/release/manifest.py tagged \
+            --manifest release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${GITHUB_SHA}" \
+            > release-tagged-references.txt
+
+          paste release-tagged-references.txt release-references.txt |
+            while IFS=$'\t' read -r tagged_reference digest_reference; do
+              expected_digest="${digest_reference##*@}"
+              actual_digest="$(
+                docker buildx imagetools inspect "${tagged_reference}" --format '{{json .Manifest}}' |
+                  jq -er '.digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))'
+              )"
+              if [[ "${actual_digest}" != "${expected_digest}" ]]; then
+                echo "immutable tag digest mismatch: ${tagged_reference}" >&2
+                echo "expected ${expected_digest}, got ${actual_digest}" >&2
+                exit 1
+              fi
+            done
+
+          test "$(wc -l < release-tagged-references.txt | tr -d ' ')" -eq 7
+          echo "All seven commit tags exist and resolve to the exact published digests."
+          echo "The preflight guard will reject a second publication attempt for this source commit."
+
       - name: Publish manifest summary
         shell: bash
         run: |
@@ -235,5 +264,91 @@ jobs:
           path: |
             release-manifest.json
             release-references.txt
+            release-tagged-references.txt
           if-no-files-found: error
           retention-days: 90
+
+  evidence:
+    name: Record GitHub runtime acceptance
+    needs: manifest
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Download verified release manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: release-manifest-${{ github.sha }}
+          path: release-evidence
+
+      - name: Comment verified evidence on Phase 8.1 issue
+        uses: actions/github-script@v7
+        env:
+          ACCEPTANCE_ISSUE_NUMBER: "43"
+        with:
+          script: |
+            const fs = require('fs');
+            const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+            if (issue.data.state !== 'open') {
+              core.info(`Issue #${issueNumber} is closed; skipping Phase 8.1 evidence comment.`);
+              return;
+            }
+
+            const manifest = JSON.parse(fs.readFileSync('release-evidence/release-manifest.json', 'utf8'));
+            const references = fs.readFileSync('release-evidence/release-references.txt', 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean);
+            if (manifest.commit_sha !== context.sha || references.length !== 7) {
+              core.setFailed('Verified release evidence does not match the workflow source commit or seven-image contract.');
+              return;
+            }
+
+            const marker = `<!-- ghcr-runtime-evidence:${context.sha} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const artifactName = `release-manifest-${context.sha}`;
+            const body = [
+              marker,
+              `Phase 8.1 GHCR runtime publication succeeded for commit \`${context.sha}\`.`,
+              '',
+              `- GitHub Actions run: ${runUrl}`,
+              `- Verified artifact: \`${artifactName}\``,
+              '- Seven immutable commit tags exist and resolve to the exact OCI digests below.',
+              '- A second publication attempt for this source commit is rejected by the preflight tag guard before any overwrite.',
+              '',
+              '```text',
+              ...references,
+              '```',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing Phase 8.1 evidence comment ${existing.id}.`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+              core.info(`Created Phase 8.1 evidence comment on issue #${issueNumber}.`);
+            }

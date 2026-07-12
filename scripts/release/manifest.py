@@ -162,11 +162,37 @@ def validate_manifest(
     return references
 
 
+def tagged_references(
+    manifest: dict[str, Any], expected_repository: str | None = None, expected_commit: str | None = None
+) -> list[str]:
+    validate_manifest(manifest, expected_repository, expected_commit)
+    commit_sha = str(manifest["commit_sha"])
+    references: list[str] = []
+    for raw_fragment in manifest["images"]:
+        fragment = validate_fragment(raw_fragment, commit_sha)
+        references.append(f'{fragment["image"]}:{fragment["tag"]}')
+    require(len(references) == len(set(references)), "manifest contains duplicate immutable tagged references")
+    return references
+
+
 def verify_manifest(args: argparse.Namespace) -> None:
     manifest = read_json(args.manifest)
     references = validate_manifest(manifest, args.repository, args.commit)
     for reference in references:
         print(reference)
+
+
+def print_tagged_references(args: argparse.Namespace) -> None:
+    manifest = read_json(args.manifest)
+    references = tagged_references(manifest, args.repository, args.commit)
+    for reference in references:
+        print(reference)
+
+
+def add_manifest_identity_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--manifest", type=pathlib.Path, required=True)
+    parser.add_argument("--repository", required=True)
+    parser.add_argument("--commit", required=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -190,11 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
     assemble.add_argument("--created-at", required=True)
     assemble.set_defaults(handler=assemble_manifest)
 
-    verify = subparsers.add_parser("verify", help="validate a release manifest and print immutable references")
-    verify.add_argument("--manifest", type=pathlib.Path, required=True)
-    verify.add_argument("--repository", required=True)
-    verify.add_argument("--commit", required=True)
+    verify = subparsers.add_parser("verify", help="validate a release manifest and print immutable digest references")
+    add_manifest_identity_arguments(verify)
     verify.set_defaults(handler=verify_manifest)
+
+    tagged = subparsers.add_parser("tagged", help="validate a release manifest and print immutable commit-tag references")
+    add_manifest_identity_arguments(tagged)
+    tagged.set_defaults(handler=print_tagged_references)
     return parser
 
 
