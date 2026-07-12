@@ -80,8 +80,8 @@ def validate_publish_workflow() -> None:
         "scripts/release/manifest.py assemble",
         "scripts/release/manifest.py verify",
         "scripts/release/manifest.py tagged",
-        "imagetools inspect --raw",
-        "sha256sum",
+        "--format '{{json .Manifest}}'",
+        "jq -er '.digest",
         "All seven commit tags exist and resolve to the exact published digests.",
         "Record GitHub runtime acceptance",
         'ACCEPTANCE_ISSUE_NUMBER: "43"',
@@ -144,7 +144,7 @@ def validate_release_files() -> None:
     require("不执行 Kubernetes 部署" in documentation, "release documentation must preserve the phase boundary")
     require("受保护的 `main` 路径触发" in documentation, "release documentation must explain protected main publishing")
     require("Issue #43" in documentation, "release documentation must explain GitHub-only runtime evidence")
-    require("实际 OCI Manifest 哈希" in documentation, "release documentation must explain exact tag-to-digest verification")
+    require("实际 OCI Manifest digest" in documentation, "release documentation must explain exact tag-to-digest verification")
 
 
 def main() -> int:
