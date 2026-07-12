@@ -35,10 +35,22 @@ jobs:
           git apply .github/otel-domain.patch
           git apply .github/otel-scripts.patch
       - name: Format, resolve modules and test
+        shell: bash
         run: |
-          gofmt -w cmd internal
-          go mod tidy
-          go test ./...
+          set -o pipefail
+          mkdir -p diagnostics
+          {
+            gofmt -w cmd internal
+            go mod tidy
+            go test ./...
+          } 2>&1 | tee diagnostics/otel-bootstrap.log
+      - name: Upload bootstrap diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: otel-bootstrap-diagnostics
+          path: diagnostics/otel-bootstrap.log
+          retention-days: 1
       - name: Commit dependency lock and remove bootstrap
         run: |
           rm -f .github/workflows/otel-bootstrap.yml .github/otel-domain.patch .github/otel-scripts.patch
