@@ -1,0 +1,44 @@
+services:
+  order-timeout-worker:
+    environment:
+      METRICS_ADDR: :9091
+    expose:
+      - "9091"
+
+  order-reconciliation-worker:
+    environment:
+      METRICS_ADDR: :9092
+    expose:
+      - "9092"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: go-order-management-system-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      order-service:
+        condition: service_healthy
+      order-timeout-worker:
+        condition: service_started
+      order-reconciliation-worker:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
