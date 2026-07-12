@@ -43,10 +43,10 @@ func TestRabbitMQManagementCollectorExportsBoundedQueueRoles(t *testing.T) {
 	}
 	output := string(registry.Gather())
 	for _, expected := range []string{
-		`go_order_rabbitmq_management_up 1`,
-		`go_order_rabbitmq_queue_messages{queue_role="delay",state="total"} 3`,
-		`go_order_rabbitmq_queue_messages{queue_role="cancel",state="unacknowledged"} 1`,
-		`go_order_rabbitmq_queue_consumers{queue_role="cancel"} 2`,
+		"go_order_rabbitmq_management_up 1",
+		"go_order_rabbitmq_queue_messages{queue_role=\"delay\",state=\"total\"} 3",
+		"go_order_rabbitmq_queue_messages{queue_role=\"cancel\",state=\"unacknowledged\"} 1",
+		"go_order_rabbitmq_queue_consumers{queue_role=\"cancel\"} 2",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("missing metric %q in:\n%s", expected, output)
