@@ -98,6 +98,19 @@ func main() {
 		return
 	}
 
+	reliabilityReporter, err := ordersvc.NewReliabilityReporter(db, 5*time.Minute)
+	if err != nil {
+		logger.Error("initialize reliability reporter", "error", err)
+		os.Exit(1)
+	}
+	servicehost.StartMetricsHTTP(
+		ctx,
+		logger,
+		"order-reconciliation-worker",
+		envOrDefault("METRICS_ADDR", ":9092"),
+		ordersvc.ReliabilityPrometheusCollector(reliabilityReporter),
+	)
+
 	if err := worker.Run(ctx); err != nil {
 		logger.Error("order reconciliation worker stopped", "error", err)
 		os.Exit(1)
@@ -145,4 +158,11 @@ func boolFromEnv(key string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
 	return parsed, nil
+}
+
+func envOrDefault(key, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	return fallback
 }
