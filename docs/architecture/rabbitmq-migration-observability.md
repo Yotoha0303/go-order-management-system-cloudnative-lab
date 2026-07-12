@@ -57,10 +57,11 @@ The Timeout Worker metrics listener includes a scrape-time Collector using:
 
 ```text
 RABBITMQ_MANAGEMENT_URL
-RABBITMQ_USER
-RABBITMQ_PASSWORD
+RABBITMQ_URL
 RABBITMQ_MANAGEMENT_METRICS_TIMEOUT
 ```
+
+`RABBITMQ_URL` is the single source of truth for the AMQP username, password and virtual host. The Collector parses those values from the same URL used by the Worker, so changing only `RABBITMQ_URL` cannot leave message processing healthy while management scrapes use stale default credentials or query the `/` virtual host by mistake. The virtual-host path is percent-encoded before calling the RabbitMQ Management API.
 
 The Collector uses an independent two-second default HTTP timeout and queries only the two fixed timeout queues. It emits bounded roles instead of real queue names:
 
@@ -72,7 +73,7 @@ go_order_rabbitmq_queue_consumers{queue_role="delay|cancel"}
 
 A collection failure sets `management_up=0` and increments the existing `go_order_metrics_collection_errors_total{collector="rabbitmq_management"}` counter through the registry. It does not fail Worker processing or application readiness.
 
-The Collector reuses the existing RabbitMQ application credential in the local/test topology. Production should use a dedicated read-only monitoring user with permission limited to the target virtual host and management API.
+The RabbitMQ account used by the Timeout Worker must also have Management API monitoring permission for its configured virtual host. The current contract deliberately avoids a second credential source; a separately configurable read-only monitoring identity remains a production-hardening option rather than an implemented claim.
 
 RabbitMQ management port `15672` remains internal in Kubernetes. Compose retains the existing optional host mapping for local administration and CI fixtures; this phase does not add a new public exposure.
 
@@ -93,11 +94,13 @@ namespace: go-order-system
 
 Its Service is ClusterIP and its Pod carries standard Prometheus scrape annotations. The minimal ClusterRole grants only `list` and `watch` on batch Jobs.
 
-The migration alert consumes the standard signal:
+The migration alert consumes the terminal Job condition signal:
 
 ```text
-kube_job_status_failed{namespace="go-order-system",job_name=~".*-migrate"}
+kube_job_failed{condition="true",namespace="go-order-system",job_name=~".*-migrate"}
 ```
+
+It intentionally does not alert from `kube_job_status_failed`, because that metric can count transient failed Pods even when the Job retries and later completes successfully.
 
 This optional contract is not included in the default local/test application overlays and does not claim cluster-wide monitoring parity. A target cluster must deploy a Prometheus instance or compatible collector capable of scraping the Service.
 
@@ -110,7 +113,7 @@ UID:   go-order-infrastructure
 Title: Go Order Infrastructure Signals
 ```
 
-Panels cover RabbitMQ application session, management collection, ready messages, consumer counts, delivery outcomes and failed migration Jobs.
+Panels cover RabbitMQ application session, management collection, ready messages, consumer counts, delivery outcomes and terminally failed migration Jobs.
 
 New alerts:
 
@@ -120,6 +123,8 @@ GoOrderRabbitMQManagementCollectorDown
 GoOrderRabbitMQQueueBacklogHigh
 GoOrderMigrationJobFailed
 ```
+
+The RabbitMQ backlog alert applies only to the actionable cancellation queue. Messages in the delay queue represent scheduled unpaid-order timeouts and are not treated as processing backlog.
 
 All alerts define explicit `for` windows. The thresholds are local/test defaults, not production SLOs.
 
@@ -131,7 +136,10 @@ Static and deterministic checks verify:
 - the infrastructure Dashboard contains all required signals;
 - all 13 alerts have explicit `for` windows;
 - RabbitMQ session loss fires and a healthy session does not;
-- migration Job failure fires after its window;
+- only the cancellation queue can trigger the RabbitMQ backlog alert;
+- a terminal migration Job failure fires after its window;
+- a transient failed Pod followed by successful Job completion does not fire the migration alert;
+- both Timeout Worker and Reconciliation Worker replicas are discovered and healthy before metric assertions run;
 - the kube-state-metrics image, resource filter, namespace and RBAC are explicit;
 - the optional Kubernetes observability Kustomization renders.
 
