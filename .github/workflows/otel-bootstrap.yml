@@ -1,0 +1,25 @@
+name: OTel Bootstrap
+
+on:
+  push:
+    branches: ["phase/07-opentelemetry-tracing"]
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build audit bundle
+        run: |
+          mkdir -p audit
+          cp -R cmd internal config deploy scripts audit/
+          cp go.mod go.sum compose.yml compose.observability.yml audit/
+          find audit -type f | sort > audit/files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: otel-audit-sources
+          path: audit
+          retention-days: 1
