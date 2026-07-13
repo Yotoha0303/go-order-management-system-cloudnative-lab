@@ -52,6 +52,7 @@ def verify_contract_workflow() -> None:
     require("issues: write" not in workflow, "fault contracts must not write issues")
     require("packages: read" not in workflow and "packages: write" not in workflow, "fault contracts must not access packages")
     require("go test ./internal/platform/resiliencehttp" in workflow, "HTTP drill contract test is missing")
+    require("FaultDrillHTTPTimeoutCircuitRecovery|WriteFaultDrillEvidenceAnchorsRelativePathToWorkspace" in workflow, "HTTP behavior and workspace-path regressions must both execute")
     require("go test ./internal/ordersvc" in workflow, "Worker drill contract test is missing")
     require("bash -n scripts/fault-drills/migration-failure.sh" in workflow, "migration drill shell validation is missing")
     require("scripts/verify/fault-drill-contracts.py" in workflow, "static fault contract verification is missing")
