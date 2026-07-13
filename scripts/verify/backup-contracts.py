@@ -95,7 +95,7 @@ def verify_tooling_and_documentation() -> None:
     require("information_schema.TRIGGERS" in restore, "trigger metadata fingerprint is missing")
     require("--no-create-info" in restore and "--order-by-primary" in restore, "ordered data-only fingerprint is missing")
     require("compare_fingerprints" in restore, "restored/source logical comparisons are missing")
-    require("${OUTPUT_DIR}/dumps/${database}.sql" not in restore.split("compare_fingerprints", 1)[1], "full SQL serialization must not be compared as logical equality")
+    require('cmp "${OUTPUT_DIR}/dumps/${database}.sql"' not in restore, "full SQL serialization must not be compared as logical equality")
     require("MYSQL_PWD" in restore, "password must not be passed as a command-line argument")
     require("trap cleanup EXIT" in restore, "isolated restore cleanup is missing")
     require("docker rm -fv" in restore, "isolated restore volume cleanup is missing")
