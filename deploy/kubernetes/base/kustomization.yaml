@@ -12,6 +12,7 @@ resources:
 
 patches:
   - path: metrics-patches.yaml
+  - path: migration-evidence-retention.yaml
 
 commonLabels:
   app.kubernetes.io/part-of: go-order-management-system
