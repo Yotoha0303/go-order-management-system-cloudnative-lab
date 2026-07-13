@@ -15,7 +15,9 @@ def parse_cpu(value: str) -> float:
 
 
 def load_resource_peaks(path: pathlib.Path) -> dict[str, dict[str, Any]]:
-    peaks: dict[str, dict[str, Any]] = defaultdict(lambda: {"peak_cpu_percent": 0.0, "peak_memory_usage": "", "samples": 0})
+    peaks: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"peak_cpu_percent": 0.0, "peak_memory_usage": "", "samples": 0}
+    )
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
@@ -32,66 +34,97 @@ def load_resource_peaks(path: pathlib.Path) -> dict[str, dict[str, Any]]:
     return dict(sorted(peaks.items()))
 
 
-def infer_capacity_boundary(stages: list[dict[str, Any]], resource_peaks: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def highest_cpu(resource_peaks: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    return max(
+        resource_peaks.items(),
+        key=lambda item: float(item[1].get("peak_cpu_percent", 0.0)),
+        default=("unknown", {"peak_cpu_percent": 0.0}),
+    )
+
+
+def infer_capacity_boundary(
+    stages: list[dict[str, Any]],
+    resource_peaks: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     if not stages:
         raise ValueError("load summary contains no measured stages")
 
+    previous: dict[str, Any] | None = None
     for stage in stages:
+        concurrency = stage["concurrency"]
+        stop_reason = str(stage.get("stop_reason", "duration"))
+        measurement_eligible = bool(stage.get("measurement_eligible", stop_reason == "duration"))
+        if not measurement_eligible:
+            return {
+                "classification": "request_ceiling_before_stage_duration",
+                "first_observed_at_concurrency": concurrency,
+                "measured_evidence": (
+                    f"The global request ceiling stopped concurrency {concurrency} after "
+                    f"{stage.get('issuance_elapsed_seconds', stage.get('elapsed_seconds', 0))}s, "
+                    f"before the configured {stage.get('configured_duration_seconds', 'unknown')}s issuance window."
+                ),
+                "inference": (
+                    "This is a measurement-safety boundary, not an application-capacity boundary. "
+                    "The truncated stage is excluded from sustained throughput and tail-latency inference."
+                ),
+            }
+
         status_counts = stage.get("status_counts", {})
         error_rate = float(stage.get("error_rate", 0.0))
         if int(status_counts.get("429", 0)) > 0:
             return {
                 "classification": "gateway_rate_limit",
-                "first_observed_at_concurrency": stage["concurrency"],
-                "measured_evidence": f"HTTP 429 appeared at concurrency {stage['concurrency']} with error rate {error_rate:.2%}",
+                "first_observed_at_concurrency": concurrency,
+                "measured_evidence": f"HTTP 429 appeared at concurrency {concurrency} with error rate {error_rate:.2%}",
                 "inference": "The configured Gateway token bucket became the first hard request boundary.",
             }
         if error_rate >= 0.02:
             return {
                 "classification": "request_error_boundary",
-                "first_observed_at_concurrency": stage["concurrency"],
-                "measured_evidence": f"Error rate reached {error_rate:.2%} at concurrency {stage['concurrency']}",
-                "inference": "The first observed capacity boundary is request failure; inspect status and outcome counts before attributing a component.",
-            }
-
-    for previous, current in zip(stages, stages[1:]):
-        previous_rps = float(previous["throughput_rps"])
-        current_rps = float(current["throughput_rps"])
-        previous_p95 = float(previous["latency_ms"]["p95"])
-        current_p95 = float(current["latency_ms"]["p95"])
-        throughput_gain = (current_rps - previous_rps) / max(previous_rps, 0.001)
-        latency_growth = (current_p95 - previous_p95) / max(previous_p95, 0.001)
-        if throughput_gain < 0.15 and latency_growth > 0.30:
-            highest = max(
-                resource_peaks.items(),
-                key=lambda item: float(item[1].get("peak_cpu_percent", 0.0)),
-                default=("unknown", {"peak_cpu_percent": 0.0}),
-            )
-            return {
-                "classification": "throughput_plateau_with_tail_growth",
-                "first_observed_at_concurrency": current["concurrency"],
-                "measured_evidence": (
-                    f"Throughput gain was {throughput_gain:.2%} while P95 latency grew {latency_growth:.2%} "
-                    f"from concurrency {previous['concurrency']} to {current['concurrency']}"
-                ),
+                "first_observed_at_concurrency": concurrency,
+                "measured_evidence": f"Error rate reached {error_rate:.2%} at concurrency {concurrency}",
                 "inference": (
-                    f"Saturation began within the synchronous order path. The highest sampled container CPU was "
-                    f"{highest[0]} at {highest[1].get('peak_cpu_percent', 0.0):.3f}%; this is a diagnostic lead, not proof of root cause."
+                    "The first observed capacity boundary is request failure; inspect status and outcome counts "
+                    "before attributing a component."
                 ),
             }
 
-    highest = max(
-        resource_peaks.items(),
-        key=lambda item: float(item[1].get("peak_cpu_percent", 0.0)),
-        default=("unknown", {"peak_cpu_percent": 0.0}),
-    )
+        if previous is not None:
+            previous_rps = float(previous["throughput_rps"])
+            current_rps = float(stage["throughput_rps"])
+            previous_p95 = float(previous["latency_ms"]["p95"])
+            current_p95 = float(stage["latency_ms"]["p95"])
+            throughput_gain = (current_rps - previous_rps) / max(previous_rps, 0.001)
+            latency_growth = (current_p95 - previous_p95) / max(previous_p95, 0.001)
+            if throughput_gain < 0.15 and latency_growth > 0.30:
+                highest = highest_cpu(resource_peaks)
+                return {
+                    "classification": "throughput_plateau_with_tail_growth",
+                    "first_observed_at_concurrency": concurrency,
+                    "measured_evidence": (
+                        f"Throughput gain was {throughput_gain:.2%} while P95 latency grew {latency_growth:.2%} "
+                        f"from concurrency {previous['concurrency']} to {concurrency}"
+                    ),
+                    "inference": (
+                        f"Saturation began within the synchronous order path. The highest sampled container CPU was "
+                        f"{highest[0]} at {highest[1].get('peak_cpu_percent', 0.0):.3f}%; "
+                        "this is a diagnostic lead, not proof of root cause."
+                    ),
+                }
+        previous = stage
+
+    highest = highest_cpu(resource_peaks)
     return {
         "classification": "not_reached_within_bounded_range",
         "first_observed_at_concurrency": None,
-        "measured_evidence": "No stage produced at least 2% errors or the defined throughput-plateau plus P95-growth signal.",
+        "measured_evidence": (
+            "No sustained-duration stage produced at least 2% errors or the defined throughput-plateau "
+            "plus P95-growth signal."
+        ),
         "inference": (
             f"The bounded test ceiling was reached before a defensible saturation point. Highest sampled container CPU was "
-            f"{highest[0]} at {highest[1].get('peak_cpu_percent', 0.0):.3f}%; it must not be called a bottleneck without a wider test."
+            f"{highest[0]} at {highest[1].get('peak_cpu_percent', 0.0):.3f}%; "
+            "it must not be called a bottleneck without a wider test."
         ),
     }
 
@@ -122,12 +155,14 @@ def render_markdown(report: dict[str, Any]) -> str:
     ]
     for name, evidence in report["resource_peaks"].items():
         lines.append(
-            f"| {name} | {evidence['peak_cpu_percent']:.3f}% | {evidence['peak_memory_usage']} | {evidence['samples']} |"
+            f"| {name} | {evidence['peak_cpu_percent']:.3f}% | "
+            f"{evidence['peak_memory_usage']} | {evidence['samples']} |"
         )
     lines.extend(
         [
             "",
-            "> Measured evidence and inference are intentionally separated. This single-runner synthetic test is not a production capacity guarantee.",
+            "> Measured evidence and inference are intentionally separated. "
+            "This single-runner synthetic test is not a production capacity guarantee.",
             "",
         ]
     )
