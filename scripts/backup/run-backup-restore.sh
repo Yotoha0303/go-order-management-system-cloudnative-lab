@@ -72,7 +72,11 @@ logical_fingerprint() {
   mkdir -p "${destination_dir}"
 
   query_fingerprint "${container}" "${password}" \
-    "SELECT TABLE_NAME, ENGINE, COALESCE(TABLE_COLLATION,''), COALESCE(CREATE_OPTIONS,'') FROM information_schema.TABLES WHERE TABLE_SCHEMA='${database}' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;" \
+    "SELECT SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, DEFAULT_ENCRYPTION FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='${database}';" \
+    "${destination_dir}/${database}.schema.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT TABLE_NAME, ENGINE, COALESCE(TABLE_COLLATION,''), COALESCE(CREATE_OPTIONS,''), COALESCE(AUTO_INCREMENT,0) FROM information_schema.TABLES WHERE TABLE_SCHEMA='${database}' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;" \
     "${destination_dir}/${database}.tables.tsv"
 
   query_fingerprint "${container}" "${password}" \
@@ -84,16 +88,28 @@ logical_fingerprint() {
     "${destination_dir}/${database}.indexes.tsv"
 
   query_fingerprint "${container}" "${password}" \
-    "SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, COALESCE(kcu.COLUMN_NAME,''), COALESCE(kcu.ORDINAL_POSITION,0), COALESCE(kcu.REFERENCED_TABLE_NAME,''), COALESCE(kcu.REFERENCED_COLUMN_NAME,'') FROM information_schema.TABLE_CONSTRAINTS tc LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON tc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA AND tc.TABLE_NAME=kcu.TABLE_NAME AND tc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA='${database}' ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION;" \
+    "SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, tc.ENFORCED, COALESCE(kcu.COLUMN_NAME,''), COALESCE(kcu.ORDINAL_POSITION,0), COALESCE(kcu.REFERENCED_TABLE_NAME,''), COALESCE(kcu.REFERENCED_COLUMN_NAME,'') FROM information_schema.TABLE_CONSTRAINTS tc LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON tc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA AND tc.TABLE_NAME=kcu.TABLE_NAME AND tc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA='${database}' ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION;" \
     "${destination_dir}/${database}.constraints.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT tc.TABLE_NAME, cc.CONSTRAINT_NAME, HEX(cc.CHECK_CLAUSE), tc.ENFORCED FROM information_schema.CHECK_CONSTRAINTS cc JOIN information_schema.TABLE_CONSTRAINTS tc ON tc.CONSTRAINT_SCHEMA=cc.CONSTRAINT_SCHEMA AND tc.CONSTRAINT_NAME=cc.CONSTRAINT_NAME WHERE cc.CONSTRAINT_SCHEMA='${database}' ORDER BY tc.TABLE_NAME, cc.CONSTRAINT_NAME;" \
+    "${destination_dir}/${database}.checks.tsv"
 
   query_fingerprint "${container}" "${password}" \
     "SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='${database}' ORDER BY TABLE_NAME, CONSTRAINT_NAME;" \
     "${destination_dir}/${database}.references.tsv"
 
   query_fingerprint "${container}" "${password}" \
-    "SELECT TRIGGER_NAME, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_TIMING, ACTION_ORIENTATION, ACTION_STATEMENT FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='${database}' ORDER BY TRIGGER_NAME;" \
+    "SELECT TRIGGER_NAME, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_TIMING, ACTION_ORIENTATION, HEX(ACTION_STATEMENT), SQL_MODE, DEFINER, CHARACTER_SET_CLIENT, COLLATION_CONNECTION, DATABASE_COLLATION FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='${database}' ORDER BY TRIGGER_NAME;" \
     "${destination_dir}/${database}.triggers.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT ROUTINE_NAME, ROUTINE_TYPE, COALESCE(DTD_IDENTIFIER,''), HEX(COALESCE(ROUTINE_DEFINITION,'')), IS_DETERMINISTIC, SQL_DATA_ACCESS, SECURITY_TYPE, SQL_MODE, HEX(COALESCE(ROUTINE_COMMENT,'')), DEFINER, CHARACTER_SET_CLIENT, COLLATION_CONNECTION, DATABASE_COLLATION FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA='${database}' ORDER BY ROUTINE_TYPE, ROUTINE_NAME;" \
+    "${destination_dir}/${database}.routines.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT SPECIFIC_NAME, ORDINAL_POSITION, COALESCE(PARAMETER_MODE,''), COALESCE(PARAMETER_NAME,''), COALESCE(DTD_IDENTIFIER,''), COALESCE(CHARACTER_SET_NAME,''), COALESCE(COLLATION_NAME,'') FROM information_schema.PARAMETERS WHERE SPECIFIC_SCHEMA='${database}' ORDER BY SPECIFIC_NAME, ORDINAL_POSITION;" \
+    "${destination_dir}/${database}.parameters.tsv"
 
   docker exec -e "MYSQL_PWD=${password}" "${container}" mysqldump \
     --protocol=tcp -h 127.0.0.1 -uroot \
@@ -104,12 +120,16 @@ logical_fingerprint() {
   (
     cd "${destination_dir}"
     sha256sum \
+      "${database}.schema.tsv" \
       "${database}.tables.tsv" \
       "${database}.columns.tsv" \
       "${database}.indexes.tsv" \
       "${database}.constraints.tsv" \
+      "${database}.checks.tsv" \
       "${database}.references.tsv" \
       "${database}.triggers.tsv" \
+      "${database}.routines.tsv" \
+      "${database}.parameters.tsv" \
       "${database}.data.sql" \
       | sort -k2 > "${database}.fingerprint.sha256"
   )
@@ -121,7 +141,8 @@ compare_fingerprints() {
   local database="$3"
   local component
   for component in \
-    tables.tsv columns.tsv indexes.tsv constraints.tsv references.tsv triggers.tsv data.sql fingerprint.sha256; do
+    schema.tsv tables.tsv columns.tsv indexes.tsv constraints.tsv checks.tsv references.tsv \
+    triggers.tsv routines.tsv parameters.tsv data.sql fingerprint.sha256; do
     cmp \
       "${expected_dir}/${database}.${component}" \
       "${actual_dir}/${database}.${component}"
@@ -225,4 +246,4 @@ EOF
 
 printf 'backup_duration_ms=%s\nrestore_duration_ms=%s\n' \
   "${backup_duration_ms}" "${restore_duration_ms}"
-printf 'All four databases matched by logical schema and ordered-data fingerprints; source fingerprints remained unchanged.\n'
+printf 'All four databases matched by complete logical schema and ordered-data fingerprints; source fingerprints remained unchanged.\n'
