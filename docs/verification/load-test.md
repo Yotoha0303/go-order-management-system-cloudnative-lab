@@ -67,16 +67,17 @@ Default profile:
 | Warm-up | 5 seconds, maximum 200 requests |
 | Concurrency levels | 1, 4, 8, 16, 32 |
 | Measured duration per level | up to 8 seconds |
-| Measured request ceiling | 3000 |
+| Measured request ceiling per stage | 3000 |
+| Maximum total measured requests | 15000 |
 | Per-request timeout | 10 seconds |
 | Resource sampling | every 2 seconds during measured stages only |
 | Sampler start wait | 60 seconds |
 | Sampler measured-interval ceiling | 180 seconds |
 | Workflow timeout | 30 minutes |
 
-Hard code limits prevent concurrency above 32, a measured stage above 15 seconds, warm-up above 10 seconds or more than 3000 measured requests.
+Hard code limits prevent concurrency above 32, a measured stage above 15 seconds, warm-up above 10 seconds, more than 3000 requests in one measured stage or more than 15000 requests across the five-stage profile.
 
-The global request ceiling is a safety boundary. Each stage records its configured duration, issuance duration and stop reason. A stage that reaches its request allocation before eight seconds is retained in the artifact, but is marked `measurement_eligible=false`; its burst RPS and latency are not used as sustained-duration capacity evidence.
+Each measured stage receives its own 3000-request safety ceiling. The ceiling is not divided across all stages. This allows lower-concurrency stages to run for the intended eight seconds while retaining a hard bound for higher-concurrency stages. Each stage records its configured duration, issuance duration and stop reason. A stage that reaches its own ceiling before eight seconds remains in the artifact but is marked `measurement_eligible=false`; its burst RPS and latency are excluded from sustained-duration capacity evidence.
 
 Gateway rate-limit values are raised only inside this disposable workflow so the first measured boundary is more likely to be the synchronous business path rather than the default protective token bucket. HTTP 429 remains recorded and is classified explicitly when it occurs.
 
@@ -170,7 +171,7 @@ Compare two runs only when all of the following match:
 
 - source commit and code path;
 - GitHub Runner class;
-- concurrency levels, stage duration and request ceiling;
+- concurrency levels, stage duration, per-stage request ceiling and total request ceiling;
 - the same set of healthy sustained pre-boundary stages;
 - Gateway rate-limit overrides;
 - timeout delay;
