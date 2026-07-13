@@ -26,17 +26,21 @@ def stage(
     measurement_eligible: bool = True,
     stop_reason: str = "duration",
 ) -> dict:
+    successes = requests - errors
+    elapsed = requests / max(rps, 0.001)
     return {
         "name": f"c{concurrency}",
         "concurrency": concurrency,
         "requests": requests,
-        "successes": requests - errors,
+        "successes": successes,
         "errors": errors,
         "error_rate": errors / requests,
         "throughput_rps": rps,
+        "successful_throughput_rps": rps * successes / requests,
+        "elapsed_seconds": elapsed,
         "latency_ms": {"p50": p95 / 2, "p95": p95, "p99": p95 * 1.2, "max": p95 * 1.5},
-        "status_counts": status_counts or {"201": requests - errors},
-        "outcome_counts": {"success": requests - errors, "http_error": errors},
+        "status_counts": status_counts or {"201": successes},
+        "outcome_counts": {"success": successes, "http_error": errors},
         "configured_duration_seconds": 8.0,
         "issuance_elapsed_seconds": 8.0 if measurement_eligible else 1.5,
         "measurement_eligible": measurement_eligible,
@@ -114,7 +118,7 @@ class LoadAnalysisTest(unittest.TestCase):
             },
         )
         self.assertEqual(result["classification"], "throughput_plateau_with_tail_growth")
-        self.assertIn("Throughput gain", result["measured_evidence"])
+        self.assertIn("Successful throughput gain", result["measured_evidence"])
         self.assertIn("diagnostic lead, not proof", result["inference"])
 
     def test_no_saturation_is_reported_without_inventing_a_bottleneck(self) -> None:
@@ -126,9 +130,26 @@ class LoadAnalysisTest(unittest.TestCase):
         self.assertIsNone(result["first_observed_at_concurrency"])
         self.assertIn("must not be called a bottleneck", result["inference"])
 
+    def test_best_throughput_uses_successes_and_stops_before_error_boundary(self) -> None:
+        stages = [
+            stage(1, rps=10, p95=20),
+            stage(4, rps=40, p95=25),
+            stage(8, rps=500, p95=10, errors=50, status_counts={"201": 50, "500": 50}),
+        ]
+        boundary = analysis.infer_capacity_boundary(stages, {"order-service": {"peak_cpu_percent": 20.0}})
+        self.assertEqual(boundary["first_observed_at_concurrency"], 8)
+        self.assertEqual(analysis.best_healthy_successful_throughput(stages, boundary), 40.0)
+
+    def test_boundary_stage_is_excluded_from_best_healthy_throughput(self) -> None:
+        stages = [stage(1, rps=10, p95=20), stage(4, rps=40, p95=20), stage(8, rps=44, p95=30)]
+        boundary = analysis.infer_capacity_boundary(stages, {"order-service": {"peak_cpu_percent": 20.0}})
+        self.assertEqual(boundary["classification"], "throughput_plateau_with_tail_growth")
+        self.assertEqual(analysis.best_healthy_successful_throughput(stages, boundary), 40.0)
+
     def test_markdown_separates_measurement_and_interpretation(self) -> None:
         report = {
             "load": {"measured_requests": 10, "measured_successes": 10, "measured_errors": 0},
+            "best_healthy_successful_throughput_rps": 12.5,
             "first_observed_boundary": {
                 "classification": "not_reached_within_bounded_range",
                 "first_observed_at_concurrency": None,
@@ -141,6 +162,7 @@ class LoadAnalysisTest(unittest.TestCase):
         }
         markdown = analysis.render_markdown(report)
         self.assertIn("## Measured result", markdown)
+        self.assertIn("Best healthy sustained successful throughput", markdown)
         self.assertIn("## Interpretation", markdown)
         self.assertIn("not a production capacity guarantee", markdown)
 
