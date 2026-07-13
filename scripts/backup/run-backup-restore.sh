@@ -17,7 +17,7 @@ DATABASES=(
 mkdir -p "${OUTPUT_DIR}/dumps" "${OUTPUT_DIR}/source-after" "${OUTPUT_DIR}/restored"
 
 cleanup() {
-  docker rm -f "${RESTORE_CONTAINER}" >/dev/null 2>&1 || true
+  docker rm -fv "${RESTORE_CONTAINER}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 cleanup
