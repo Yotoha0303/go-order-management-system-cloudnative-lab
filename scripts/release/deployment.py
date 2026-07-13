@@ -144,7 +144,9 @@ def named_container_image(item: dict[str, Any], resource_name: str, container_na
 
 
 def reject_unexpected_application_images(
-    items: dict[str, dict[str, Any]], resource_kind: str
+    items: dict[str, dict[str, Any]],
+    resource_kind: str,
+    accepted_references: set[str],
 ) -> None:
     for resource_name, item in items.items():
         for container in pod_containers(item, resource_name):
@@ -159,6 +161,10 @@ def reject_unexpected_application_images(
                 require(
                     bool(DIGEST_REFERENCE_RE.fullmatch(image)),
                     f"{resource_kind} {resource_name} uses a non-digest GHCR application image: {image}",
+                )
+                require(
+                    image in accepted_references,
+                    f"{resource_kind} {resource_name} uses an application image not present in accepted release manifest: {image}",
                 )
 
 
@@ -189,8 +195,9 @@ def verify_inventory(args: argparse.Namespace) -> None:
         )
         actual_migrations[job_name] = image
 
-    reject_unexpected_application_images(deployments, "Deployment")
-    reject_unexpected_application_images(jobs, "Job")
+    accepted_references = set(references.values())
+    reject_unexpected_application_images(deployments, "Deployment", accepted_references)
+    reject_unexpected_application_images(jobs, "Job", accepted_references)
 
     write_json(
         args.output,
