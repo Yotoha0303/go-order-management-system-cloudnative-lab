@@ -1,0 +1,204 @@
+name: Verify MySQL Backup and Restore
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/mysql-backup-restore.yml"
+      - ".github/workflows/backup-contracts.yml"
+      - "scripts/backup/**"
+      - "scripts/verify/backup-contracts.py"
+      - "docs/verification/mysql-backup-restore.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mysql-backup-restore-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Back up, restore and verify four MySQL databases
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      MYSQL_PASSWORD: backup-ci-password
+      JWT_SECRET: backup-ci-jwt-secret-must-be-at-least-32-characters
+      INTERNAL_SERVICE_TOKEN: backup-ci-internal-token-must-be-long-and-random
+      RABBITMQ_USER: order_app
+      RABBITMQ_PASSWORD: backup-ci-rabbit-password
+      ORDER_TIMEOUT_DELAY: 3s
+      OUTBOX_LEASE_DURATION: 30s
+      MYSQL_HOST_PORT: "13306"
+      RABBITMQ_HOST_PORT: "15673"
+      RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
+    outputs:
+      artifact_name: ${{ steps.summary.outputs.artifact_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile and test backup tooling
+        run: |
+          python3 -m compileall -q scripts/backup scripts/verify/backup-contracts.py
+          python3 -m unittest discover -s scripts/backup -p "test_*.py" -v
+          python3 scripts/verify/backup-contracts.py
+
+      - name: Build and start synthetic source environment
+        id: startup
+        continue-on-error: true
+        run: |
+          docker compose build
+          docker compose up -d --wait \
+            --scale order-timeout-worker=2 \
+            --scale order-reconciliation-worker=2
+
+      - name: Collect source startup diagnostics
+        if: steps.startup.outcome == 'failure'
+        run: |
+          mkdir -p backup-evidence/diagnostics
+          docker compose ps -a > backup-evidence/diagnostics/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color --timestamps > backup-evidence/diagnostics/compose.log 2>&1 || true
+
+      - name: Enforce source startup result
+        if: steps.startup.outcome == 'failure'
+        run: exit 1
+
+      - name: Create representative synthetic business data
+        run: |
+          sh scripts/smoke/microservices-saga.sh | tee source-saga.log
+          curl --fail --silent --show-error http://127.0.0.1:8082/readyz
+
+      - name: Quiesce application writers
+        run: |
+          docker compose stop \
+            api-gateway identity-service catalog-service inventory-service order-service \
+            order-timeout-worker order-reconciliation-worker rabbitmq
+          test "$(docker inspect -f '{{.State.Running}}' go-order-management-system-mysql)" = true
+
+      - name: Back up and restore into isolated MySQL
+        run: bash scripts/backup/run-backup-restore.sh backup-evidence
+
+      - name: Create and verify backup manifest
+        id: summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          backup_duration_ms="$(awk -F= '$1 == "BACKUP_DURATION_MS" {print $2}' backup-evidence/timings.env)"
+          restore_duration_ms="$(awk -F= '$1 == "RESTORE_DURATION_MS" {print $2}' backup-evidence/timings.env)"
+          mysql_version="$(awk -F= '$1 == "MYSQL_VERSION" {sub(/^MYSQL_VERSION=/, ""); print}' backup-evidence/timings.env)"
+          python3 scripts/backup/manifest.py create \
+            --dumps backup-evidence/dumps \
+            --repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            --mysql-version "${mysql_version}" \
+            --backup-duration-ms "${backup_duration_ms}" \
+            --restore-duration-ms "${restore_duration_ms}" \
+            --output backup-evidence/backup-manifest.json
+          python3 scripts/backup/manifest.py verify \
+            --manifest backup-evidence/backup-manifest.json \
+            --dumps backup-evidence/dumps \
+            --repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            > backup-evidence/verified-dumps.txt
+          test "$(wc -l < backup-evidence/verified-dumps.txt | tr -d ' ')" -eq 4
+          cp source-saga.log backup-evidence/source-saga.log
+          artifact_name="mysql-backup-restore-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=${artifact_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prove corrupt dump is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a backup-evidence/dumps backup-evidence/corrupt-dumps
+          printf '\n-- deliberate corruption\n' >> backup-evidence/corrupt-dumps/go_order_ordering.sql
+          if python3 scripts/backup/manifest.py verify \
+            --manifest backup-evidence/backup-manifest.json \
+            --dumps backup-evidence/corrupt-dumps \
+            --repository "${GITHUB_REPOSITORY}" \
+            --source-commit "${GITHUB_SHA}" \
+            > backup-evidence/corrupt-verification.log 2>&1; then
+            echo "corrupt database dump unexpectedly passed verification" >&2
+            exit 1
+          fi
+          echo "corrupt_dump=rejected_as_expected" > backup-evidence/negative-verification.txt
+          rm -rf backup-evidence/corrupt-dumps
+
+      - name: Upload backup and restore evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-backup-restore-${{ github.sha }}-${{ github.run_id }}
+          path: backup-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Stop disposable resources
+        if: always()
+        run: |
+          docker rm -f "go-order-backup-restore-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
+          docker compose down -v --remove-orphans || true
+
+  evidence:
+    name: Record backup and restore acceptance in GitHub
+    needs: verify
+    if: needs.verify.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Comment Phase 8.3 evidence
+        uses: actions/github-script@v7
+        env:
+          ACCEPTANCE_ISSUE_NUMBER: "50"
+          ARTIFACT_NAME: ${{ needs.verify.outputs.artifact_name }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const marker = `<!-- mysql-backup-restore-evidence:${context.sha} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `Phase 8.3 MySQL backup and isolated restore succeeded for commit \`${context.sha}\`.`,
+              '',
+              `- GitHub Actions run: ${runUrl}`,
+              `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
+              '- All four service-owned databases produced non-empty logical dumps with exact size and SHA-256 metadata.',
+              '- The dumps restored into a separate disposable MySQL 8.4 container.',
+              '- Migration state and representative Identity, Catalog, Inventory and Ordering records were verified.',
+              '- Canonical restored dumps matched the source dumps byte-for-byte.',
+              '- Source database dumps remained byte-for-byte unchanged after restore verification.',
+              '- A deliberately corrupted dump was rejected by manifest integrity verification.',
+              '- Only synthetic CI data was stored; no credentials or project content left GitHub infrastructure.',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
