@@ -44,7 +44,7 @@ def verify_runtime_workflow() -> None:
     require("order_create_load.py" in workflow, "order load driver is not executed")
     require("analyze_load.py" in workflow, "capacity analyzer is not executed")
     require(workflow.count("capture_state.sh load-evidence") == 2, "baseline and post-load state capture are required")
-    require("wait \"${sampler_pid}\"" in workflow, "resource sampler must be awaited in the same shell lifecycle")
+    require('wait "${sampler_pid}"' in workflow, "resource sampler must be awaited in the same shell lifecycle")
     require("trap cleanup_sampler EXIT" in workflow, "resource sampler cleanup trap is missing")
     require("load-summary.json" in workflow and "samples.jsonl" in read(DRIVER), "raw and summary load evidence is incomplete")
     require("capacity-report.json" in workflow and "capacity-report.md" in workflow, "capacity analysis outputs are missing")
@@ -77,18 +77,19 @@ def verify_load_tooling() -> None:
     require("MAX_CONCURRENCY = 32" in driver, "load concurrency cap is missing")
     require("MAX_STAGE_SECONDS = 15.0" in driver, "stage duration cap is missing")
     require("MAX_REQUESTS = 3000" in driver, "request cap is missing")
+    require("stage_request_limit" in driver, "measured request budget is not reserved across stages")
+    require("remaining request budget must reserve at least one request per stage" in driver, "stage budget safety check is missing")
     require("idempotency_key" in driver and "uuid.uuid4" in driver, "unique idempotency keys are missing")
     require("access_token" in driver, "fixture login must follow the Gateway token contract")
     require("price_fen" in driver and "/on-sale" in driver, "Catalog fixture contract is incomplete")
-    require("tokens_persisted\": False" in driver, "fixture must state that tokens are not persisted")
-    require("credentials_persisted\": False" in driver, "load report must state that credentials are not persisted")
+    require('"tokens_persisted": False' in driver, "fixture must state that tokens are not persisted")
+    require('"credentials_persisted": False' in driver, "load report must state that credentials are not persisted")
     require("latency_ms" in driver and '"p50"' in driver and '"p95"' in driver and '"p99"' in driver, "latency percentiles are incomplete")
     require("throughput_rps" in driver and "error_rate" in driver, "throughput/error metrics are incomplete")
     require("test_prepare_fixture_uses_gateway_contract" in tests, "fixture API contract test is missing")
     require("test_real_local_server_stage_produces_success_samples" in tests, "real local HTTP load test is missing")
     require("MAX_DURATION_SECONDS = 90.0" in sampler, "resource sampling duration cap is missing")
-    require("docker", "")
-    require("docker\", \"stats" in sampler, "Docker resource sampling is missing")
+    require('"docker", "stats"' in sampler, "Docker resource sampling is missing")
     require("gateway_rate_limit" in analyzer, "Gateway rate-limit classification is missing")
     require("request_error_boundary" in analyzer, "request error classification is missing")
     require("throughput_plateau_with_tail_growth" in analyzer, "plateau/tail classification is missing")
@@ -129,7 +130,7 @@ def verify_documentation() -> None:
         "Tokens remain in the Python process memory",
         "Operational evidence",
         "Capacity-boundary rules",
-        "Measured evidence and inference",
+        "measured evidence from inference",
         "Not reached within bounded range",
         "not a production SLO",
     ):
