@@ -46,9 +46,10 @@ mysql_dump() {
   docker exec -e "MYSQL_PWD=${password}" "${container}" mysqldump \
     --protocol=tcp -h 127.0.0.1 -uroot \
     --single-transaction --quick --routines --triggers --hex-blob \
-    --set-gtid-purged=OFF --skip-dump-date --skip-comments --compact \
+    --set-gtid-purged=OFF --skip-dump-date --skip-comments \
     --order-by-primary --databases "${database}" > "${destination}"
   test -s "${destination}"
+  grep -q 'FOREIGN_KEY_CHECKS=0' "${destination}"
 }
 
 backup_started_ns="$(date +%s%N)"

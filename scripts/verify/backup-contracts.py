@@ -82,6 +82,8 @@ def verify_tooling_and_documentation() -> None:
     require("test_timestamp_and_mysql_version_are_required" in tests, "version metadata rejection test is absent")
     require("--single-transaction" in restore, "logical backup must use a transactional snapshot")
     require("--skip-dump-date" in restore, "logical dumps must avoid volatile timestamps")
+    require("--compact" not in restore, "compact dumps remove required foreign-key restore guards")
+    require("FOREIGN_KEY_CHECKS=0" in restore, "logical dumps must retain foreign-key restore guards")
     require("MYSQL_PWD" in restore, "password must not be passed as a command-line argument")
     require(restore.count("cmp ") >= 2, "restored and source database equality checks are missing")
     require("trap cleanup EXIT" in restore, "isolated restore cleanup is missing")
