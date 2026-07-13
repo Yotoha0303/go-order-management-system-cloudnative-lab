@@ -44,6 +44,8 @@ def verify_runtime_workflow() -> None:
     require("scripts/backup/manifest.py create" in workflow, "backup manifest creation is missing")
     require(workflow.count("scripts/backup/manifest.py verify") == 2, "normal and corrupt manifest verification are required")
     require("corrupt database dump unexpectedly passed verification" in workflow, "corrupt dump negative proof is missing")
+    require("logical schema and ordered-data fingerprints matched" in workflow, "runtime evidence must describe logical equality")
+    require("byte-for-byte" not in workflow, "runtime evidence must not claim unstable SQL serialization equality")
     require("actions/upload-artifact@v4" in workflow, "backup evidence artifact is missing")
     require("retention-days: 30" in workflow, "synthetic backup evidence retention must be explicit")
     require("if: always()" in workflow and "docker compose down -v" in workflow, "disposable resources must always be removed")
@@ -82,16 +84,27 @@ def verify_tooling_and_documentation() -> None:
     require("test_timestamp_and_mysql_version_are_required" in tests, "version metadata rejection test is absent")
     require("--single-transaction" in restore, "logical backup must use a transactional snapshot")
     require("--skip-dump-date" in restore, "logical dumps must avoid volatile timestamps")
-    require("--compact" not in restore, "compact dumps remove required foreign-key restore guards")
+    require("--compact" not in restore, "restorable dumps must retain foreign-key restore guards")
     require("FOREIGN_KEY_CHECKS=0" in restore, "logical dumps must retain foreign-key restore guards")
+    require("logical_fingerprint" in restore, "logical fingerprint generation is missing")
+    require("information_schema.TABLES" in restore, "table metadata fingerprint is missing")
+    require("information_schema.COLUMNS" in restore, "column metadata fingerprint is missing")
+    require("information_schema.STATISTICS" in restore, "index metadata fingerprint is missing")
+    require("information_schema.TABLE_CONSTRAINTS" in restore, "constraint metadata fingerprint is missing")
+    require("information_schema.REFERENTIAL_CONSTRAINTS" in restore, "referential metadata fingerprint is missing")
+    require("information_schema.TRIGGERS" in restore, "trigger metadata fingerprint is missing")
+    require("--no-create-info" in restore and "--order-by-primary" in restore, "ordered data-only fingerprint is missing")
+    require("compare_fingerprints" in restore, "restored/source logical comparisons are missing")
+    require("${OUTPUT_DIR}/dumps/${database}.sql" not in restore.split("compare_fingerprints", 1)[1], "full SQL serialization must not be compared as logical equality")
     require("MYSQL_PWD" in restore, "password must not be passed as a command-line argument")
-    require(restore.count("cmp ") >= 2, "restored and source database equality checks are missing")
     require("trap cleanup EXIT" in restore, "isolated restore cleanup is missing")
     require("docker rm -fv" in restore, "isolated restore volume cleanup is missing")
     for phrase in (
         "四个服务数据库",
         "隔离恢复",
         "SHA-256",
+        "逻辑 Schema 指纹",
+        "有序数据指纹",
         "源数据库保持不变",
         "仅允许合成测试数据",
         "RPO",
