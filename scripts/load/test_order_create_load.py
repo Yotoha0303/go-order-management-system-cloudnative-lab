@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -105,6 +106,7 @@ class LoadDriverTest(unittest.TestCase):
             stage_seconds=2.0,
             request_timeout_seconds=3.0,
             max_requests=100,
+            measurement_start_file=None,
         )
 
     def test_percentile_interpolates_and_handles_empty(self) -> None:
@@ -146,6 +148,14 @@ class LoadDriverTest(unittest.TestCase):
         os.environ["LOAD_ADMIN_PASSWORD"] = "admin-test"
         os.environ["LOAD_BUYER_PASSWORD"] = "buyer-test"
         self.assertEqual(load.validate_args(args), (1, 4))
+
+    def test_measurement_start_marker_creates_parent_and_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            marker = pathlib.Path(temp) / "nested" / "measurement-start"
+            timestamp = load.write_measurement_start(marker)
+            self.assertTrue(marker.is_file())
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), timestamp)
+            self.assertIn("+00:00", timestamp)
 
     def test_prepare_fixture_uses_gateway_contract_and_does_not_persist_tokens(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), OrderHandler)
@@ -201,6 +211,7 @@ class LoadDriverTest(unittest.TestCase):
         summary = load.summarize_stage("c2", 2, elapsed, samples)
         self.assertEqual(summary["errors"], 0)
         self.assertGreater(summary["throughput_rps"], 0)
+        self.assertEqual(summary["successful_throughput_rps"], summary["throughput_rps"])
         self.assertGreater(summary["latency_ms"]["p95"], 0)
 
     def test_render_markdown_marks_truncated_stage_ineligible(self) -> None:
@@ -219,6 +230,7 @@ class LoadDriverTest(unittest.TestCase):
                     "errors": 0,
                     "error_rate": 0.0,
                     "throughput_rps": 10.0,
+                    "successful_throughput_rps": 10.0,
                     "latency_ms": {"p50": 10.0, "p95": 11.0, "p99": 12.0, "max": 13.0},
                     "stop_reason": "request_limit",
                     "measurement_eligible": False,
@@ -228,6 +240,7 @@ class LoadDriverTest(unittest.TestCase):
         rendered = load.render_markdown(document)
         self.assertIn("request_limit", rendered)
         self.assertIn("not treated as a sustained-duration", rendered)
+        self.assertIn("Success RPS", rendered)
         self.assertNotIn("unit-token", rendered)
 
 
