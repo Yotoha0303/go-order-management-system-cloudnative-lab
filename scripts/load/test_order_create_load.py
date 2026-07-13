@@ -44,11 +44,12 @@ class OrderHandler(BaseHTTPRequestHandler):
             self.write_json(200, {"code": 0, "data": {"access_token": f"token-{username}"}})
             return
         if self.path == "/api/v1/products":
-            if payload != {
+            expected = {
                 "name": "Load Product fixture-unit",
                 "description": "bounded synthetic load-test product",
                 "price_fen": 1999,
-            }:
+            }
+            if payload != expected:
                 self.write_json(400, {"code": 1})
                 return
             self.write_json(201, {"code": 0, "data": {"id": 17}})
@@ -119,6 +120,11 @@ class LoadDriverTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load.validate_levels(value)
 
+    def test_stage_budget_reserves_requests_for_later_stages(self) -> None:
+        self.assertEqual(load.stage_request_limit(3000, 5), 600)
+        with self.assertRaisesRegex(ValueError, "reserve at least one"):
+            load.stage_request_limit(1, 2)
+
     def test_validate_args_enforces_runtime_caps(self) -> None:
         valid = self.base_args()
         self.assertEqual(load.validate_args(valid), (1, 4))
@@ -166,19 +172,19 @@ class LoadDriverTest(unittest.TestCase):
         self.assertIn(("PATCH", "/api/v1/products/17/on-sale", None), OrderHandler.observed)
         self.assertIn(("POST", "/api/v1/inventory/init", {"product_id": 17, "quantity": 100000}), OrderHandler.observed)
 
-    def test_real_local_server_stage_produces_success_samples(self) -> None:
+    def test_real_local_server_stage_produces_success_samples_without_timing_race(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), OrderHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            samples, elapsed, sequence = load.run_stage(
+            samples, elapsed, sequence, stop_reason, issuance_elapsed = load.run_stage(
                 base_url=f"http://127.0.0.1:{server.server_port}",
                 token="synthetic-token",
                 product_id=7,
                 run_id="unit",
                 stage_name="c2",
                 concurrency=2,
-                duration_seconds=0.2,
+                duration_seconds=2.0,
                 request_limit=12,
                 timeout_seconds=2.0,
                 sequence_offset=0,
@@ -187,16 +193,17 @@ class LoadDriverTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
-        self.assertGreater(len(samples), 0)
-        self.assertLessEqual(len(samples), 12)
+        self.assertEqual(len(samples), 12)
         self.assertEqual(sequence, len(samples))
+        self.assertEqual(stop_reason, "request_limit")
+        self.assertLess(issuance_elapsed, 2.0)
         self.assertTrue(all(sample.outcome == "success" for sample in samples))
         summary = load.summarize_stage("c2", 2, elapsed, samples)
         self.assertEqual(summary["errors"], 0)
         self.assertGreater(summary["throughput_rps"], 0)
         self.assertGreater(summary["latency_ms"]["p95"], 0)
 
-    def test_render_markdown_does_not_contain_token(self) -> None:
+    def test_render_markdown_marks_truncated_stage_ineligible(self) -> None:
         document = {
             "run_id": "unit",
             "product_id": 1,
@@ -213,11 +220,14 @@ class LoadDriverTest(unittest.TestCase):
                     "error_rate": 0.0,
                     "throughput_rps": 10.0,
                     "latency_ms": {"p50": 10.0, "p95": 11.0, "p99": 12.0, "max": 13.0},
+                    "stop_reason": "request_limit",
+                    "measurement_eligible": False,
                 }
             ],
         }
         rendered = load.render_markdown(document)
-        self.assertIn("P95 ms", rendered)
+        self.assertIn("request_limit", rendered)
+        self.assertIn("not treated as a sustained-duration", rendered)
         self.assertNotIn("unit-token", rendered)
 
 
