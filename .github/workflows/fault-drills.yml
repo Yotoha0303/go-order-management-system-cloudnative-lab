@@ -188,6 +188,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json
+          import os
           import pathlib
 
           root = pathlib.Path("fault-evidence")
@@ -200,8 +201,8 @@ jobs:
           drills = {name: json.loads(path.read_text(encoding="utf-8")) for name, path in paths.items()}
           document = {
               "schema_version": 1,
-              "commit_sha": "${GITHUB_SHA}",
-              "run_id": "${GITHUB_RUN_ID}",
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
               "drills": drills,
               "final_order_saga": "passed",
               "environment": "disposable GitHub Actions Docker Compose",
