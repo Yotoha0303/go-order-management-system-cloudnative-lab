@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,6 +120,11 @@ func TestFaultDrillHTTPTimeoutCircuitRecovery(t *testing.T) {
 
 func writeFaultDrillEvidence(output string, document map[string]any) error {
 	outputPath := filepath.Clean(output)
+	if !filepath.IsAbs(outputPath) {
+		if workspace := strings.TrimSpace(os.Getenv("GITHUB_WORKSPACE")); workspace != "" {
+			outputPath = filepath.Join(workspace, outputPath)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
 		return fmt.Errorf("create evidence directory: %w", err)
 	}
@@ -133,18 +139,21 @@ func writeFaultDrillEvidence(output string, document map[string]any) error {
 	return nil
 }
 
-func TestWriteFaultDrillEvidenceCreatesParentDirectory(t *testing.T) {
-	output := filepath.Join(t.TempDir(), "nested", "http", "evidence.json")
-	if err := writeFaultDrillEvidence(output, map[string]any{"schema_version": 1}); err != nil {
-		t.Fatalf("write nested evidence: %v", err)
+func TestWriteFaultDrillEvidenceAnchorsRelativePathToWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("GITHUB_WORKSPACE", workspace)
+	relative := filepath.Join("fault-evidence", "http", "evidence.json")
+	if err := writeFaultDrillEvidence(relative, map[string]any{"schema_version": 1}); err != nil {
+		t.Fatalf("write workspace-anchored evidence: %v", err)
 	}
+	output := filepath.Join(workspace, relative)
 	data, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("read nested evidence: %v", err)
+		t.Fatalf("read workspace-anchored evidence: %v", err)
 	}
 	var document map[string]any
 	if err := json.Unmarshal(data, &document); err != nil {
-		t.Fatalf("decode nested evidence: %v", err)
+		t.Fatalf("decode workspace-anchored evidence: %v", err)
 	}
 	if document["schema_version"] != float64(1) {
 		t.Fatalf("unexpected evidence document: %v", document)
