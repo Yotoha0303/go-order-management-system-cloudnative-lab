@@ -52,11 +52,42 @@ def workload(name: str, container_name: str, image: str) -> dict:
     }
 
 
+def write_inventory_files(
+    root: pathlib.Path,
+    deployments: dict,
+    jobs: dict,
+) -> tuple[pathlib.Path, pathlib.Path]:
+    deployments_path = root / "deployments.json"
+    jobs_path = root / "jobs.json"
+    deployments_path.write_text(json.dumps(deployments), encoding="utf-8")
+    jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+    return deployments_path, jobs_path
+
+
 class DeploymentReleaseTest(unittest.TestCase):
     def write_manifest(self, root: pathlib.Path) -> pathlib.Path:
         path = root / "release-manifest.json"
         path.write_text(json.dumps(release_document()), encoding="utf-8")
         return path
+
+    def exact_inventory(self) -> tuple[dict, dict]:
+        document = release_document()
+        references = {entry["service"]: entry["reference"] for entry in document["images"]}
+        deployments = {
+            "kind": "List",
+            "items": [
+                workload(service, service, references[service])
+                for service in manifest.EXPECTED_SERVICES
+            ],
+        }
+        jobs = {
+            "kind": "List",
+            "items": [
+                workload(job, "migrate", references[service])
+                for job, service in deployment.MIGRATION_SERVICES.items()
+            ],
+        }
+        return deployments, jobs
 
     def test_render_replaces_exact_application_occurrences(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -107,28 +138,10 @@ class DeploymentReleaseTest(unittest.TestCase):
     def test_verify_inventory_accepts_exact_deployments_and_migrations(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            document = release_document()
             manifest_path = self.write_manifest(root)
-            references = {entry["service"]: entry["reference"] for entry in document["images"]}
-            deployments = {
-                "kind": "List",
-                "items": [
-                    workload(service, service, references[service])
-                    for service in manifest.EXPECTED_SERVICES
-                ],
-            }
-            jobs = {
-                "kind": "List",
-                "items": [
-                    workload(job, "migrate", references[service])
-                    for job, service in deployment.MIGRATION_SERVICES.items()
-                ],
-            }
-            deployments_path = root / "deployments.json"
-            jobs_path = root / "jobs.json"
+            deployments, jobs = self.exact_inventory()
+            deployments_path, jobs_path = write_inventory_files(root, deployments, jobs)
             output = root / "inventory.json"
-            deployments_path.write_text(json.dumps(deployments), encoding="utf-8")
-            jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
 
             deployment.verify_inventory(
                 argparse.Namespace(
@@ -148,30 +161,41 @@ class DeploymentReleaseTest(unittest.TestCase):
     def test_verify_inventory_rejects_mutable_application_image(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
-            document = release_document()
             manifest_path = self.write_manifest(root)
-            references = {entry["service"]: entry["reference"] for entry in document["images"]}
-            references["api-gateway"] = "ghcr.io/yotoha0303/go-order-management-system-cloudnative-lab-api-gateway:latest"
-            deployments = {
-                "kind": "List",
-                "items": [
-                    workload(service, service, references[service])
-                    for service in manifest.EXPECTED_SERVICES
-                ],
-            }
-            jobs = {
-                "kind": "List",
-                "items": [
-                    workload(job, "migrate", references[service])
-                    for job, service in deployment.MIGRATION_SERVICES.items()
-                ],
-            }
-            deployments_path = root / "deployments.json"
-            jobs_path = root / "jobs.json"
-            deployments_path.write_text(json.dumps(deployments), encoding="utf-8")
-            jobs_path.write_text(json.dumps(jobs), encoding="utf-8")
+            deployments, jobs = self.exact_inventory()
+            deployments["items"][0]["spec"]["template"]["spec"]["containers"][0]["image"] = (
+                "ghcr.io/yotoha0303/go-order-management-system-cloudnative-lab-api-gateway:latest"
+            )
+            deployments_path, jobs_path = write_inventory_files(root, deployments, jobs)
 
             with self.assertRaisesRegex(ValueError, "does not match the accepted digest"):
+                deployment.verify_inventory(
+                    argparse.Namespace(
+                        manifest=manifest_path,
+                        repository=REPOSITORY,
+                        commit=COMMIT,
+                        deployments=deployments_path,
+                        jobs=jobs_path,
+                        output=root / "inventory.json",
+                    )
+                )
+
+    def test_verify_inventory_rejects_unaccepted_application_sidecar_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            manifest_path = self.write_manifest(root)
+            deployments, jobs = self.exact_inventory()
+            unexpected_image = (
+                "ghcr.io/yotoha0303/"
+                "go-order-management-system-cloudnative-lab-api-gateway@sha256:"
+                + "f" * 64
+            )
+            deployments["items"][0]["spec"]["template"]["spec"]["containers"].append(
+                {"name": "unaccepted-sidecar", "image": unexpected_image}
+            )
+            deployments_path, jobs_path = write_inventory_files(root, deployments, jobs)
+
+            with self.assertRaisesRegex(ValueError, "not present in accepted release manifest"):
                 deployment.verify_inventory(
                     argparse.Namespace(
                         manifest=manifest_path,
