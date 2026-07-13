@@ -57,10 +57,34 @@ def dump_entry(directory: pathlib.Path, database: str) -> dict[str, Any]:
     }
 
 
+def validate_utc_timestamp(value: Any) -> str:
+    require(isinstance(value, str) and value, "manifest created_at is required")
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("manifest created_at must be an ISO-8601 timestamp") from exc
+    require(
+        parsed.tzinfo is not None and parsed.utcoffset() == dt.timedelta(0),
+        "manifest created_at must be UTC",
+    )
+    return value
+
+
+def exact_dump_files(directory: pathlib.Path) -> tuple[str, ...]:
+    require(directory.is_dir(), "dump directory is required")
+    actual = tuple(sorted(path.name for path in directory.iterdir()))
+    expected = tuple(sorted(f"{database}.sql" for database in EXPECTED_DATABASES))
+    require(actual == expected, "dump directory must contain exactly the four manifest SQL files")
+    return actual
+
+
 def create_manifest(args: argparse.Namespace) -> None:
+    require(isinstance(args.repository, str) and args.repository, "repository is required")
     require(COMMIT_RE.fullmatch(args.source_commit) is not None, "source commit must be a full lowercase SHA")
+    require(isinstance(args.mysql_version, str) and args.mysql_version.strip(), "MySQL version is required")
     require(args.backup_duration_ms >= 0, "backup duration must be non-negative")
     require(args.restore_duration_ms >= 0, "restore duration must be non-negative")
+    exact_dump_files(args.dumps)
     entries = [dump_entry(args.dumps, database) for database in EXPECTED_DATABASES]
     total_bytes = sum(int(entry["size_bytes"]) for entry in entries)
     created_at = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
@@ -69,7 +93,7 @@ def create_manifest(args: argparse.Namespace) -> None:
         "repository": args.repository,
         "source_commit": args.source_commit,
         "created_at": created_at,
-        "mysql_version": args.mysql_version,
+        "mysql_version": args.mysql_version.strip(),
         "backup_duration_ms": args.backup_duration_ms,
         "restore_duration_ms": args.restore_duration_ms,
         "total_bytes": total_bytes,
@@ -90,6 +114,9 @@ def validate_manifest(
     source_commit = manifest.get("source_commit")
     require(isinstance(repository, str) and repository, "manifest repository is required")
     require(isinstance(source_commit, str) and COMMIT_RE.fullmatch(source_commit) is not None, "invalid source commit")
+    validate_utc_timestamp(manifest.get("created_at"))
+    mysql_version = manifest.get("mysql_version")
+    require(isinstance(mysql_version, str) and mysql_version.strip(), "manifest MySQL version is required")
     if expected_repository is not None:
         require(repository == expected_repository, "backup repository does not match expected repository")
     if expected_commit is not None:
@@ -97,6 +124,8 @@ def validate_manifest(
     for field in ("backup_duration_ms", "restore_duration_ms", "total_bytes"):
         value = manifest.get(field)
         require(isinstance(value, int) and value >= 0, f"invalid manifest field: {field}")
+
+    exact_dump_files(dumps)
     raw_entries = manifest.get("databases")
     require(isinstance(raw_entries, list), "manifest databases must be a list")
     require(len(raw_entries) == len(EXPECTED_DATABASES), "manifest must contain exactly four databases")
