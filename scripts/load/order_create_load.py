@@ -112,6 +112,13 @@ def stage_request_limit(remaining: int, stages_left: int) -> int:
     return max(1, remaining // stages_left)
 
 
+def write_measurement_start(path: pathlib.Path) -> str:
+    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(started_at + "\n", encoding="utf-8")
+    return started_at
+
+
 def api_json(
     *,
     base_url: str,
@@ -328,6 +335,7 @@ def summarize_stage(name: str, concurrency: int, elapsed: float, samples: list[S
         "errors": errors,
         "error_rate": round(errors / len(samples), 6) if samples else 0.0,
         "throughput_rps": round(len(samples) / elapsed, 3),
+        "successful_throughput_rps": round(successes / elapsed, 3),
         "latency_ms": {
             "p50": round(percentile(durations, 0.50), 3),
             "p95": round(percentile(durations, 0.95), 3),
@@ -349,14 +357,14 @@ def render_markdown(document: dict[str, Any]) -> str:
         f"- Request timeout: {document['request_timeout_seconds']}s",
         f"- Maximum measured requests: {document['max_requests']}",
         "",
-        "| Stage | Concurrency | Requests | Successes | Errors | Error rate | RPS | P50 ms | P95 ms | P99 ms | Max ms | Stop | Eligible |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Stage | Concurrency | Requests | Successes | Errors | Error rate | Attempt RPS | Success RPS | P50 ms | P95 ms | P99 ms | Max ms | Stop | Eligible |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for stage in document["stages"]:
         latency = stage["latency_ms"]
         lines.append(
             "| {name} | {concurrency} | {requests} | {successes} | {errors} | {error_rate:.2%} | "
-            "{throughput_rps:.3f} | {p50:.3f} | {p95:.3f} | {p99:.3f} | {maximum:.3f} | {stop} | {eligible} |".format(
+            "{throughput_rps:.3f} | {successful_throughput_rps:.3f} | {p50:.3f} | {p95:.3f} | {p99:.3f} | {maximum:.3f} | {stop} | {eligible} |".format(
                 name=stage["name"],
                 concurrency=stage["concurrency"],
                 requests=stage["requests"],
@@ -364,6 +372,7 @@ def render_markdown(document: dict[str, Any]) -> str:
                 errors=stage["errors"],
                 error_rate=stage["error_rate"],
                 throughput_rps=stage["throughput_rps"],
+                successful_throughput_rps=stage["successful_throughput_rps"],
                 p50=latency["p50"],
                 p95=latency["p95"],
                 p99=latency["p99"],
@@ -376,6 +385,8 @@ def render_markdown(document: dict[str, Any]) -> str:
         [
             "",
             "> A stage stopped by the request ceiling is retained as safety evidence but is not treated as a sustained-duration capacity measurement.",
+            "",
+            "> Attempt throughput and successful throughput are reported separately; failed fast responses cannot inflate useful sustained throughput.",
             "",
             "> This file contains synthetic bounded measurements from one GitHub-hosted runner. It is not a production SLO or capacity guarantee.",
             "",
@@ -400,6 +411,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage-seconds", type=float, default=8.0)
     parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--max-requests", type=int, default=3000)
+    parser.add_argument("--measurement-start-file", type=pathlib.Path)
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
     return parser.parse_args()
 
@@ -461,6 +473,10 @@ def main() -> int:
         sequence_offset=0,
     )
 
+    measurement_started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    if args.measurement_start_file is not None:
+        measurement_started_at = write_measurement_start(args.measurement_start_file)
+
     all_samples: list[Sample] = []
     stage_documents: list[dict[str, Any]] = []
     remaining = args.max_requests
@@ -495,11 +511,14 @@ def main() -> int:
         )
         stage_documents.append(stage_document)
 
+    measurement_finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
     document = {
         "schema_version": 1,
         "run_id": args.run_id,
         "product_id": product_id,
-        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "created_at": measurement_finished_at,
+        "measurement_started_at": measurement_started_at,
+        "measurement_finished_at": measurement_finished_at,
         "profile": "POST /api/v1/orders with one item and unique idempotency key",
         "concurrency_levels": list(levels),
         "stage_seconds": args.stage_seconds,
