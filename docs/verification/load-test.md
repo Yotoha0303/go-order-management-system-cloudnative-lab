@@ -44,19 +44,19 @@ Tokens remain in the Python process memory. They are not written to command-line
 
 ## Readiness boundary
 
-Before baseline capture, the workflow queries Prometheus `/api/v1/targets` and requires at least one healthy target for all seven Prometheus scrape jobs:
+Before baseline capture, the workflow queries Prometheus `/api/v1/targets` and requires the exact nine expected Prometheus targets across seven scrape jobs:
 
 ```text
-api-gateway
-identity-service
-catalog-service
-inventory-service
-order-service
-order-timeout-worker
-order-reconciliation-worker
+api-gateway                    x1
+identity-service               x1
+catalog-service                x1
+inventory-service              x1
+order-service                  x1
+order-timeout-worker           x2
+order-reconciliation-worker    x2
 ```
 
-A single API Gateway request series is not enough. If any downstream service or Worker job has not been scraped successfully, the measurement does not start and the target snapshot remains in the evidence artifact.
+Both scaled Worker jobs must expose two active and two healthy targets. A job-name set alone is insufficient because it could hide one unhealthy replica behind one healthy replica. The readiness gate compares exact active and healthy counts for every job; one missing, extra or down target blocks the measurement and leaves the target snapshot in the evidence artifact.
 
 ## Bounded test profile
 
@@ -87,11 +87,12 @@ Order timeout delay is set to 10 minutes, longer than the bounded measurement, s
 
 Fixture creation and warm-up execute before the measured interval. After warm-up, the load driver writes `measurement-start`; the resource sampler waits for that marker before taking its first `docker stats` snapshot. After all measured stages finish, the workflow writes `load-complete`.
 
-The sampler checks `load-complete` before every new snapshot and again after each snapshot. Therefore:
+The sampler checks `load-complete` before starting every snapshot and again after `docker stats --no-stream` returns but before persisting its records. Therefore:
 
 - fixture creation is excluded from resource peaks;
 - warm-up is excluded from resource peaks;
 - no new snapshot starts after completion;
+- a snapshot overlapping the completion marker is discarded rather than written;
 - reaching the 180-second safety ceiling before completion fails the workflow instead of accepting incomplete resource evidence.
 
 The load summary also records `measurement_started_at` and `measurement_finished_at`.
@@ -135,7 +136,8 @@ The emitted metric labels are preserved as follows:
 - HTTP server requests: `service`, `method`, `route_group`, `status_class`;
 - HTTP client attempts: `upstream`, `operation`, `outcome`, `status_class`, `retryable`;
 - RabbitMQ publish and delivery: application `outcome` plus Prometheus target `job`;
-- RabbitMQ session and queue gauges: `job`, queue role and state where applicable.
+- RabbitMQ session: Prometheus `job` plus application `role`, so publisher and consumer session state remain distinguishable;
+- RabbitMQ queue gauges: `job`, queue role and state where applicable.
 
 During the measured stages only, `resource_sampler.py` writes timestamped container resource samples as JSON Lines.
 
