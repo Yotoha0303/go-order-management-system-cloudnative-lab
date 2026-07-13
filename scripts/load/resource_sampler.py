@@ -9,7 +9,7 @@ import pathlib
 import subprocess
 import time
 
-MAX_DURATION_SECONDS = 90.0
+MAX_DURATION_SECONDS = 240.0
 MIN_INTERVAL_SECONDS = 1.0
 
 
@@ -32,32 +32,41 @@ def snapshot() -> list[dict[str, object]]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Sample Docker container resources for a bounded interval")
+    parser = argparse.ArgumentParser(description="Sample Docker resources until the load driver completes")
     parser.add_argument("--output", type=pathlib.Path, required=True)
-    parser.add_argument("--duration-seconds", type=float, default=60.0)
+    parser.add_argument("--stop-file", type=pathlib.Path, required=True)
+    parser.add_argument("--max-duration-seconds", type=float, default=180.0)
     parser.add_argument("--interval-seconds", type=float, default=2.0)
     args = parser.parse_args()
-    if not 1.0 <= args.duration_seconds <= MAX_DURATION_SECONDS:
-        raise ValueError(f"duration must be between 1 and {MAX_DURATION_SECONDS} seconds")
+    if not 1.0 <= args.max_duration_seconds <= MAX_DURATION_SECONDS:
+        raise ValueError(f"maximum duration must be between 1 and {MAX_DURATION_SECONDS} seconds")
     if not MIN_INTERVAL_SECONDS <= args.interval_seconds <= 10.0:
         raise ValueError("interval must be between 1 and 10 seconds")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + args.duration_seconds
+    args.stop_file.parent.mkdir(parents=True, exist_ok=True)
+    args.stop_file.unlink(missing_ok=True)
+    deadline = time.monotonic() + args.max_duration_seconds
     samples = 0
+    stop_reason = "completion_file"
     with args.output.open("w", encoding="utf-8") as handle:
-        while time.monotonic() < deadline:
+        while True:
             for record in snapshot():
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
                 samples += 1
             handle.flush()
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if args.stop_file.is_file():
                 break
-            time.sleep(min(args.interval_seconds, remaining))
+            if time.monotonic() >= deadline:
+                stop_reason = "maximum_duration"
+                break
+            time.sleep(args.interval_seconds)
     if samples == 0:
         raise RuntimeError("resource sampler produced no container records")
     print(f"resource_samples={samples}")
+    print(f"stop_reason={stop_reason}")
+    if stop_reason != "completion_file":
+        raise RuntimeError("resource sampler reached its maximum duration before the load driver completed")
     return 0
 
 
