@@ -138,6 +138,8 @@ class LoadAnalysisTest(unittest.TestCase):
         ]
         boundary = analysis.infer_capacity_boundary(stages, {"order-service": {"peak_cpu_percent": 20.0}})
         self.assertEqual(boundary["first_observed_at_concurrency"], 8)
+        healthy = analysis.healthy_stages_before_boundary(stages, boundary)
+        self.assertEqual([item["concurrency"] for item in healthy], [1, 4])
         self.assertEqual(analysis.best_healthy_successful_throughput(stages, boundary), 40.0)
 
     def test_boundary_stage_is_excluded_from_best_healthy_throughput(self) -> None:
@@ -149,7 +151,9 @@ class LoadAnalysisTest(unittest.TestCase):
     def test_markdown_separates_measurement_and_interpretation(self) -> None:
         report = {
             "load": {"measured_requests": 10, "measured_successes": 10, "measured_errors": 0},
+            "healthy_stage_count": 2,
             "best_healthy_successful_throughput_rps": 12.5,
+            "highest_healthy_p95_ms": 25.0,
             "first_observed_boundary": {
                 "classification": "not_reached_within_bounded_range",
                 "first_observed_at_concurrency": None,
@@ -163,6 +167,7 @@ class LoadAnalysisTest(unittest.TestCase):
         markdown = analysis.render_markdown(report)
         self.assertIn("## Measured result", markdown)
         self.assertIn("Best healthy sustained successful throughput", markdown)
+        self.assertIn("Highest healthy sustained P95", markdown)
         self.assertIn("## Interpretation", markdown)
         self.assertIn("not a production capacity guarantee", markdown)
 
