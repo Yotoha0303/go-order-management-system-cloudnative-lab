@@ -50,7 +50,8 @@ def verify_runtime_workflow() -> None:
     require('--concurrency-levels "1,4,8,16,32"' in workflow, "five bounded concurrency levels are missing")
     require("--warmup-seconds 5" in workflow, "warm-up duration is missing")
     require("--stage-seconds 8" in workflow, "measured stage duration is missing")
-    require("--max-requests 3000" in workflow, "measured request ceiling is missing")
+    require("--max-requests-per-stage 3000" in workflow, "independent per-stage request ceiling is missing")
+    require('max_total_measured_requests"])\')" = "15000"' in workflow, "total measured-request ceiling is not asserted")
     require("Wait for seven healthy Prometheus targets" in workflow, "seven-target readiness gate is missing")
     require("activeTargets" in workflow and 'target.get("health") == "up"' in workflow, "Prometheus readiness must inspect active healthy targets")
     for job in EXPECTED_PROMETHEUS_JOBS:
@@ -79,6 +80,7 @@ def verify_runtime_workflow() -> None:
     require("if: always()" in workflow and "down -v --remove-orphans" in workflow, "disposable load resources must always be removed")
     require('ACCEPTANCE_ISSUE_NUMBER: "52"' in workflow, "Phase 8.5 evidence target is missing")
     require("All seven Prometheus scrape jobs were healthy" in workflow, "target-health evidence claim is missing")
+    require("independent 3000-request safety ceiling" in workflow, "per-stage request-boundary evidence claim is missing")
     require("after fixture/warm-up and before the completion marker" in workflow, "measured-stage resource boundary claim is missing")
     require("no production SLO or capacity guarantee is claimed" in workflow, "non-production evidence boundary is missing")
 
@@ -105,12 +107,12 @@ def verify_load_tooling() -> None:
 
     require("MAX_CONCURRENCY = 32" in driver, "load concurrency cap is missing")
     require("MAX_STAGE_SECONDS = 15.0" in driver, "stage duration cap is missing")
-    require("MAX_REQUESTS = 3000" in driver, "request cap is missing")
-    require("stage_request_limit" in driver, "measured request budget is not reserved across stages")
-    require("remaining request budget must reserve at least one request per stage" in driver, "stage budget safety check is missing")
+    require("MAX_REQUESTS_PER_STAGE = 3000" in driver, "per-stage request cap is missing")
+    require("max_requests_per_stage" in driver and "max_total_measured_requests" in driver, "per-stage and total request bounds are not recorded")
+    require("request_limit=args.max_requests_per_stage" in driver, "each measured stage must receive the independent request ceiling")
     require("stop_reason" in driver and "request_limit" in driver and "measurement_eligible" in driver, "request-cap truncation is not explicitly recorded")
     require("configured_duration_seconds" in driver and "issuance_elapsed_seconds" in driver, "stage-duration evidence is incomplete")
-    require("A stage stopped by the request ceiling" in driver, "truncated-stage interpretation boundary is missing")
+    require("Each measured stage has its own request safety ceiling" in driver, "per-stage ceiling interpretation boundary is missing")
     require("idempotency_key" in driver and "uuid.uuid4" in driver, "unique idempotency keys are missing")
     require("access_token" in driver, "fixture login must follow the Gateway token contract")
     require("price_fen" in driver and "/on-sale" in driver, "Catalog fixture contract is incomplete")
@@ -120,6 +122,7 @@ def verify_load_tooling() -> None:
     require("write_measurement_start" in driver and "measurement_started_at" in driver and "measurement_finished_at" in driver, "measured interval markers are incomplete")
     require("latency_ms" in driver and '"p50"' in driver and '"p95"' in driver and '"p99"' in driver, "latency percentiles are incomplete")
     require("throughput_rps" in driver and "error_rate" in driver, "throughput/error metrics are incomplete")
+    require("test_validate_args_enforces_per_stage_request_cap" in tests, "per-stage request-cap test is missing")
     require("test_measurement_start_marker_creates_parent_and_timestamp" in tests, "measurement-start regression test is missing")
     require("test_real_local_server_stage_produces_success_samples_without_timing_race" in tests, "non-flaky local HTTP load test is missing")
     require("duration_seconds=2.0" in tests, "local load test duration is too short for busy runners")
@@ -180,7 +183,8 @@ def verify_documentation() -> None:
     for phrase in (
         "P50/P95/P99",
         "Concurrency levels",
-        "Measured request ceiling",
+        "Measured request ceiling per stage",
+        "Maximum total measured requests",
         "Tokens remain in the Python process memory",
         "seven Prometheus scrape jobs",
         "measured stages only",
