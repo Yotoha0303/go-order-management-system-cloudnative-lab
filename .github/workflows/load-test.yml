@@ -125,7 +125,7 @@ jobs:
           mkdir -p load-evidence/setup
           mv load-admin-register.json load-buyer-register.json load-evidence/setup/
 
-      - name: Wait for seven healthy Prometheus targets
+      - name: Wait for nine healthy Prometheus targets across seven jobs
         shell: bash
         run: |
           set -euo pipefail
@@ -134,33 +134,49 @@ jobs:
             if curl --fail --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" \
               > load-evidence/setup/prometheus-targets-readiness.json \
               && python3 - <<'PY'
+          from collections import Counter
           import json
 
-          required = {
-              "api-gateway",
-              "identity-service",
-              "catalog-service",
-              "inventory-service",
-              "order-service",
-              "order-timeout-worker",
-              "order-reconciliation-worker",
+          expected = {
+              "api-gateway": 1,
+              "identity-service": 1,
+              "catalog-service": 1,
+              "inventory-service": 1,
+              "order-service": 1,
+              "order-timeout-worker": 2,
+              "order-reconciliation-worker": 2,
           }
           payload = json.load(open("load-evidence/setup/prometheus-targets-readiness.json", encoding="utf-8"))
           active = payload.get("data", {}).get("activeTargets", [])
-          healthy = {
+          active_counts = Counter(
               target.get("labels", {}).get("job")
               for target in active
-              if target.get("health") == "up"
+              if target.get("labels", {}).get("job") in expected
+          )
+          healthy_counts = Counter(
+              target.get("labels", {}).get("job")
+              for target in active
+              if target.get("labels", {}).get("job") in expected and target.get("health") == "up"
+          )
+          mismatches = {
+              job: {
+                  "expected": count,
+                  "active": active_counts[job],
+                  "healthy": healthy_counts[job],
+              }
+              for job, count in expected.items()
+              if active_counts[job] != count or healthy_counts[job] != count
           }
-          missing = sorted(required - healthy)
-          raise SystemExit(0 if not missing else 1)
+          if mismatches:
+              print(json.dumps(mismatches, sort_keys=True))
+              raise SystemExit(1)
           PY
             then
               exit 0
             fi
             sleep 2
           done
-          echo "all seven Prometheus scrape jobs did not become healthy" >&2
+          echo "all nine expected Prometheus targets across seven jobs did not become healthy" >&2
           cat load-evidence/setup/prometheus-targets-readiness.json >&2 || true
           exit 1
 
@@ -312,10 +328,10 @@ jobs:
               `- Healthy sustained stages before the first boundary: ${process.env.HEALTHY_STAGE_COUNT}`,
               `- Measured errors across all bounded stages: ${process.env.MEASURED_ERRORS}`,
               `- First observed boundary: \`${process.env.BOUNDARY}\` at concurrency \`${process.env.BOUNDARY_CONCURRENCY}\``,
-              '- All seven Prometheus scrape jobs were healthy before baseline capture.',
+              '- All nine expected Prometheus targets across seven scrape jobs were healthy before baseline capture.',
               '- Five bounded concurrency levels (1/4/8/16/32) each had an independent 3000-request safety ceiling; the total measured-request ceiling was 15000.',
               '- A per-stage request-ceiling truncation is preserved as safety evidence but excluded from sustained capacity inference.',
-              '- Resource samples cover measured stages only: after fixture/warm-up and before the completion marker.',
+              '- Resource samples cover measured stages only: after fixture/warm-up and before the completion marker; snapshots overlapping completion are discarded.',
               '- Attempted and successful throughput are separated; boundary and later stages cannot inflate the reported best throughput.',
               '- Raw request samples, P50/P95/P99, container resources, MySQL, RabbitMQ and emitted-label Prometheus evidence are in the artifact.',
               '- Measured evidence and bottleneck inference are separated; no production SLO or capacity guarantee is claimed.',
