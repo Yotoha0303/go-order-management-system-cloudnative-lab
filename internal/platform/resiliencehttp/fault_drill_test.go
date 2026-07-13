@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -100,22 +102,51 @@ func TestFaultDrillHTTPTimeoutCircuitRecovery(t *testing.T) {
 
 	if output := os.Getenv("FAULT_DRILL_HTTP_OUTPUT"); output != "" {
 		document := map[string]any{
-			"schema_version":             1,
-			"timeout_calls":              2,
-			"timeout_elapsed_ms":         timeoutElapsed.Milliseconds(),
-			"circuit_open_rejection_ms":  openElapsed.Milliseconds(),
-			"network_calls_while_open":   0,
-			"half_open_recovery":         "passed",
+			"schema_version":              1,
+			"timeout_calls":               2,
+			"timeout_elapsed_ms":          timeoutElapsed.Milliseconds(),
+			"circuit_open_rejection_ms":   openElapsed.Milliseconds(),
+			"network_calls_while_open":    0,
+			"half_open_recovery":          "passed",
 			"closed_state_after_recovery": "passed",
-			"total_upstream_calls":       calls.Load(),
+			"total_upstream_calls":        calls.Load(),
 		}
-		data, marshalErr := json.MarshalIndent(document, "", "  ")
-		if marshalErr != nil {
-			t.Fatalf("marshal fault-drill evidence: %v", marshalErr)
-		}
-		data = append(data, '\n')
-		if writeErr := os.WriteFile(output, data, 0o600); writeErr != nil {
+		if writeErr := writeFaultDrillEvidence(output, document); writeErr != nil {
 			t.Fatalf("write fault-drill evidence: %v", writeErr)
 		}
+	}
+}
+
+func writeFaultDrillEvidence(output string, document map[string]any) error {
+	outputPath := filepath.Clean(output)
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o750); err != nil {
+		return fmt.Errorf("create evidence directory: %w", err)
+	}
+	data, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal evidence: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(outputPath, data, 0o600); err != nil {
+		return fmt.Errorf("write evidence file: %w", err)
+	}
+	return nil
+}
+
+func TestWriteFaultDrillEvidenceCreatesParentDirectory(t *testing.T) {
+	output := filepath.Join(t.TempDir(), "nested", "http", "evidence.json")
+	if err := writeFaultDrillEvidence(output, map[string]any{"schema_version": 1}); err != nil {
+		t.Fatalf("write nested evidence: %v", err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatalf("read nested evidence: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatalf("decode nested evidence: %v", err)
+	}
+	if document["schema_version"] != float64(1) {
+		t.Fatalf("unexpected evidence document: %v", document)
 	}
 }
