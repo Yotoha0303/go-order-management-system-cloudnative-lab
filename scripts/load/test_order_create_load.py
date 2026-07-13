@@ -4,7 +4,7 @@ import argparse
 import importlib.util
 import json
 import pathlib
-import tempfile
+import sys
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +13,7 @@ MODULE_PATH = pathlib.Path(__file__).with_name("order_create_load.py")
 SPEC = importlib.util.spec_from_file_location("order_create_load", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 load = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = load
 SPEC.loader.exec_module(load)
 
 
