@@ -86,6 +86,14 @@ def validate_levels(raw: str) -> tuple[int, ...]:
     return levels
 
 
+def stage_request_limit(remaining: int, stages_left: int) -> int:
+    if stages_left < 1:
+        raise ValueError("stages left must be positive")
+    if remaining < stages_left:
+        raise ValueError("remaining request budget must reserve at least one request per stage")
+    return max(1, remaining // stages_left)
+
+
 def api_json(
     *,
     base_url: str,
@@ -399,8 +407,8 @@ def validate_args(args: argparse.Namespace) -> tuple[int, ...]:
         raise ValueError(f"stage duration must be between 0.1 and {MAX_STAGE_SECONDS} seconds")
     if not 0.1 <= args.request_timeout_seconds <= 20.0:
         raise ValueError("request timeout must be between 0.1 and 20 seconds")
-    if not 1 <= args.max_requests <= MAX_REQUESTS:
-        raise ValueError(f"maximum requests must be between 1 and {MAX_REQUESTS}")
+    if not len(levels) <= args.max_requests <= MAX_REQUESTS:
+        raise ValueError(f"maximum requests must be between the number of stages and {MAX_REQUESTS}")
     return levels
 
 
@@ -442,9 +450,9 @@ def main() -> int:
     all_samples: list[Sample] = []
     stage_documents: list[dict[str, Any]] = []
     remaining = args.max_requests
-    for concurrency in levels:
-        if remaining <= 0:
-            break
+    for index, concurrency in enumerate(levels):
+        stages_left = len(levels) - index
+        stage_limit = stage_request_limit(remaining, stages_left)
         stage_name = f"c{concurrency}"
         samples, elapsed, sequence = run_stage(
             base_url=args.base_url,
@@ -454,18 +462,17 @@ def main() -> int:
             stage_name=stage_name,
             concurrency=concurrency,
             duration_seconds=args.stage_seconds,
-            request_limit=remaining,
+            request_limit=stage_limit,
             timeout_seconds=args.request_timeout_seconds,
             sequence_offset=sequence,
         )
+        if not samples:
+            raise RuntimeError(f"measured stage {stage_name} produced no requests")
         all_samples.extend(samples)
         remaining -= len(samples)
-        stage_documents.append(summarize_stage(stage_name, concurrency, elapsed, samples))
-        if not samples:
-            break
-
-    if not all_samples:
-        raise RuntimeError("measured load produced no requests")
+        stage_document = summarize_stage(stage_name, concurrency, elapsed, samples)
+        stage_document["request_limit"] = stage_limit
+        stage_documents.append(stage_document)
 
     document = {
         "schema_version": 1,
