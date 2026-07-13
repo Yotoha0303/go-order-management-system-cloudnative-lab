@@ -1,0 +1,61 @@
+name: Fault Drill Contracts
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/fault-drills.yml"
+      - ".github/workflows/fault-drill-contracts.yml"
+      - "scripts/fault-drills/**"
+      - "scripts/verify/fault-drill-contracts.py"
+      - "internal/ordersvc/fault_drill_test.go"
+      - "internal/platform/resiliencehttp/fault_drill_test.go"
+      - "docs/verification/runtime-fault-drills.md"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/fault-drills.yml"
+      - ".github/workflows/fault-drill-contracts.yml"
+      - "scripts/fault-drills/**"
+      - "scripts/verify/fault-drill-contracts.py"
+      - "internal/ordersvc/fault_drill_test.go"
+      - "internal/platform/resiliencehttp/fault_drill_test.go"
+      - "docs/verification/runtime-fault-drills.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fault-drill-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify bounded runtime fault-drill contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile and test deterministic drill helpers
+        run: |
+          go test ./internal/platform/resiliencehttp \
+            -run '^TestFaultDrillHTTPTimeoutCircuitRecovery$' -count=1 -v
+          go test ./internal/ordersvc \
+            -run '^TestFaultDrillWorkerLease(Process|Configuration)$' -count=1 -v
+          bash -n scripts/fault-drills/migration-failure.sh
+          python3 -m compileall -q scripts/verify/fault-drill-contracts.py
+
+      - name: Verify fault-drill workflow contracts
+        run: python3 scripts/verify/fault-drill-contracts.py
