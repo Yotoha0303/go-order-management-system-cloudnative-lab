@@ -9,6 +9,8 @@ CONTRACT_WORKFLOW = ROOT / ".github/workflows/delivery-contracts.yml"
 DEPLOYMENT_TOOL = ROOT / "scripts/release/deployment.py"
 DEPLOYMENT_TEST = ROOT / "scripts/release/test_deployment.py"
 DOCUMENTATION = ROOT / "docs/verification/test-environment-delivery.md"
+BASE_KUSTOMIZATION = ROOT / "deploy/kubernetes/base/kustomization.yaml"
+MIGRATION_RETENTION = ROOT / "deploy/kubernetes/base/migration-evidence-retention.yaml"
 
 EXPECTED_SERVICES = (
     "api-gateway",
@@ -70,18 +72,38 @@ def verify_contract_workflow() -> None:
     require("issues: write" not in workflow, "contract verification must not write issues")
     require("python3 -m unittest" in workflow, "deployment unit tests are not wired")
     require("scripts/verify/delivery-contracts.py" in workflow, "static delivery verification is not wired")
+    for path in (
+        "deploy/kubernetes/base/kustomization.yaml",
+        "deploy/kubernetes/base/migration-evidence-retention.yaml",
+    ):
+        require(workflow.count(path) == 2, f"delivery contracts must track {path}")
 
 
 def verify_tooling_and_docs() -> None:
     tool = read_text(DEPLOYMENT_TOOL)
     tests = read_text(DEPLOYMENT_TEST)
     docs = read_text(DOCUMENTATION)
+    base = read_text(BASE_KUSTOMIZATION)
+    retention = read_text(MIGRATION_RETENTION)
     require("EXPECTED_RENDER_COUNTS" in tool, "rendering must enforce exact application occurrence counts")
     require("verify_inventory" in tool, "deployed inventory verification is missing")
     require("DIGEST_REFERENCE_RE" in tool, "deployment references must be digest-qualified")
+    require("accepted_references" in tool, "all application containers must be restricted to accepted references")
     require("test_render_replaces_exact_application_occurrences" in tests, "render happy-path test is missing")
     require("test_verify_inventory_accepts_exact_deployments_and_migrations" in tests, "inventory happy-path test is missing")
     require("test_verify_inventory_rejects_mutable_application_image" in tests, "mutable-image rejection test is missing")
+    require(
+        "test_verify_inventory_rejects_unaccepted_application_sidecar_digest" in tests,
+        "unaccepted application sidecar rejection test is missing",
+    )
+    require(
+        "migration-evidence-retention.yaml" in base,
+        "base Kustomization must retain migration evidence through rollback verification",
+    )
+    require(
+        retention.count("ttlSecondsAfterFinished: 3600") == 4,
+        "all four migration Jobs must remain available for the bounded delivery run",
+    )
     for phrase in (
         "GitHub Actions 内的一次性 kind 集群",
         "不会发布到 GitHub 之外",
