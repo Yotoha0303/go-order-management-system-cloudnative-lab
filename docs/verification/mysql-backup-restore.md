@@ -32,6 +32,8 @@ go_order_ordering
 - `--order-by-primary`；
 - `--skip-dump-date` 与 `--skip-comments`。
 
+Restorable Dump 保留 MySQL 默认的 `FOREIGN_KEY_CHECKS=0` 恢复保护，避免外键依赖表因文本导出顺序而无法恢复。脚本在接受 Dump 前显式检查该保护语句。
+
 这提供当前项目规模下可重复的逻辑快照，但不代表跨四库的全局分布式时间点一致性。四库之间没有由 MySQL 提供的单一全局事务快照；工作流依靠停止写入来缩小并消除测试环境中的跨库变化窗口。
 
 ## Backup Manifest
@@ -58,7 +60,7 @@ go_order_ordering
 - 不覆盖源数据库；
 - 不对公网开放端口；
 - 使用独立临时密码；
-- 在脚本退出时删除。
+- 在脚本退出时连同匿名数据卷一起删除。
 
 四个 Dump 导入后，工作流验证：
 
@@ -68,20 +70,39 @@ go_order_ordering
 - Inventory 中存在库存和库存变更记录；
 - Ordering 中存在至少三类业务订单及订单项。
 
-随后从恢复容器重新导出四个数据库，并与原始 Dump 逐字节比较。恢复后的规范化 Dump 必须完全一致。
+## 逻辑 Schema 指纹与有序数据指纹
+
+恢复正确性不能依赖完整 SQL 文本逐字节相等。MySQL 8.4 在重建等价表后，可能把隐式字符集声明规范化为显式 `CHARACTER SET` 文本；此时逻辑 Schema 相同，但第二次 `mysqldump` 的序列化文本不同。
+
+因此脚本对 Source-Before、Restored 和 Source-After 分别生成确定性逻辑指纹：
+
+- `information_schema.SCHEMATA`：数据库默认字符集、默认 Collation 和默认 Encryption；
+- `information_schema.TABLES`：表、引擎、Collation、Create Options 与下一 `AUTO_INCREMENT` 值；
+- `information_schema.COLUMNS`：列顺序、类型、空值、默认值、Extra、字符集、Collation 与生成列表达式；
+- `information_schema.STATISTICS`：索引、唯一性、列顺序、前缀与索引类型；
+- `TABLE_CONSTRAINTS` 与 `KEY_COLUMN_USAGE`：主键、唯一键、外键、列映射与约束是否 Enforced；
+- `CHECK_CONSTRAINTS`：完整 CHECK 约束表达式和执行状态；
+- `REFERENTIAL_CONSTRAINTS`：外键更新与删除规则；
+- `TRIGGERS`：触发器时机、事件、目标表、动作和触发器执行上下文，包括 SQL Mode、Definer、Client Character Set 与 Connection/Database Collation；
+- `ROUTINES` 与 `PARAMETERS`：存储过程与函数的定义、返回类型、参数、Deterministic、SQL Data Access、Security Type、SQL Mode、Definer 和字符集执行上下文；
+- Data-Only Dump：不包含建表语句，按主键排序并使用 Hex Blob。
+
+执行语句和注释使用 Hex 编码写入指纹文件，避免换行、Tab 或字符转义破坏稳定的行结构。每个组成文件都生成 SHA-256。
+
+Restored 指纹必须与 Source-Before 完全一致；这证明恢复后的数据库默认属性、表、列、下一自增值、索引、主键/唯一键/外键/CHECK 约束、触发器、存储过程与函数、执行上下文和有序数据一致，而不把 MySQL 的等价 SQL 文本规范化误判为数据损坏。
 
 ## 源数据库保持不变
 
-在恢复验证完成后，脚本再次从源 MySQL 导出四个数据库。每个 Source-After Dump 必须与备份时的 Source-Before Dump 完全一致。这证明隔离恢复没有执行源库 DROP、IMPORT、UPDATE 或其他修改。
+在恢复验证完成后，脚本重新生成 Source-After 的同一组逻辑 Schema 指纹与有序数据指纹。Source-After 必须与 Source-Before 完全一致。这证明隔离恢复没有执行源库 DROP、IMPORT、UPDATE 或其他修改。
 
 ## 证据
 
 GitHub Actions Artifact 包含：
 
-- 四个合成数据 SQL Dump；
+- 四个合成数据 Restorable SQL Dump；
 - `backup-manifest.json`；
 - 验证后的 Dump 列表；
-- Source-Before、Source-After 与 Restored SHA-256；
+- Source-Before、Restored 与 Source-After 的完整逻辑 Schema/数据组成文件及 SHA-256；
 - 恢复数据计数；
 - Backup/Restore Duration；
 - 损坏 Dump 被拒绝的负测试结果；
