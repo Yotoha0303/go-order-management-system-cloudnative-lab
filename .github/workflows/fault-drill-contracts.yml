@@ -51,7 +51,7 @@ jobs:
       - name: Compile and test deterministic drill helpers
         run: |
           go test ./internal/platform/resiliencehttp \
-            -run '^TestFaultDrillHTTPTimeoutCircuitRecovery$' -count=1 -v
+            -run '^Test(FaultDrillHTTPTimeoutCircuitRecovery|WriteFaultDrillEvidenceAnchorsRelativePathToWorkspace)$' -count=1 -v
           go test ./internal/ordersvc \
             -run '^TestFaultDrillWorkerLease(Process|Configuration)$' -count=1 -v
           bash -n scripts/fault-drills/migration-failure.sh
