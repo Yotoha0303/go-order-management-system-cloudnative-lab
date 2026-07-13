@@ -37,6 +37,8 @@ def verify_runtime_workflow() -> None:
     require(workflow.count("issues: write") == 1, "issue write permission must be isolated to evidence")
     require("packages: write" not in workflow, "backup verification must not write packages")
     require("scripts/smoke/microservices-saga.sh" in workflow, "synthetic representative data creation is missing")
+    require("Create representative synthetic business data\n        shell: bash" in workflow, "Saga data creation must use explicit bash")
+    require("set -euo pipefail\n          sh scripts/smoke/microservices-saga.sh | tee" in workflow, "Saga pipeline failures must not be hidden by tee")
     require("Quiesce application writers" in workflow, "source writers must be stopped before fingerprinting")
     require("scripts/backup/run-backup-restore.sh" in workflow, "isolated backup/restore execution is missing")
     require("scripts/backup/manifest.py create" in workflow, "backup manifest creation is missing")
@@ -45,6 +47,7 @@ def verify_runtime_workflow() -> None:
     require("actions/upload-artifact@v4" in workflow, "backup evidence artifact is missing")
     require("retention-days: 30" in workflow, "synthetic backup evidence retention must be explicit")
     require("if: always()" in workflow and "docker compose down -v" in workflow, "disposable resources must always be removed")
+    require("docker rm -fv" in workflow, "restore container anonymous volumes must be removed")
     require('ACCEPTANCE_ISSUE_NUMBER: "50"' in workflow, "Phase 8.3 evidence issue is missing")
     require("Only synthetic CI data was stored" in workflow, "synthetic-data boundary is missing")
     for database in EXPECTED_DATABASES:
@@ -69,14 +72,20 @@ def verify_tooling_and_documentation() -> None:
     docs = read_text(DOCUMENTATION)
     require("EXPECTED_DATABASES" in tool, "exact database set is not encoded")
     require("sha256_file" in tool and "total_bytes" in tool, "backup integrity metadata is incomplete")
+    require("exact_dump_files" in tool, "unreferenced dump files must be rejected")
+    require("validate_utc_timestamp" in tool, "UTC backup creation time must be validated")
+    require("manifest MySQL version is required" in tool, "MySQL version metadata must be required")
     require("test_missing_dump_is_rejected" in tests, "missing-dump rejection test is absent")
+    require("test_extra_dump_is_rejected" in tests, "extra-dump rejection test is absent")
     require("test_corrupt_dump_is_rejected" in tests, "corrupt-dump rejection test is absent")
     require("test_unexpected_or_reordered_database_is_rejected" in tests, "unexpected database rejection test is absent")
+    require("test_timestamp_and_mysql_version_are_required" in tests, "version metadata rejection test is absent")
     require("--single-transaction" in restore, "logical backup must use a transactional snapshot")
     require("--skip-dump-date" in restore, "logical dumps must avoid volatile timestamps")
     require("MYSQL_PWD" in restore, "password must not be passed as a command-line argument")
     require(restore.count("cmp ") >= 2, "restored and source database equality checks are missing")
     require("trap cleanup EXIT" in restore, "isolated restore cleanup is missing")
+    require("docker rm -fv" in restore, "isolated restore volume cleanup is missing")
     for phrase in (
         "四个服务数据库",
         "隔离恢复",
