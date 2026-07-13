@@ -203,7 +203,7 @@ jobs:
             --warmup-seconds 5 \
             --stage-seconds 8 \
             --request-timeout-seconds 10 \
-            --max-requests 3000 \
+            --max-requests-per-stage 3000 \
             --measurement-start-file "${start_file}" \
             --output-dir load-evidence/load \
             | tee load-evidence/load-driver.log
@@ -218,6 +218,7 @@ jobs:
           grep -q '^stop_reason=completion_file$' load-evidence/resource-sampler.log
           test -s load-evidence/resource-samples.jsonl
           test "$(python3 -c 'import json; print(len(json.load(open("load-evidence/load/load-summary.json"))["stages"]))')" = "5"
+          test "$(python3 -c 'import json; print(json.load(open("load-evidence/load/load-summary.json"))["max_total_measured_requests"])')" = "15000"
 
       - name: Capture post-load operational state
         run: bash scripts/load/capture_state.sh load-evidence post
@@ -312,8 +313,8 @@ jobs:
               `- Measured errors across all bounded stages: ${process.env.MEASURED_ERRORS}`,
               `- First observed boundary: \`${process.env.BOUNDARY}\` at concurrency \`${process.env.BOUNDARY_CONCURRENCY}\``,
               '- All seven Prometheus scrape jobs were healthy before baseline capture.',
-              '- Five bounded concurrency levels (1/4/8/16/32) used unique Idempotency Keys against synthetic order creation.',
-              '- A request-ceiling-truncated stage is preserved as safety evidence but excluded from sustained capacity inference.',
+              '- Five bounded concurrency levels (1/4/8/16/32) each had an independent 3000-request safety ceiling; the total measured-request ceiling was 15000.',
+              '- A per-stage request-ceiling truncation is preserved as safety evidence but excluded from sustained capacity inference.',
               '- Resource samples cover measured stages only: after fixture/warm-up and before the completion marker.',
               '- Attempted and successful throughput are separated; boundary and later stages cannot inflate the reported best throughput.',
               '- Raw request samples, P50/P95/P99, container resources, MySQL, RabbitMQ and emitted-label Prometheus evidence are in the artifact.',
