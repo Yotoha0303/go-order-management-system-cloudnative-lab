@@ -76,15 +76,20 @@ Restorable Dump 保留 MySQL 默认的 `FOREIGN_KEY_CHECKS=0` 恢复保护，避
 
 因此脚本对 Source-Before、Restored 和 Source-After 分别生成确定性逻辑指纹：
 
-- `information_schema.TABLES`：表、引擎、Collation 与 Create Options；
-- `information_schema.COLUMNS`：列顺序、类型、空值、默认值、Extra、字符集与 Collation；
+- `information_schema.SCHEMATA`：数据库默认字符集、默认 Collation 和默认 Encryption；
+- `information_schema.TABLES`：表、引擎、Collation、Create Options 与下一 `AUTO_INCREMENT` 值；
+- `information_schema.COLUMNS`：列顺序、类型、空值、默认值、Extra、字符集、Collation 与生成列表达式；
 - `information_schema.STATISTICS`：索引、唯一性、列顺序、前缀与索引类型；
-- `TABLE_CONSTRAINTS` 与 `KEY_COLUMN_USAGE`：主键、唯一键、外键和列映射；
+- `TABLE_CONSTRAINTS` 与 `KEY_COLUMN_USAGE`：主键、唯一键、外键、列映射与约束是否 Enforced；
+- `CHECK_CONSTRAINTS`：完整 CHECK 约束表达式和执行状态；
 - `REFERENTIAL_CONSTRAINTS`：外键更新与删除规则；
-- `TRIGGERS`：触发器时机、事件、目标表和动作；
+- `TRIGGERS`：触发器时机、事件、目标表、动作和触发器执行上下文，包括 SQL Mode、Definer、Client Character Set 与 Connection/Database Collation；
+- `ROUTINES` 与 `PARAMETERS`：存储过程与函数的定义、返回类型、参数、Deterministic、SQL Data Access、Security Type、SQL Mode、Definer 和字符集执行上下文；
 - Data-Only Dump：不包含建表语句，按主键排序并使用 Hex Blob。
 
-每个组成文件都生成 SHA-256。Restored 指纹必须与 Source-Before 完全一致；这证明恢复后的逻辑 Schema、索引、约束、触发器和有序数据一致，而不把 MySQL 的等价 SQL 文本规范化误判为数据损坏。
+执行语句和注释使用 Hex 编码写入指纹文件，避免换行、Tab 或字符转义破坏稳定的行结构。每个组成文件都生成 SHA-256。
+
+Restored 指纹必须与 Source-Before 完全一致；这证明恢复后的数据库默认属性、表、列、下一自增值、索引、主键/唯一键/外键/CHECK 约束、触发器、存储过程与函数、执行上下文和有序数据一致，而不把 MySQL 的等价 SQL 文本规范化误判为数据损坏。
 
 ## 源数据库保持不变
 
@@ -97,7 +102,7 @@ GitHub Actions Artifact 包含：
 - 四个合成数据 Restorable SQL Dump；
 - `backup-manifest.json`；
 - 验证后的 Dump 列表；
-- Source-Before、Restored 与 Source-After 的逻辑 Schema/数据组成文件及 SHA-256；
+- Source-Before、Restored 与 Source-After 的完整逻辑 Schema/数据组成文件及 SHA-256；
 - 恢复数据计数；
 - Backup/Restore Duration；
 - 损坏 Dump 被拒绝的负测试结果；
