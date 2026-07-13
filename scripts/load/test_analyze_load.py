@@ -23,6 +23,8 @@ def stage(
     errors: int = 0,
     requests: int = 100,
     status_counts: dict[str, int] | None = None,
+    measurement_eligible: bool = True,
+    stop_reason: str = "duration",
 ) -> dict:
     return {
         "name": f"c{concurrency}",
@@ -35,6 +37,10 @@ def stage(
         "latency_ms": {"p50": p95 / 2, "p95": p95, "p99": p95 * 1.2, "max": p95 * 1.5},
         "status_counts": status_counts or {"201": requests - errors},
         "outcome_counts": {"success": requests - errors, "http_error": errors},
+        "configured_duration_seconds": 8.0,
+        "issuance_elapsed_seconds": 8.0 if measurement_eligible else 1.5,
+        "measurement_eligible": measurement_eligible,
+        "stop_reason": stop_reason,
     }
 
 
@@ -66,13 +72,38 @@ class LoadAnalysisTest(unittest.TestCase):
         self.assertEqual(result["classification"], "gateway_rate_limit")
         self.assertEqual(result["first_observed_at_concurrency"], 4)
 
-    def test_error_rate_boundary_precedes_plateau_inference(self) -> None:
+    def test_error_rate_boundary_precedes_same_stage_plateau_inference(self) -> None:
         result = analysis.infer_capacity_boundary(
             [stage(1, rps=10, p95=20), stage(8, rps=11, p95=80, errors=2)],
             {"order-service": {"peak_cpu_percent": 70.0}},
         )
         self.assertEqual(result["classification"], "request_error_boundary")
         self.assertEqual(result["first_observed_at_concurrency"], 8)
+
+    def test_earlier_plateau_precedes_later_request_errors(self) -> None:
+        result = analysis.infer_capacity_boundary(
+            [
+                stage(1, rps=10, p95=20),
+                stage(4, rps=40, p95=20),
+                stage(8, rps=44, p95=30),
+                stage(32, rps=50, p95=80, errors=5),
+            ],
+            {"order-service": {"peak_cpu_percent": 75.0}},
+        )
+        self.assertEqual(result["classification"], "throughput_plateau_with_tail_growth")
+        self.assertEqual(result["first_observed_at_concurrency"], 8)
+
+    def test_request_ceiling_is_not_misreported_as_capacity(self) -> None:
+        result = analysis.infer_capacity_boundary(
+            [
+                stage(1, rps=10, p95=20),
+                stage(4, rps=300, p95=10, measurement_eligible=False, stop_reason="request_limit"),
+            ],
+            {"api-gateway": {"peak_cpu_percent": 5.0}},
+        )
+        self.assertEqual(result["classification"], "request_ceiling_before_stage_duration")
+        self.assertEqual(result["first_observed_at_concurrency"], 4)
+        self.assertIn("measurement-safety boundary", result["inference"])
 
     def test_plateau_and_tail_growth_are_reported_separately_from_cpu_inference(self) -> None:
         result = analysis.infer_capacity_boundary(
