@@ -48,12 +48,14 @@ docker compose exec -T rabbitmq rabbitmqctl list_queues \
   > "${DESTINATION}/rabbitmq-queues.tsv"
 
 queries=(
-  'sum by (service,method,route,status) (go_order_http_server_requests_total)'
-  'histogram_quantile(0.95, sum by (le,service) (rate(go_order_http_server_request_duration_seconds_bucket[1m])))'
+  'sum by (service,method,route_group,status_class) (go_order_http_server_requests_total)'
+  'histogram_quantile(0.95, sum by (le,service,route_group) (rate(go_order_http_server_request_duration_seconds_bucket[1m])))'
   'sum by (service,upstream,operation,outcome) (go_order_http_client_attempts_total)'
   'go_order_rabbitmq_session_up'
   'sum by (service,operation,outcome) (go_order_rabbitmq_publish_total)'
-  'sum by (service,operation,outcome) (go_order_rabbitmq_consume_total)'
+  'sum by (outcome) (go_order_rabbitmq_delivery_total)'
+  'go_order_rabbitmq_queue_messages'
+  'go_order_rabbitmq_queue_consumers'
 )
 
 index=0
