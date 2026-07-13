@@ -104,11 +104,11 @@ def validate_levels(raw: str) -> tuple[int, ...]:
     return levels
 
 
-def write_measurement_start(path: pathlib.Path) -> str:
-    started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+def write_timestamp_marker(path: pathlib.Path, timestamp: str | None = None) -> str:
+    value = timestamp or dt.datetime.now(dt.timezone.utc).isoformat()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(started_at + "\n", encoding="utf-8")
-    return started_at
+    path.write_text(value + "\n", encoding="utf-8")
+    return value
 
 
 def api_json(
@@ -405,6 +405,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
     parser.add_argument("--max-requests-per-stage", type=int, default=3000)
     parser.add_argument("--measurement-start-file", type=pathlib.Path)
+    parser.add_argument("--measurement-complete-file", type=pathlib.Path)
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
     return parser.parse_args()
 
@@ -468,7 +469,7 @@ def main() -> int:
 
     measurement_started_at = dt.datetime.now(dt.timezone.utc).isoformat()
     if args.measurement_start_file is not None:
-        measurement_started_at = write_measurement_start(args.measurement_start_file)
+        measurement_started_at = write_timestamp_marker(args.measurement_start_file, measurement_started_at)
 
     all_samples: list[Sample] = []
     stage_documents: list[dict[str, Any]] = []
@@ -502,6 +503,9 @@ def main() -> int:
         stage_documents.append(stage_document)
 
     measurement_finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    if args.measurement_complete_file is not None:
+        measurement_finished_at = write_timestamp_marker(args.measurement_complete_file, measurement_finished_at)
+
     document = {
         "schema_version": 1,
         "run_id": args.run_id,
