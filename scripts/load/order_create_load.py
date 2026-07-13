@@ -44,15 +44,34 @@ class Allocator:
         self.limit = limit
         self.sequence = sequence_offset
         self.issued = 0
+        self.stop_reason: str | None = None
+        self.stopped_at: float | None = None
         self.lock = threading.Lock()
 
     def next(self) -> int | None:
         with self.lock:
-            if time.monotonic() >= self.deadline or self.issued >= self.limit:
+            now = time.monotonic()
+            if now >= self.deadline:
+                self._stop("duration", now)
+                return None
+            if self.issued >= self.limit:
+                self._stop("request_limit", now)
                 return None
             self.issued += 1
             self.sequence += 1
             return self.sequence
+
+    def _stop(self, reason: str, when: float) -> None:
+        if self.stop_reason is None:
+            self.stop_reason = reason
+            self.stopped_at = when
+
+    def result(self, fallback: float) -> tuple[str, float]:
+        with self.lock:
+            if self.stop_reason is None:
+                self._stop("workers_completed", fallback)
+            assert self.stop_reason is not None and self.stopped_at is not None
+            return self.stop_reason, self.stopped_at
 
 
 def percentile(values: list[float], quantile: float) -> float:
@@ -64,8 +83,7 @@ def percentile(values: list[float], quantile: float) -> float:
     if len(ordered) == 1:
         return ordered[0]
     position = quantile * (len(ordered) - 1)
-    lower = math.floor(position)
-    upper = math.ceil(position)
+    lower, upper = math.floor(position), math.ceil(position)
     if lower == upper:
         return ordered[lower]
     weight = position - lower
@@ -107,14 +125,11 @@ def api_json(
     data: bytes | None = None
     if payload is not None:
         headers["Content-Type"] = "application/json"
-        data = json.dumps(payload).encode("utf-8")
+        data = json.dumps(payload).encode()
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}{path}",
-        data=data,
-        method=method,
-        headers=headers,
+        f"{base_url.rstrip('/')}{path}", data=data, method=method, headers=headers
     )
     with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         body = json.loads(response.read())
@@ -151,7 +166,6 @@ def prepare_fixture(
     buyer_token = str(buyer_login["data"]["access_token"])
     if not admin_token or not buyer_token:
         raise RuntimeError("fixture login returned an empty access token")
-
     product = api_json(
         base_url=base_url,
         path="/api/v1/products",
@@ -181,7 +195,7 @@ def prepare_fixture(
         timeout_seconds=timeout_seconds,
         bearer_token=admin_token,
     )
-    fixture = {
+    return buyer_token, product_id, {
         "schema_version": 1,
         "run_id": run_id,
         "admin_username": admin_username,
@@ -190,7 +204,6 @@ def prepare_fixture(
         "initial_inventory": 100000,
         "tokens_persisted": False,
     }
-    return buyer_token, product_id, fixture
 
 
 def request_order(
@@ -210,7 +223,7 @@ def request_order(
             "idempotency_key": f"load-{run_id}-{stage}-{sequence}-{uuid.uuid4().hex[:12]}",
             "items": [{"product_id": product_id, "quantity": 1}],
         }
-    ).encode("utf-8")
+    ).encode()
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/api/v1/orders",
         data=payload,
@@ -222,8 +235,7 @@ def request_order(
         },
     )
     status: int | None = None
-    outcome = "error"
-    error: str | None = None
+    outcome, error = "error", None
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             status = response.status
@@ -232,23 +244,18 @@ def request_order(
     except urllib.error.HTTPError as exc:
         status = exc.code
         exc.read()
-        outcome = "http_error"
-        error = f"HTTPError:{exc.code}"
+        outcome, error = "http_error", f"HTTPError:{exc.code}"
     except urllib.error.URLError as exc:
-        outcome = "network_error"
-        error = f"URLError:{type(exc.reason).__name__}"
+        outcome, error = "network_error", f"URLError:{type(exc.reason).__name__}"
     except TimeoutError:
-        outcome = "timeout"
-        error = "TimeoutError"
-    except Exception as exc:
-        outcome = "client_error"
-        error = type(exc).__name__
-    duration_ms = (time.perf_counter() - started) * 1000.0
+        outcome, error = "timeout", "TimeoutError"
+    except Exception as exc:  # noqa: BLE001 - load-client boundary
+        outcome, error = "client_error", type(exc).__name__
     return Sample(
         stage=stage,
         sequence=sequence,
         started_at=started_wall,
-        duration_ms=round(duration_ms, 3),
+        duration_ms=round((time.perf_counter() - started) * 1000.0, 3),
         status=status,
         outcome=outcome,
         error=error,
@@ -267,18 +274,15 @@ def run_stage(
     request_limit: int,
     timeout_seconds: float,
     sequence_offset: int,
-) -> tuple[list[Sample], float, int]:
+) -> tuple[list[Sample], float, int, str, float]:
     started = time.monotonic()
     allocator = Allocator(started + duration_seconds, request_limit, sequence_offset)
     samples: list[Sample] = []
-    samples_lock = threading.Lock()
+    lock = threading.Lock()
 
     def worker() -> None:
         local: list[Sample] = []
-        while True:
-            sequence = allocator.next()
-            if sequence is None:
-                break
+        while (sequence := allocator.next()) is not None:
             local.append(
                 request_order(
                     base_url=base_url,
@@ -290,16 +294,23 @@ def run_stage(
                     timeout_seconds=timeout_seconds,
                 )
             )
-        with samples_lock:
+        with lock:
             samples.extend(local)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = [executor.submit(worker) for _ in range(concurrency)]
         for future in futures:
             future.result()
-    elapsed = max(time.monotonic() - started, 0.001)
+    finished = time.monotonic()
+    stop_reason, stopped_at = allocator.result(finished)
     samples.sort(key=lambda sample: sample.sequence)
-    return samples, elapsed, allocator.sequence
+    return (
+        samples,
+        max(finished - started, 0.001),
+        allocator.sequence,
+        stop_reason,
+        max(stopped_at - started, 0.0),
+    )
 
 
 def summarize_stage(name: str, concurrency: int, elapsed: float, samples: list[Sample]) -> dict[str, Any]:
@@ -338,14 +349,14 @@ def render_markdown(document: dict[str, Any]) -> str:
         f"- Request timeout: {document['request_timeout_seconds']}s",
         f"- Maximum measured requests: {document['max_requests']}",
         "",
-        "| Stage | Concurrency | Requests | Successes | Errors | Error rate | RPS | P50 ms | P95 ms | P99 ms | Max ms |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Stage | Concurrency | Requests | Successes | Errors | Error rate | RPS | P50 ms | P95 ms | P99 ms | Max ms | Stop | Eligible |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for stage in document["stages"]:
         latency = stage["latency_ms"]
         lines.append(
             "| {name} | {concurrency} | {requests} | {successes} | {errors} | {error_rate:.2%} | "
-            "{throughput_rps:.3f} | {p50:.3f} | {p95:.3f} | {p99:.3f} | {max_value:.3f} |".format(
+            "{throughput_rps:.3f} | {p50:.3f} | {p95:.3f} | {p99:.3f} | {maximum:.3f} | {stop} | {eligible} |".format(
                 name=stage["name"],
                 concurrency=stage["concurrency"],
                 requests=stage["requests"],
@@ -356,11 +367,15 @@ def render_markdown(document: dict[str, Any]) -> str:
                 p50=latency["p50"],
                 p95=latency["p95"],
                 p99=latency["p99"],
-                max_value=latency["max"],
+                maximum=latency["max"],
+                stop=stage["stop_reason"],
+                eligible="yes" if stage["measurement_eligible"] else "no",
             )
         )
     lines.extend(
         [
+            "",
+            "> A stage stopped by the request ceiling is retained as safety evidence but is not treated as a sustained-duration capacity measurement.",
             "",
             "> This file contains synthetic bounded measurements from one GitHub-hosted runner. It is not a production SLO or capacity guarantee.",
             "",
@@ -416,7 +431,6 @@ def main() -> int:
     args = parse_args()
     levels = validate_args(args)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-
     if args.prepare_fixture:
         token, product_id, fixture = prepare_fixture(
             base_url=args.base_url,
@@ -434,7 +448,7 @@ def main() -> int:
         token = os.environ[args.token_env]
         product_id = int(args.product_id)
 
-    warmup_samples, warmup_elapsed, sequence = run_stage(
+    warmup_samples, warmup_elapsed, sequence, _, _ = run_stage(
         base_url=args.base_url,
         token=token,
         product_id=product_id,
@@ -451,10 +465,9 @@ def main() -> int:
     stage_documents: list[dict[str, Any]] = []
     remaining = args.max_requests
     for index, concurrency in enumerate(levels):
-        stages_left = len(levels) - index
-        stage_limit = stage_request_limit(remaining, stages_left)
+        stage_limit = stage_request_limit(remaining, len(levels) - index)
         stage_name = f"c{concurrency}"
-        samples, elapsed, sequence = run_stage(
+        samples, elapsed, sequence, stop_reason, issuance_elapsed = run_stage(
             base_url=args.base_url,
             token=token,
             product_id=product_id,
@@ -471,7 +484,15 @@ def main() -> int:
         all_samples.extend(samples)
         remaining -= len(samples)
         stage_document = summarize_stage(stage_name, concurrency, elapsed, samples)
-        stage_document["request_limit"] = stage_limit
+        stage_document.update(
+            {
+                "request_limit": stage_limit,
+                "configured_duration_seconds": args.stage_seconds,
+                "issuance_elapsed_seconds": round(issuance_elapsed, 3),
+                "stop_reason": stop_reason,
+                "measurement_eligible": stop_reason == "duration",
+            }
+        )
         stage_documents.append(stage_document)
 
     document = {
@@ -486,6 +507,7 @@ def main() -> int:
         "max_requests": args.max_requests,
         "warmup": summarize_stage("warmup", min(4, levels[-1]), warmup_elapsed, warmup_samples),
         "stages": stage_documents,
+        "measurement_eligible_stages": sum(stage["measurement_eligible"] for stage in stage_documents),
         "measured_requests": len(all_samples),
         "measured_successes": sum(sample.outcome == "success" for sample in all_samples),
         "measured_errors": sum(sample.outcome != "success" for sample in all_samples),
