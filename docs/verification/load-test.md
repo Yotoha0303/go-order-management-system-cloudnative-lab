@@ -50,13 +50,15 @@ Default profile:
 | --- | ---: |
 | Warm-up | 5 seconds, maximum 200 requests |
 | Concurrency levels | 1, 4, 8, 16, 32 |
-| Measured duration per level | 8 seconds |
+| Measured duration per level | up to 8 seconds |
 | Measured request ceiling | 3000 |
 | Per-request timeout | 10 seconds |
-| Resource sampling | every 2 seconds, maximum 70 seconds |
+| Resource sampling | every 2 seconds until driver completion; 180-second safety ceiling |
 | Workflow timeout | 30 minutes |
 
 Hard code limits prevent concurrency above 32, a measured stage above 15 seconds, warm-up above 10 seconds or more than 3000 measured requests.
+
+The global request ceiling is a safety boundary. Each stage records its configured duration, issuance duration and stop reason. A stage that reaches its request allocation before eight seconds is retained in the artifact, but is marked `measurement_eligible=false`; its burst RPS and latency are not used as sustained-duration capacity evidence.
 
 Gateway rate-limit values are raised only inside this disposable workflow so the first measured boundary is more likely to be the synchronous business path rather than the default protective token bucket. HTTP 429 remains recorded and is classified explicitly when it occurs.
 
@@ -78,7 +80,10 @@ Each stage reports:
 - error rate;
 - status and outcome counts;
 - throughput in requests/second;
-- P50, P95, P99 and maximum latency.
+- P50, P95, P99 and maximum latency;
+- configured duration and request-issuance duration;
+- stop reason;
+- sustained-duration eligibility.
 
 Warm-up requests are reported separately and excluded from measured request totals.
 
@@ -89,21 +94,24 @@ Before and after the measurement, the workflow captures:
 - `docker stats --no-stream`;
 - MySQL global status, service table counts, order state and Outbox state;
 - RabbitMQ queue names, messages, ready/unacknowledged counts and consumers;
-- Prometheus HTTP request, latency, client attempt and RabbitMQ queries;
+- Prometheus HTTP request, latency, client attempt and RabbitMQ delivery queries using the emitted label names;
 - Gateway readiness.
 
-During the measured interval, `resource_sampler.py` writes timestamped container resource samples as JSON Lines.
+During the measured interval, `resource_sampler.py` writes timestamped container resource samples as JSON Lines. Sampling remains active until the load driver writes a completion marker. Reaching the sampler safety ceiling before that marker fails the workflow instead of accepting incomplete resource peaks.
 
 Failure diagnostics include Compose state, complete container logs, current resource state and Prometheus target status. Cleanup always removes containers, networks and volumes.
 
 ## Capacity-boundary rules
 
-`analyze_load.py` separates measured evidence from inference and evaluates stages in this order:
+`analyze_load.py` separates measured evidence from inference and evaluates every stage chronologically. At each concurrency level it applies:
 
-1. **Gateway rate limit**: any HTTP 429 is a hard measured boundary.
-2. **Request error boundary**: error rate reaches at least 2%.
-3. **Throughput plateau with tail growth**: from one level to the next, throughput grows less than 15% while P95 grows more than 30%.
-4. **Not reached within bounded range**: none of the above occurs.
+1. **Measured request ceiling before stage duration**: records a measurement-safety boundary and excludes that truncated stage from sustained capacity inference.
+2. **Gateway rate limit**: any HTTP 429 is a hard measured boundary.
+3. **Request error boundary**: error rate reaches at least 2%.
+4. **Throughput plateau with tail growth**: from the previous sustained-duration level to the current level, throughput grows less than 15% while P95 grows more than 30%.
+5. **Not reached within bounded range**: none of the above occurs.
+
+Because candidates are checked in chronological order, a plateau first observed at concurrency 8 cannot be hidden by request errors that appear later at concurrency 32.
 
 For a plateau, the highest sampled container CPU is recorded only as a diagnostic lead. It is not declared the root cause without corroborating MySQL, RabbitMQ, metrics, logs or trace evidence.
 
@@ -116,6 +124,7 @@ Compare two runs only when all of the following match:
 - source commit and code path;
 - GitHub Runner class;
 - concurrency levels, stage duration and request ceiling;
+- the same set of sustained-duration eligible stages;
 - Gateway rate-limit overrides;
 - timeout delay;
 - worker replica counts;
