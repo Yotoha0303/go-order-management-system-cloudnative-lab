@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/deploy-test-release.yml"
       - ".github/workflows/delivery-contracts.yml"
+      - "deploy/kubernetes/base/kustomization.yaml"
+      - "deploy/kubernetes/base/migration-evidence-retention.yaml"
       - "scripts/release/deployment.py"
       - "scripts/release/test_deployment.py"
       - "scripts/verify/delivery-contracts.py"
@@ -15,6 +17,8 @@ on:
     paths:
       - ".github/workflows/deploy-test-release.yml"
       - ".github/workflows/delivery-contracts.yml"
+      - "deploy/kubernetes/base/kustomization.yaml"
+      - "deploy/kubernetes/base/migration-evidence-retention.yaml"
       - "scripts/release/deployment.py"
       - "scripts/release/test_deployment.py"
       - "scripts/verify/delivery-contracts.py"
