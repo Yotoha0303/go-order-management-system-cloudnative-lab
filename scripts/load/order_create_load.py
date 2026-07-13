@@ -21,7 +21,7 @@ from typing import Any
 MAX_CONCURRENCY = 32
 MAX_STAGE_SECONDS = 15.0
 MAX_WARMUP_SECONDS = 10.0
-MAX_REQUESTS = 3000
+MAX_REQUESTS_PER_STAGE = 3000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -102,14 +102,6 @@ def validate_levels(raw: str) -> tuple[int, ...]:
     if tuple(sorted(set(levels))) != levels:
         raise ValueError("concurrency levels must be strictly increasing and unique")
     return levels
-
-
-def stage_request_limit(remaining: int, stages_left: int) -> int:
-    if stages_left < 1:
-        raise ValueError("stages left must be positive")
-    if remaining < stages_left:
-        raise ValueError("remaining request budget must reserve at least one request per stage")
-    return max(1, remaining // stages_left)
 
 
 def write_measurement_start(path: pathlib.Path) -> str:
@@ -355,7 +347,8 @@ def render_markdown(document: dict[str, Any]) -> str:
         f"- Product ID: `{document['product_id']}`",
         f"- Warm-up: {document['warmup']['requests']} requests / {document['warmup']['elapsed_seconds']}s",
         f"- Request timeout: {document['request_timeout_seconds']}s",
-        f"- Maximum measured requests: {document['max_requests']}",
+        f"- Maximum requests per measured stage: {document['max_requests_per_stage']}",
+        f"- Maximum total measured requests: {document['max_total_measured_requests']}",
         "",
         "| Stage | Concurrency | Requests | Successes | Errors | Error rate | Attempt RPS | Success RPS | P50 ms | P95 ms | P99 ms | Max ms | Stop | Eligible |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
@@ -384,7 +377,7 @@ def render_markdown(document: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "> A stage stopped by the request ceiling is retained as safety evidence but is not treated as a sustained-duration capacity measurement.",
+            "> Each measured stage has its own request safety ceiling. A stage stopped by that ceiling is retained as safety evidence but is not treated as a sustained-duration capacity measurement.",
             "",
             "> Attempt throughput and successful throughput are reported separately; failed fast responses cannot inflate useful sustained throughput.",
             "",
@@ -410,7 +403,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-seconds", type=float, default=5.0)
     parser.add_argument("--stage-seconds", type=float, default=8.0)
     parser.add_argument("--request-timeout-seconds", type=float, default=10.0)
-    parser.add_argument("--max-requests", type=int, default=3000)
+    parser.add_argument("--max-requests-per-stage", type=int, default=3000)
     parser.add_argument("--measurement-start-file", type=pathlib.Path)
     parser.add_argument("--output-dir", type=pathlib.Path, required=True)
     return parser.parse_args()
@@ -434,8 +427,8 @@ def validate_args(args: argparse.Namespace) -> tuple[int, ...]:
         raise ValueError(f"stage duration must be between 0.1 and {MAX_STAGE_SECONDS} seconds")
     if not 0.1 <= args.request_timeout_seconds <= 20.0:
         raise ValueError("request timeout must be between 0.1 and 20 seconds")
-    if not len(levels) <= args.max_requests <= MAX_REQUESTS:
-        raise ValueError(f"maximum requests must be between the number of stages and {MAX_REQUESTS}")
+    if not 1 <= args.max_requests_per_stage <= MAX_REQUESTS_PER_STAGE:
+        raise ValueError(f"maximum requests per stage must be between 1 and {MAX_REQUESTS_PER_STAGE}")
     return levels
 
 
@@ -468,7 +461,7 @@ def main() -> int:
         stage_name="warmup",
         concurrency=min(4, levels[-1]),
         duration_seconds=args.warmup_seconds,
-        request_limit=min(200, args.max_requests),
+        request_limit=min(200, args.max_requests_per_stage),
         timeout_seconds=args.request_timeout_seconds,
         sequence_offset=0,
     )
@@ -479,9 +472,7 @@ def main() -> int:
 
     all_samples: list[Sample] = []
     stage_documents: list[dict[str, Any]] = []
-    remaining = args.max_requests
-    for index, concurrency in enumerate(levels):
-        stage_limit = stage_request_limit(remaining, len(levels) - index)
+    for concurrency in levels:
         stage_name = f"c{concurrency}"
         samples, elapsed, sequence, stop_reason, issuance_elapsed = run_stage(
             base_url=args.base_url,
@@ -491,18 +482,17 @@ def main() -> int:
             stage_name=stage_name,
             concurrency=concurrency,
             duration_seconds=args.stage_seconds,
-            request_limit=stage_limit,
+            request_limit=args.max_requests_per_stage,
             timeout_seconds=args.request_timeout_seconds,
             sequence_offset=sequence,
         )
         if not samples:
             raise RuntimeError(f"measured stage {stage_name} produced no requests")
         all_samples.extend(samples)
-        remaining -= len(samples)
         stage_document = summarize_stage(stage_name, concurrency, elapsed, samples)
         stage_document.update(
             {
-                "request_limit": stage_limit,
+                "request_limit": args.max_requests_per_stage,
                 "configured_duration_seconds": args.stage_seconds,
                 "issuance_elapsed_seconds": round(issuance_elapsed, 3),
                 "stop_reason": stop_reason,
@@ -523,7 +513,8 @@ def main() -> int:
         "concurrency_levels": list(levels),
         "stage_seconds": args.stage_seconds,
         "request_timeout_seconds": args.request_timeout_seconds,
-        "max_requests": args.max_requests,
+        "max_requests_per_stage": args.max_requests_per_stage,
+        "max_total_measured_requests": args.max_requests_per_stage * len(levels),
         "warmup": summarize_stage("warmup", min(4, levels[-1]), warmup_elapsed, warmup_samples),
         "stages": stage_documents,
         "measurement_eligible_stages": sum(stage["measurement_eligible"] for stage in stage_documents),
