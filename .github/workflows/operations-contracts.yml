@@ -1,0 +1,50 @@
+name: Operations Contracts
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/load-test.yml"
+      - ".github/workflows/operations-contracts.yml"
+      - "scripts/load/**"
+      - "scripts/verify/operations-contracts.py"
+      - "docs/runbooks/operations.md"
+      - "docs/verification/load-test.md"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/load-test.yml"
+      - ".github/workflows/operations-contracts.yml"
+      - "scripts/load/**"
+      - "scripts/verify/operations-contracts.py"
+      - "docs/runbooks/operations.md"
+      - "docs/verification/load-test.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operations-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify Runbook and bounded load-test contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile and test load tooling
+        run: |
+          python3 -m compileall -q scripts/load scripts/verify/operations-contracts.py
+          python3 -m unittest discover -s scripts/load -p "test_*.py" -v
+          bash -n scripts/load/capture_state.sh
+
+      - name: Verify operational workflow and documentation contracts
+        run: python3 scripts/verify/operations-contracts.py
