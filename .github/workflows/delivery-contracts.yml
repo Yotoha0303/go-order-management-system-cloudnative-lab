@@ -1,0 +1,54 @@
+name: Delivery Contracts
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/deploy-test-release.yml"
+      - ".github/workflows/delivery-contracts.yml"
+      - "deploy/kubernetes/base/kustomization.yaml"
+      - "deploy/kubernetes/base/migration-evidence-retention.yaml"
+      - "scripts/release/deployment.py"
+      - "scripts/release/test_deployment.py"
+      - "scripts/verify/delivery-contracts.py"
+      - "docs/verification/test-environment-delivery.md"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/deploy-test-release.yml"
+      - ".github/workflows/delivery-contracts.yml"
+      - "deploy/kubernetes/base/kustomization.yaml"
+      - "deploy/kubernetes/base/migration-evidence-retention.yaml"
+      - "scripts/release/deployment.py"
+      - "scripts/release/test_deployment.py"
+      - "scripts/verify/delivery-contracts.py"
+      - "docs/verification/test-environment-delivery.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-contracts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify disposable test delivery contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile delivery tooling
+        run: python3 -m compileall -q scripts/release scripts/verify/delivery-contracts.py
+
+      - name: Test release and deployment tooling
+        run: python3 -m unittest discover -s scripts/release -p "test_*.py" -v
+
+      - name: Verify delivery workflow contracts
+        run: python3 scripts/verify/delivery-contracts.py

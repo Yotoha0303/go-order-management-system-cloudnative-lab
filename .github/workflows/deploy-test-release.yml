@@ -1,0 +1,368 @@
+name: Deploy Verified Release to Test
+
+on:
+  workflow_run:
+    workflows: ["Publish Immutable Images"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: GitHub Actions run ID that owns the verified release manifest
+        required: true
+        type: string
+      release_commit:
+        description: Full 40-character source commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-release-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy, smoke and rollback digest-pinned release
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      release_commit: ${{ steps.source.outputs.release_commit }}
+      source_run_id: ${{ steps.source.outputs.source_run_id }}
+      artifact_name: ${{ steps.evidence.outputs.artifact_name }}
+    env:
+      CLUSTER_NAME: go-order-release-${{ github.run_id }}
+      KUBERNETES_NAMESPACE: go-order-system
+      BASE_URL: http://127.0.0.1:8082
+      MYSQL_PASSWORD: local-dev-password
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Resolve trusted release source
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            source_run_id="${{ github.event.workflow_run.id }}"
+            release_commit="${{ github.event.workflow_run.head_sha }}"
+          else
+            source_run_id="${{ inputs.source_run_id }}"
+            release_commit="${{ inputs.release_commit }}"
+          fi
+          if [[ ! "${source_run_id}" =~ ^[0-9]+$ ]]; then
+            echo "source run ID must be numeric" >&2
+            exit 1
+          fi
+          if [[ ! "${release_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "release commit must be a full lowercase SHA" >&2
+            exit 1
+          fi
+          echo "source_run_id=${source_run_id}" >> "${GITHUB_OUTPUT}"
+          echo "release_commit=${release_commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout accepted source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.release_commit }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install sigs.k8s.io/kind@v0.27.0
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
+          curl --fail --location --silent --show-error \
+            --output kubectl \
+            https://dl.k8s.io/release/v1.32.2/bin/linux/amd64/kubectl
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kind version
+          kubectl version --client
+          kustomize version
+
+      - name: Download verified release manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: release-manifest-${{ steps.source.outputs.release_commit }}
+          path: release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.source.outputs.source_run_id }}
+
+      - name: Validate manifest and render exact digest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/release/manifest.py verify \
+            --manifest release/release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${{ steps.source.outputs.release_commit }}" \
+            > release/release-references.txt
+          test "$(wc -l < release/release-references.txt | tr -d ' ')" -eq 7
+          kustomize build deploy/kubernetes/overlays/local > release/kubernetes-local.yaml
+          python3 scripts/release/deployment.py render \
+            --manifest release/release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${{ steps.source.outputs.release_commit }}" \
+            --input release/kubernetes-local.yaml \
+            --output release/kubernetes-release.yaml
+          if grep -q 'go-order-management-system/.*:local' release/kubernetes-release.yaml; then
+            echo "digest release still contains local application tags" >&2
+            exit 1
+          fi
+
+      - name: Create disposable kind cluster
+        shell: bash
+        run: |
+          set -euo pipefail
+          kind create cluster \
+            --name "${CLUSTER_NAME}" \
+            --config deploy/kubernetes/overlays/local/kind-config.yaml
+          kubectl config use-context "kind-${CLUSTER_NAME}" >/dev/null
+
+      - name: Configure ephemeral GHCR pull credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl apply -f deploy/kubernetes/base/namespace.yaml
+          for attempt in $(seq 1 30); do
+            if kubectl -n "${KUBERNETES_NAMESPACE}" get serviceaccount default >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          kubectl -n "${KUBERNETES_NAMESPACE}" create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username="${GITHUB_ACTOR}" \
+            --docker-password="${GHCR_TOKEN}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${KUBERNETES_NAMESPACE}" patch serviceaccount default \
+            --type merge \
+            -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+
+      - name: Deploy accepted digest set
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl apply -f release/kubernetes-release.yaml
+          kubectl -n "${KUBERNETES_NAMESPACE}" rollout status statefulset/mysql --timeout=240s
+          kubectl -n "${KUBERNETES_NAMESPACE}" rollout status statefulset/rabbitmq --timeout=240s
+          for job in identity-migrate catalog-migrate inventory-migrate ordering-migrate; do
+            kubectl -n "${KUBERNETES_NAMESPACE}" wait \
+              --for=condition=complete "job/${job}" --timeout=300s
+          done
+          for deployment in \
+            identity-service catalog-service inventory-service order-service \
+            order-timeout-worker order-reconciliation-worker api-gateway; do
+            kubectl -n "${KUBERNETES_NAMESPACE}" rollout status \
+              "deployment/${deployment}" --timeout=360s
+          done
+          curl --fail --silent --show-error "${BASE_URL}/readyz"
+
+      - name: Verify deployed digest inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "${KUBERNETES_NAMESPACE}" get deployments -o json \
+            > release/deployments-before-rollback.json
+          kubectl -n "${KUBERNETES_NAMESPACE}" get jobs -o json \
+            > release/jobs-before-rollback.json
+          python3 scripts/release/deployment.py verify-inventory \
+            --manifest release/release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${{ steps.source.outputs.release_commit }}" \
+            --deployments release/deployments-before-rollback.json \
+            --jobs release/jobs-before-rollback.json \
+            --output release/deployed-image-inventory-before.json
+
+      - name: Run post-deployment Order Saga smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_RUN_SUFFIX="release-${GITHUB_RUN_ID}" \
+            sh scripts/smoke/microservices-saga-kubernetes.sh \
+            | tee release/smoke-before-rollback.log
+
+      - name: Prove bad release fails and restore accepted digest set
+        shell: bash
+        run: |
+          set -euo pipefail
+          bad_digest="sha256:0000000000000000000000000000000000000000000000000000000000000001"
+          bad_image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/go-order-management-system-cloudnative-lab-api-gateway@${bad_digest}"
+          {
+            echo "accepted_commit=${{ steps.source.outputs.release_commit }}"
+            echo "bad_image=${bad_image}"
+          } > release/rollback-evidence.txt
+
+          kubectl -n "${KUBERNETES_NAMESPACE}" set image \
+            deployment/api-gateway api-gateway="${bad_image}"
+          if kubectl -n "${KUBERNETES_NAMESPACE}" rollout status \
+            deployment/api-gateway --timeout=60s; then
+            echo "deliberately bad release unexpectedly succeeded" >&2
+            exit 1
+          fi
+          echo "bad_rollout=failed_as_expected" >> release/rollback-evidence.txt
+
+          for service in \
+            api-gateway identity-service catalog-service inventory-service order-service \
+            order-timeout-worker order-reconciliation-worker; do
+            reference="$(python3 scripts/release/deployment.py reference \
+              --manifest release/release-manifest.json \
+              --repository "${GITHUB_REPOSITORY}" \
+              --commit "${{ steps.source.outputs.release_commit }}" \
+              --service "${service}")"
+            kubectl -n "${KUBERNETES_NAMESPACE}" set image \
+              "deployment/${service}" "${service}=${reference}"
+          done
+
+          for deployment in \
+            identity-service catalog-service inventory-service order-service \
+            order-timeout-worker order-reconciliation-worker api-gateway; do
+            kubectl -n "${KUBERNETES_NAMESPACE}" rollout status \
+              "deployment/${deployment}" --timeout=360s
+          done
+          curl --fail --silent --show-error "${BASE_URL}/readyz"
+          echo "rollback=accepted_digest_set_restored" >> release/rollback-evidence.txt
+
+      - name: Verify rollback inventory and smoke again
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "${KUBERNETES_NAMESPACE}" get deployments -o json \
+            > release/deployments-after-rollback.json
+          kubectl -n "${KUBERNETES_NAMESPACE}" get jobs -o json \
+            > release/jobs-after-rollback.json
+          python3 scripts/release/deployment.py verify-inventory \
+            --manifest release/release-manifest.json \
+            --repository "${GITHUB_REPOSITORY}" \
+            --commit "${{ steps.source.outputs.release_commit }}" \
+            --deployments release/deployments-after-rollback.json \
+            --jobs release/jobs-after-rollback.json \
+            --output release/deployed-image-inventory-after.json
+          SMOKE_RUN_SUFFIX="rollback-${GITHUB_RUN_ID}" \
+            sh scripts/smoke/microservices-saga-kubernetes.sh \
+            | tee release/smoke-after-rollback.log
+          echo "post_rollback_smoke=passed" >> release/rollback-evidence.txt
+
+      - name: Capture successful runtime evidence
+        id: evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_name="test-release-${{ steps.source.outputs.release_commit }}-${GITHUB_RUN_ID}"
+          echo "artifact_name=${artifact_name}" >> "${GITHUB_OUTPUT}"
+          kubectl -n "${KUBERNETES_NAMESPACE}" get pods,services,jobs -o wide \
+            > release/runtime-resources.txt
+          kubectl -n "${KUBERNETES_NAMESPACE}" get events --sort-by=.lastTimestamp \
+            > release/runtime-events.txt
+
+      - name: Collect failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p release/diagnostics
+          kubectl -n "${KUBERNETES_NAMESPACE}" get all,jobs,pvc -o wide \
+            > release/diagnostics/resources.txt 2>&1 || true
+          kubectl -n "${KUBERNETES_NAMESPACE}" get events --sort-by=.lastTimestamp \
+            > release/diagnostics/events.txt 2>&1 || true
+          kubectl -n "${KUBERNETES_NAMESPACE}" describe pods \
+            > release/diagnostics/pods-describe.txt 2>&1 || true
+          for pod in $(kubectl -n "${KUBERNETES_NAMESPACE}" get pods -o name 2>/dev/null); do
+            name="$(printf '%s' "${pod}" | tr '/' '-')"
+            kubectl -n "${KUBERNETES_NAMESPACE}" logs "${pod}" --all-containers --prefix \
+              > "release/diagnostics/${name}.log" 2>&1 || true
+          done
+          kind export logs release/diagnostics/kind --name "${CLUSTER_NAME}" || true
+
+      - name: Upload deployment and rollback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-release-${{ steps.source.outputs.release_commit }}-${{ github.run_id }}
+          path: release
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Delete disposable kind cluster
+        if: always()
+        shell: bash
+        run: kind delete cluster --name "${CLUSTER_NAME}"
+
+  evidence:
+    name: Record test delivery acceptance in GitHub
+    needs: deploy
+    if: needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Comment Phase 8.2 evidence
+        uses: actions/github-script@v7
+        env:
+          ACCEPTANCE_ISSUE_NUMBER: "48"
+          RELEASE_COMMIT: ${{ needs.deploy.outputs.release_commit }}
+          SOURCE_RUN_ID: ${{ needs.deploy.outputs.source_run_id }}
+          ARTIFACT_NAME: ${{ needs.deploy.outputs.artifact_name }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const marker = `<!-- test-delivery-evidence:${process.env.RELEASE_COMMIT} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const sourceRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.SOURCE_RUN_ID}`;
+            const body = [
+              marker,
+              `Phase 8.2 disposable test delivery succeeded for release commit \`${process.env.RELEASE_COMMIT}\`.`,
+              '',
+              `- Verified release source run: ${sourceRunUrl}`,
+              `- Test delivery run: ${runUrl}`,
+              `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
+              '- All seven Deployments and four migration Jobs used the exact digest-qualified references from the accepted release manifest.',
+              '- Gateway readiness and the complete Order Saga passed after initial deployment.',
+              '- A deliberately nonexistent API Gateway digest failed rollout within the bounded timeout.',
+              '- The complete accepted seven-image digest set was restored and the Order Saga passed again.',
+              '- The kind cluster was runner-local and deleted; no project content was deployed outside GitHub infrastructure.',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
