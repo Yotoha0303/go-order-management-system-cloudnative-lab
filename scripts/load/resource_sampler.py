@@ -64,12 +64,13 @@ def sample_until_complete(
         while True:
             if stop_file.is_file():
                 break
-            for record in snapshot_func():
+            records = snapshot_func()
+            if stop_file.is_file():
+                break
+            for record in records:
                 handle.write(json.dumps(record, sort_keys=True) + "\n")
                 samples += 1
             handle.flush()
-            if stop_file.is_file():
-                break
             if time.monotonic() >= deadline:
                 stop_reason = "maximum_duration"
                 break
