@@ -21,8 +21,8 @@ docker run -d --name "${CONTAINER}" \
   mysql:8.4 >/dev/null
 
 for attempt in $(seq 1 60); do
-  if MYSQL_PWD="${PASSWORD}" mysqladmin ping \
-    --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot --silent >/dev/null 2>&1; then
+  if docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
+    mysqladmin ping --protocol=tcp -h 127.0.0.1 -uroot --silent >/dev/null 2>&1; then
     break
   fi
   if [[ "${attempt}" -eq 60 ]]; then
@@ -32,8 +32,8 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 
-MYSQL_PWD="${PASSWORD}" mysql --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot \
-  -e "CREATE DATABASE ${DATABASE};"
+docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
+  mysql --protocol=tcp -h 127.0.0.1 -uroot -e "CREATE DATABASE ${DATABASE};"
 
 cat > "${OUTPUT_DIR}/invalid/00001_invalid.sql" <<'SQL'
 -- +goose Up
@@ -53,8 +53,8 @@ if goose -dir "${OUTPUT_DIR}/invalid" mysql "${DSN}" up \
 fi
 failed_ns="$(date +%s%N)"
 
-table_count="$(MYSQL_PWD="${PASSWORD}" mysql \
-  --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot --batch --skip-column-names \
+table_count="$(docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
+  mysql --protocol=tcp -h 127.0.0.1 -uroot --batch --skip-column-names \
   -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DATABASE}' AND table_name='should_never_exist';")"
 test "${table_count}" = "0"
 test ! -e "${OUTPUT_DIR}/promotion-approved"
