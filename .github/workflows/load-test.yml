@@ -1,0 +1,300 @@
+name: Bounded Load Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/load-test.yml"
+      - ".github/workflows/operations-contracts.yml"
+      - "scripts/load/**"
+      - "scripts/verify/operations-contracts.py"
+      - "docs/runbooks/operations.md"
+      - "docs/verification/load-test.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bounded-load-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: Measure bounded order-creation load
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      BASE_URL: http://127.0.0.1:8082
+      PROMETHEUS_URL: http://127.0.0.1:19090
+      MYSQL_PASSWORD: load-ci-password
+      JWT_SECRET: load-ci-jwt-secret-must-be-at-least-32-characters
+      INTERNAL_SERVICE_TOKEN: load-ci-internal-service-token-must-be-long-and-random
+      RABBITMQ_USER: order_app
+      RABBITMQ_PASSWORD: load-ci-rabbit-password
+      ORDER_TIMEOUT_DELAY: 10m
+      OUTBOX_LEASE_DURATION: 30s
+      GATEWAY_RATE_LIMIT_PER_CLIENT_RPS: "5000"
+      GATEWAY_RATE_LIMIT_PER_CLIENT_BURST: "5000"
+      GATEWAY_RATE_LIMIT_GLOBAL_RPS: "10000"
+      GATEWAY_RATE_LIMIT_GLOBAL_BURST: "10000"
+      MYSQL_HOST_PORT: "13306"
+      RABBITMQ_HOST_PORT: "15673"
+      RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
+      PROMETHEUS_HOST_PORT: "19090"
+      GRAFANA_HOST_PORT: "13000"
+      GRAFANA_ADMIN_USER: admin
+      GRAFANA_ADMIN_PASSWORD: load-ci-grafana-password
+      TEMPO_HOST_PORT: "13200"
+      OTEL_COLLECTOR_HTTP_HOST_PORT: "14318"
+      LOAD_ADMIN_PASSWORD: "CiAdmin123!"
+      LOAD_BUYER_PASSWORD: "CiBuyer123!"
+    outputs:
+      artifact_name: ${{ steps.summary.outputs.artifact_name }}
+      best_rps: ${{ steps.summary.outputs.best_rps }}
+      highest_p95_ms: ${{ steps.summary.outputs.highest_p95_ms }}
+      measured_errors: ${{ steps.summary.outputs.measured_errors }}
+      boundary: ${{ steps.summary.outputs.boundary }}
+      boundary_concurrency: ${{ steps.summary.outputs.boundary_concurrency }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate load tooling and operational contracts
+        run: |
+          python3 -m compileall -q scripts/load scripts/verify/operations-contracts.py
+          python3 -m unittest discover -s scripts/load -p "test_*.py" -v
+          bash -n scripts/load/capture_state.sh
+          python3 scripts/verify/operations-contracts.py
+
+      - name: Start disposable application and observability stack
+        id: startup
+        continue-on-error: true
+        run: |
+          docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
+            --scale order-timeout-worker=2 \
+            --scale order-reconciliation-worker=2
+
+      - name: Collect startup diagnostics
+        if: steps.startup.outcome == 'failure'
+        run: |
+          mkdir -p load-evidence/diagnostics
+          docker compose -f compose.yml -f compose.observability.yml ps -a \
+            > load-evidence/diagnostics/startup-ps.txt 2>&1 || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
+            > load-evidence/diagnostics/startup.log 2>&1 || true
+
+      - name: Enforce startup result
+        if: steps.startup.outcome == 'failure'
+        run: exit 1
+
+      - name: Create synthetic load identities
+        id: identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          admin_username="load-admin-${GITHUB_RUN_ID}"
+          buyer_username="load-buyer-${GITHUB_RUN_ID}"
+          curl --fail --silent --show-error \
+            -X POST "${BASE_URL}/api/v1/auth/register" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${admin_username}\",\"password\":\"${LOAD_ADMIN_PASSWORD}\"}" \
+            > load-admin-register.json
+          curl --fail --silent --show-error \
+            -X POST "${BASE_URL}/api/v1/auth/register" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"${buyer_username}\",\"password\":\"${LOAD_BUYER_PASSWORD}\"}" \
+            > load-buyer-register.json
+          docker compose exec -T -e "MYSQL_PWD=${MYSQL_PASSWORD}" mysql mysql \
+            --protocol=tcp -h 127.0.0.1 -uroot go_order_identity \
+            --batch --skip-column-names \
+            --execute="UPDATE user_roles ur JOIN users u ON u.id=ur.user_id JOIN roles r ON r.role_name='admin' SET ur.role_id=r.id WHERE u.username='${admin_username}';"
+          test "$(docker compose exec -T -e "MYSQL_PWD=${MYSQL_PASSWORD}" mysql mysql \
+            --protocol=tcp -h 127.0.0.1 -uroot go_order_identity \
+            --batch --skip-column-names \
+            --execute="SELECT COUNT(*) FROM user_roles ur JOIN users u ON u.id=ur.user_id JOIN roles r ON r.id=ur.role_id WHERE u.username='${admin_username}' AND r.role_name='admin';")" = "1"
+          echo "admin_username=${admin_username}" >> "${GITHUB_OUTPUT}"
+          echo "buyer_username=${buyer_username}" >> "${GITHUB_OUTPUT}"
+          mkdir -p load-evidence/setup
+          mv load-admin-register.json load-buyer-register.json load-evidence/setup/
+
+      - name: Wait for Prometheus application targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error \
+              "${PROMETHEUS_URL}/api/v1/query?query=go_order_http_server_requests_total" \
+              | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("status")=="success" else 1)'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Prometheus application query did not become ready" >&2
+          exit 1
+
+      - name: Capture baseline operational state
+        run: bash scripts/load/capture_state.sh load-evidence baseline
+
+      - name: Start bounded resource sampler
+        id: sampler
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/load/resource_sampler.py \
+            --output load-evidence/resource-samples.jsonl \
+            --duration-seconds 70 \
+            --interval-seconds 2 \
+            > load-evidence/resource-sampler.log 2>&1 &
+          echo "pid=$!" >> "${GITHUB_OUTPUT}"
+
+      - name: Execute staged order-creation load
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/load/order_create_load.py \
+            --base-url "${BASE_URL}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --prepare-fixture \
+            --admin-username "${{ steps.identities.outputs.admin_username }}" \
+            --buyer-username "${{ steps.identities.outputs.buyer_username }}" \
+            --concurrency-levels "1,4,8,16,32" \
+            --warmup-seconds 5 \
+            --stage-seconds 8 \
+            --request-timeout-seconds 10 \
+            --max-requests 3000 \
+            --output-dir load-evidence/load \
+            | tee load-evidence/load-driver.log
+          test "$(python3 -c 'import json; print(len(json.load(open("load-evidence/load/load-summary.json"))["stages"]))')" = "5"
+
+      - name: Complete resource sampling
+        shell: bash
+        run: |
+          set -euo pipefail
+          wait "${{ steps.sampler.outputs.pid }}"
+          test -s load-evidence/resource-samples.jsonl
+
+      - name: Capture post-load operational state
+        run: bash scripts/load/capture_state.sh load-evidence post
+
+      - name: Analyze capacity boundary
+        id: summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/load/analyze_load.py \
+            --load-summary load-evidence/load/load-summary.json \
+            --resource-samples load-evidence/resource-samples.jsonl \
+            --output-json load-evidence/capacity-report.json \
+            --output-markdown load-evidence/capacity-report.md \
+            | tee load-evidence/capacity-analysis.log
+          curl --fail --silent --show-error "${BASE_URL}/readyz" \
+            > load-evidence/post-load-ready.txt
+          python3 - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+          report = json.load(open("load-evidence/capacity-report.json", encoding="utf-8"))
+          load = report["load"]
+          stages = load["stages"]
+          boundary = report["first_observed_boundary"]
+          print(f"artifact_name=bounded-load-test-{__import__('os').environ['GITHUB_SHA']}-{__import__('os').environ['GITHUB_RUN_ID']}")
+          print(f"best_rps={max(stage['throughput_rps'] for stage in stages):.3f}")
+          print(f"highest_p95_ms={max(stage['latency_ms']['p95'] for stage in stages):.3f}")
+          print(f"measured_errors={load['measured_errors']}")
+          print(f"boundary={boundary['classification']}")
+          value = boundary['first_observed_at_concurrency']
+          print(f"boundary_concurrency={value if value is not None else 'not-observed'}")
+          PY
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          mkdir -p load-evidence/diagnostics
+          docker compose -f compose.yml -f compose.observability.yml ps -a \
+            > load-evidence/diagnostics/compose-ps.txt 2>&1 || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
+            > load-evidence/diagnostics/compose.log 2>&1 || true
+          docker stats --no-stream > load-evidence/diagnostics/docker-stats.txt 2>&1 || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" \
+            > load-evidence/diagnostics/prometheus-targets.json 2>&1 || true
+
+      - name: Upload load-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-load-test-${{ github.sha }}-${{ github.run_id }}
+          path: load-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove disposable resources
+        if: always()
+        run: docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans || true
+
+  evidence:
+    name: Record Runbook and load-test acceptance in GitHub
+    needs: load
+    if: needs.load.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Comment Phase 8.5 evidence
+        uses: actions/github-script@v7
+        env:
+          ACCEPTANCE_ISSUE_NUMBER: "52"
+          ARTIFACT_NAME: ${{ needs.load.outputs.artifact_name }}
+          BEST_RPS: ${{ needs.load.outputs.best_rps }}
+          HIGHEST_P95_MS: ${{ needs.load.outputs.highest_p95_ms }}
+          MEASURED_ERRORS: ${{ needs.load.outputs.measured_errors }}
+          BOUNDARY: ${{ needs.load.outputs.boundary }}
+          BOUNDARY_CONCURRENCY: ${{ needs.load.outputs.boundary_concurrency }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const marker = `<!-- operations-load-evidence:${context.sha} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `Phase 8.5 bounded load test succeeded for commit \`${context.sha}\`.`,
+              '',
+              `- GitHub Actions run: ${runUrl}`,
+              `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
+              `- Best measured throughput: ${process.env.BEST_RPS} requests/second`,
+              `- Highest measured stage P95: ${process.env.HIGHEST_P95_MS} ms`,
+              `- Measured errors: ${process.env.MEASURED_ERRORS}`,
+              `- First observed boundary: \`${process.env.BOUNDARY}\` at concurrency \`${process.env.BOUNDARY_CONCURRENCY}\``,
+              '- Five bounded concurrency levels (1/4/8/16/32) used unique Idempotency Keys against synthetic order creation.',
+              '- Raw request samples, P50/P95/P99, container resources, MySQL, RabbitMQ and Prometheus evidence are in the artifact.',
+              '- Measured evidence and bottleneck inference are separated; no production SLO or capacity guarantee is claimed.',
+              '- The operator Runbook is maintained at `docs/runbooks/operations.md`.',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
