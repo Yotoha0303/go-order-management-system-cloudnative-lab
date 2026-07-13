@@ -73,7 +73,9 @@ jobs:
         run: exit 1
 
       - name: Create representative synthetic business data
+        shell: bash
         run: |
+          set -euo pipefail
           sh scripts/smoke/microservices-saga.sh | tee source-saga.log
           curl --fail --silent --show-error http://127.0.0.1:8082/readyz
 
@@ -144,7 +146,7 @@ jobs:
       - name: Stop disposable resources
         if: always()
         run: |
-          docker rm -f "go-order-backup-restore-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
+          docker rm -fv "go-order-backup-restore-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
           docker compose down -v --remove-orphans || true
 
   evidence:
