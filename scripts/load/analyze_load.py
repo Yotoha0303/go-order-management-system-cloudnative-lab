@@ -49,12 +49,12 @@ def successful_throughput(stage: dict[str, Any]) -> float:
     return float(stage.get("successes", 0)) / elapsed
 
 
-def best_healthy_successful_throughput(
+def healthy_stages_before_boundary(
     stages: list[dict[str, Any]],
     boundary: dict[str, Any],
-) -> float:
+) -> list[dict[str, Any]]:
     boundary_concurrency = boundary.get("first_observed_at_concurrency")
-    candidates: list[float] = []
+    healthy: list[dict[str, Any]] = []
     for stage in stages:
         concurrency = stage.get("concurrency")
         if boundary_concurrency is not None and concurrency == boundary_concurrency:
@@ -65,8 +65,16 @@ def best_healthy_successful_throughput(
         status_counts = stage.get("status_counts", {})
         if int(status_counts.get("429", 0)) > 0 or float(stage.get("error_rate", 0.0)) >= 0.02:
             break
-        candidates.append(successful_throughput(stage))
-    return round(max(candidates, default=0.0), 3)
+        healthy.append(stage)
+    return healthy
+
+
+def best_healthy_successful_throughput(
+    stages: list[dict[str, Any]],
+    boundary: dict[str, Any],
+) -> float:
+    healthy = healthy_stages_before_boundary(stages, boundary)
+    return round(max((successful_throughput(stage) for stage in healthy), default=0.0), 3)
 
 
 def infer_capacity_boundary(
@@ -167,7 +175,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Measured requests: {load['measured_requests']}",
         f"- Successes: {load['measured_successes']}",
         f"- Errors: {load['measured_errors']}",
+        f"- Healthy sustained stages before boundary: {report['healthy_stage_count']}",
         f"- Best healthy sustained successful throughput: {report['best_healthy_successful_throughput_rps']:.3f} requests/second",
+        f"- Highest healthy sustained P95: {report['highest_healthy_p95_ms']:.3f} ms",
         f"- Boundary classification: `{boundary['classification']}`",
         f"- First observed concurrency: `{boundary['first_observed_at_concurrency']}`",
         f"- Measured evidence: {boundary['measured_evidence']}",
@@ -189,7 +199,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "> Best throughput excludes the boundary stage and any later stage, and uses successful rather than attempted requests.",
+            "> Summary throughput and P95 exclude the boundary stage and any later stage, and throughput uses successful rather than attempted requests.",
             "",
             "> Measured evidence and inference are intentionally separated. "
             "This single-runner synthetic test is not a production capacity guarantee.",
@@ -213,14 +223,21 @@ def main() -> int:
     peaks = load_resource_peaks(args.resource_samples)
     if not peaks:
         raise ValueError("resource sample set is empty")
-    boundary = infer_capacity_boundary(load_summary["stages"], peaks)
-    best_success = best_healthy_successful_throughput(load_summary["stages"], boundary)
+    stages = load_summary["stages"]
+    boundary = infer_capacity_boundary(stages, peaks)
+    healthy = healthy_stages_before_boundary(stages, boundary)
     report = {
         "schema_version": 1,
         "load": load_summary,
         "resource_peaks": peaks,
         "first_observed_boundary": boundary,
-        "best_healthy_successful_throughput_rps": best_success,
+        "healthy_stage_count": len(healthy),
+        "best_healthy_successful_throughput_rps": round(
+            max((successful_throughput(stage) for stage in healthy), default=0.0), 3
+        ),
+        "highest_healthy_p95_ms": round(
+            max((float(stage["latency_ms"]["p95"]) for stage in healthy), default=0.0), 3
+        ),
         "measurement_scope": {
             "environment": "single GitHub-hosted runner",
             "traffic": "synthetic order creation",
