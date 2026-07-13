@@ -40,7 +40,7 @@ SELECT 'inventory_reserved_sum', COALESCE(SUM(reserved_quantity),0) FROM go_orde
 SELECT 'orders_total', COUNT(*) FROM go_order_ordering.orders_v2;
 SELECT CONCAT('orders_', status), COUNT(*) FROM go_order_ordering.orders_v2 GROUP BY status ORDER BY status;
 SELECT CONCAT('timeout_outbox_', status), COUNT(*) FROM go_order_ordering.order_timeout_outbox_v2 GROUP BY status ORDER BY status;
-SELECT CONCAT('reconciliation_', status), COUNT(*) FROM go_order_ordering.order_reconciliation_tasks_v2 GROUP BY status ORDER BY status;
+SELECT CONCAT('reconciliation_', status), COUNT(*) FROM go_order_ordering.order_reconciliation_tasks GROUP BY status ORDER BY status;
 SQL
 
 docker compose exec -T rabbitmq rabbitmqctl list_queues \
