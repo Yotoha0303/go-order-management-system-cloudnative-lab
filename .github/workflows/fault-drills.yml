@@ -1,0 +1,295 @@
+name: Runtime Fault Drills
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/fault-drills.yml"
+      - ".github/workflows/fault-drill-contracts.yml"
+      - "scripts/fault-drills/**"
+      - "scripts/verify/fault-drill-contracts.py"
+      - "internal/ordersvc/fault_drill_test.go"
+      - "internal/platform/resiliencehttp/fault_drill_test.go"
+      - "docs/verification/runtime-fault-drills.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-fault-drills-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: Execute RabbitMQ, HTTP, Worker and migration drills
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      MYSQL_PASSWORD: fault-ci-password
+      JWT_SECRET: fault-ci-jwt-secret-must-be-at-least-32-characters
+      INTERNAL_SERVICE_TOKEN: fault-ci-internal-service-token-must-be-long-and-random
+      ORDER_TIMEOUT_DELAY: 3s
+      OUTBOX_LEASE_DURATION: 30s
+      RABBITMQ_USER: order_app
+      RABBITMQ_PASSWORD: fault-ci-rabbit-password
+      MYSQL_HOST_PORT: "13306"
+      RABBITMQ_HOST_PORT: "15673"
+      RABBITMQ_MANAGEMENT_HOST_PORT: "25673"
+      RABBITMQ_MANAGEMENT_URL: http://127.0.0.1:25673
+      PROMETHEUS_HOST_PORT: "19090"
+      PROMETHEUS_URL: http://127.0.0.1:19090
+      GRAFANA_HOST_PORT: "13000"
+      GRAFANA_ADMIN_USER: admin
+      GRAFANA_ADMIN_PASSWORD: fault-ci-grafana-password
+      TEMPO_HOST_PORT: "13200"
+      OTEL_COLLECTOR_HTTP_HOST_PORT: "14318"
+    outputs:
+      artifact_name: ${{ steps.summary.outputs.artifact_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned migration tool
+        run: go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+
+      - name: Validate drill tooling
+        run: |
+          bash -n scripts/fault-drills/migration-failure.sh
+          python3 -m compileall -q scripts/verify/fault-drill-contracts.py
+          python3 scripts/verify/fault-drill-contracts.py
+
+      - name: Start disposable application and observability stack
+        id: startup
+        continue-on-error: true
+        run: |
+          docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
+            --scale order-timeout-worker=2 \
+            --scale order-reconciliation-worker=2
+
+      - name: Collect startup diagnostics
+        if: steps.startup.outcome == 'failure'
+        run: |
+          mkdir -p fault-evidence/diagnostics
+          docker compose -f compose.yml -f compose.observability.yml ps -a \
+            > fault-evidence/diagnostics/startup-ps.txt 2>&1 || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
+            > fault-evidence/diagnostics/startup.log 2>&1 || true
+
+      - name: Enforce startup result
+        if: steps.startup.outcome == 'failure'
+        run: exit 1
+
+      - name: Establish healthy baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fault-evidence/rabbitmq fault-evidence/http fault-evidence/worker fault-evidence/migration
+          SMOKE_RUN_SUFFIX="fault-baseline-${GITHUB_RUN_ID}" \
+            sh scripts/smoke/microservices-saga.sh | tee fault-evidence/baseline-saga.log
+          python3 scripts/smoke/rabbitmq-observability.py wait-session 1
+
+      - name: Drill RabbitMQ outage and recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          started_ns="$(date +%s%N)"
+          docker compose -f compose.yml -f compose.observability.yml stop rabbitmq
+          python3 scripts/smoke/rabbitmq-observability.py wait-session 0 \
+            | tee fault-evidence/rabbitmq/session-down.log
+          down_ns="$(date +%s%N)"
+          curl --fail --silent --show-error \
+            "${PROMETHEUS_URL}/api/v1/query?query=go_order_rabbitmq_session_up" \
+            > fault-evidence/rabbitmq/session-down-metric.json
+          docker compose -f compose.yml -f compose.observability.yml up -d --wait rabbitmq
+          python3 scripts/smoke/rabbitmq-observability.py wait-session 1 \
+            | tee fault-evidence/rabbitmq/session-recovered.log
+          recovered_ns="$(date +%s%N)"
+          SMOKE_RUN_SUFFIX="rabbit-recovery-${GITHUB_RUN_ID}" \
+            sh scripts/smoke/microservices-saga.sh | tee fault-evidence/rabbitmq/post-recovery-saga.log
+          python3 - \
+            fault-evidence/rabbitmq/rabbitmq-recovery.json \
+            "$(( (down_ns - started_ns) / 1000000 ))" \
+            "$(( (recovered_ns - down_ns) / 1000000 ))" <<'PY'
+          import json
+          import pathlib
+          import sys
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "schema_version": 1,
+              "fault": "rabbitmq_outage",
+              "session_down_detected": True,
+              "session_recovered": True,
+              "worker_restart_required": False,
+              "detection_ms": int(sys.argv[2]),
+              "recovery_ms": int(sys.argv[3]),
+              "post_recovery_order_saga": "passed",
+          }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Drill HTTP timeout, circuit open and half-open recovery
+        shell: bash
+        env:
+          FAULT_DRILL_HTTP_OUTPUT: fault-evidence/http/http-circuit-recovery.json
+        run: |
+          set -euo pipefail
+          go test ./internal/platform/resiliencehttp \
+            -run '^TestFaultDrillHTTPTimeoutCircuitRecovery$' -count=1 -v \
+            | tee fault-evidence/http/http-circuit-recovery.log
+          test -s fault-evidence/http/http-circuit-recovery.json
+
+      - name: Drill Worker process crash and lease recovery
+        shell: bash
+        env:
+          FAULT_DRILL_MYSQL_DSN: root:fault-ci-password@tcp(127.0.0.1:13306)/go_order_ordering?parseTime=true&loc=UTC
+          FAULT_DRILL_OUTPUT_DIR: fault-evidence/worker
+        run: |
+          set -euo pipefail
+          docker compose -f compose.yml -f compose.observability.yml stop order-timeout-worker
+          go test ./internal/ordersvc \
+            -run '^TestFaultDrillWorkerLeaseProcess$' -count=1 -v \
+            | tee fault-evidence/worker/worker-lease-recovery.log
+          test -s fault-evidence/worker/worker-lease-recovery.json
+          docker compose -f compose.yml -f compose.observability.yml up -d --wait \
+            --scale order-timeout-worker=2 order-timeout-worker
+
+      - name: Drill isolated migration failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/fault-drills/migration-failure.sh fault-evidence/migration \
+            | tee fault-evidence/migration/migration-drill.log
+          test -s fault-evidence/migration/migration-failure.json
+
+      - name: Verify complete system after all drills
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error http://127.0.0.1:8082/readyz
+          SMOKE_RUN_SUFFIX="post-fault-drills-${GITHUB_RUN_ID}" \
+            sh scripts/smoke/microservices-saga.sh | tee fault-evidence/final-saga.log
+
+      - name: Build machine-readable drill summary
+        id: summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          root = pathlib.Path("fault-evidence")
+          paths = {
+              "rabbitmq": root / "rabbitmq/rabbitmq-recovery.json",
+              "http": root / "http/http-circuit-recovery.json",
+              "worker": root / "worker/worker-lease-recovery.json",
+              "migration": root / "migration/migration-failure.json",
+          }
+          drills = {name: json.loads(path.read_text(encoding="utf-8")) for name, path in paths.items()}
+          document = {
+              "schema_version": 1,
+              "commit_sha": "${GITHUB_SHA}",
+              "run_id": "${GITHUB_RUN_ID}",
+              "drills": drills,
+              "final_order_saga": "passed",
+              "environment": "disposable GitHub Actions Docker Compose",
+          }
+          (root / "fault-drill-summary.json").write_text(
+              json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          artifact_name="runtime-fault-drills-${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          echo "artifact_name=${artifact_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Collect failure diagnostics
+        if: failure()
+        run: |
+          mkdir -p fault-evidence/diagnostics
+          docker compose -f compose.yml -f compose.observability.yml ps -a \
+            > fault-evidence/diagnostics/compose-ps.txt 2>&1 || true
+          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
+            > fault-evidence/diagnostics/compose.log 2>&1 || true
+          curl --silent --show-error "${PROMETHEUS_URL}/api/v1/query?query=go_order_rabbitmq_session_up" \
+            > fault-evidence/diagnostics/rabbitmq-session.json 2>&1 || true
+
+      - name: Upload fault-drill evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-fault-drills-${{ github.sha }}-${{ github.run_id }}
+          path: fault-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove disposable resources
+        if: always()
+        run: |
+          docker rm -fv "go-order-migration-drill-${GITHUB_RUN_ID}" >/dev/null 2>&1 || true
+          docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans || true
+
+  evidence:
+    name: Record fault-drill acceptance in GitHub
+    needs: drill
+    if: needs.drill.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Comment Phase 8.4 evidence
+        uses: actions/github-script@v7
+        env:
+          ACCEPTANCE_ISSUE_NUMBER: "51"
+          ARTIFACT_NAME: ${{ needs.drill.outputs.artifact_name }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const marker = `<!-- runtime-fault-drill-evidence:${context.sha} -->`;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              marker,
+              `Phase 8.4 runtime fault drills succeeded for commit \`${context.sha}\`.`,
+              '',
+              `- GitHub Actions run: ${runUrl}`,
+              `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
+              '- RabbitMQ session loss and automatic reconnect were detected, followed by a complete timeout-driven Order Saga.',
+              '- A real slow HTTP upstream triggered bounded timeouts, circuit-open rejection without network I/O, half-open recovery and closed-state success.',
+              '- A Worker test subprocess was terminated after acquiring an Outbox lease; a second Worker reclaimed the expired lease exactly once and cleared it.',
+              '- Deliberately invalid SQL failed against an isolated MySQL database, promotion remained blocked and all normal migration directories still validated.',
+              '- The complete Order Saga passed after the full drill set.',
+              '- All faults were bounded to disposable GitHub-hosted resources and cleaned up.',
+            ].join('\n');
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body,
+              });
+            }
