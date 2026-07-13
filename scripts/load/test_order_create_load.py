@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 import threading
@@ -40,6 +41,34 @@ class OrderHandler(BaseHTTPRequestHandler):
 
 
 class LoadDriverTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.previous_token = os.environ.get("LOAD_BEARER_TOKEN")
+        os.environ["LOAD_BEARER_TOKEN"] = "unit-token"
+
+    def tearDown(self) -> None:
+        if self.previous_token is None:
+            os.environ.pop("LOAD_BEARER_TOKEN", None)
+        else:
+            os.environ["LOAD_BEARER_TOKEN"] = self.previous_token
+        os.environ.pop("LOAD_ADMIN_PASSWORD", None)
+        os.environ.pop("LOAD_BUYER_PASSWORD", None)
+
+    def base_args(self) -> argparse.Namespace:
+        return argparse.Namespace(
+            concurrency_levels="1,4",
+            prepare_fixture=False,
+            admin_username=None,
+            buyer_username=None,
+            admin_password_env="LOAD_ADMIN_PASSWORD",
+            buyer_password_env="LOAD_BUYER_PASSWORD",
+            token_env="LOAD_BEARER_TOKEN",
+            product_id=1,
+            warmup_seconds=1.0,
+            stage_seconds=2.0,
+            request_timeout_seconds=3.0,
+            max_requests=100,
+        )
+
     def test_percentile_interpolates_and_handles_empty(self) -> None:
         self.assertEqual(load.percentile([], 0.95), 0.0)
         self.assertEqual(load.percentile([10.0], 0.95), 10.0)
@@ -54,19 +83,26 @@ class LoadDriverTest(unittest.TestCase):
                     load.validate_levels(value)
 
     def test_validate_args_enforces_runtime_caps(self) -> None:
-        valid = argparse.Namespace(
-            concurrency_levels="1,4",
-            product_id=1,
-            warmup_seconds=1.0,
-            stage_seconds=2.0,
-            request_timeout_seconds=3.0,
-            max_requests=100,
-        )
+        valid = self.base_args()
         self.assertEqual(load.validate_args(valid), (1, 4))
         invalid = argparse.Namespace(**vars(valid))
         invalid.max_requests = load.MAX_REQUESTS + 1
         with self.assertRaisesRegex(ValueError, "maximum requests"):
             load.validate_args(invalid)
+
+    def test_fixture_preparation_requires_named_users_and_password_env(self) -> None:
+        args = self.base_args()
+        args.prepare_fixture = True
+        args.product_id = None
+        with self.assertRaisesRegex(ValueError, "admin and buyer usernames"):
+            load.validate_args(args)
+        args.admin_username = "admin"
+        args.buyer_username = "buyer"
+        with self.assertRaisesRegex(ValueError, "password environment"):
+            load.validate_args(args)
+        os.environ["LOAD_ADMIN_PASSWORD"] = "admin-test"
+        os.environ["LOAD_BUYER_PASSWORD"] = "buyer-test"
+        self.assertEqual(load.validate_args(args), (1, 4))
 
     def test_real_local_server_stage_produces_success_samples(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), OrderHandler)
@@ -120,7 +156,7 @@ class LoadDriverTest(unittest.TestCase):
         }
         rendered = load.render_markdown(document)
         self.assertIn("P95 ms", rendered)
-        self.assertNotIn("synthetic-token", rendered)
+        self.assertNotIn("unit-token", rendered)
 
 
 if __name__ == "__main__":
