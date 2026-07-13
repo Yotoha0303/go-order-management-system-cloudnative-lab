@@ -41,12 +41,15 @@ class BackupManifestTest(unittest.TestCase):
         )
         return output
 
+    def load_manifest(self, output: pathlib.Path) -> dict:
+        return json.loads(output.read_text(encoding="utf-8"))
+
     def test_create_and_verify_exact_four_database_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             dumps = self.create_dumps(root)
             output = self.create_manifest(root, dumps)
-            document = json.loads(output.read_text(encoding="utf-8"))
+            document = self.load_manifest(output)
             references = manifest.validate_manifest(document, dumps, REPOSITORY, COMMIT)
             self.assertEqual(len(references), 4)
             self.assertEqual(
@@ -57,21 +60,33 @@ class BackupManifestTest(unittest.TestCase):
                 document["total_bytes"],
                 sum((dumps / f"{database}.sql").stat().st_size for database in manifest.EXPECTED_DATABASES),
             )
+            self.assertTrue(document["created_at"].endswith("+00:00"))
+            self.assertEqual(document["mysql_version"], "8.4.0")
 
     def test_missing_dump_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             dumps = self.create_dumps(root)
             (dumps / "go_order_inventory.sql").unlink()
-            with self.assertRaisesRegex(ValueError, "missing database dump"):
+            with self.assertRaisesRegex(ValueError, "exactly the four manifest SQL files"):
                 self.create_manifest(root, dumps)
+
+    def test_extra_dump_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            dumps = self.create_dumps(root)
+            output = self.create_manifest(root, dumps)
+            document = self.load_manifest(output)
+            (dumps / "unexpected.sql").write_text("SELECT 1;\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly the four manifest SQL files"):
+                manifest.validate_manifest(document, dumps, REPOSITORY, COMMIT)
 
     def test_corrupt_dump_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             dumps = self.create_dumps(root)
             output = self.create_manifest(root, dumps)
-            document = json.loads(output.read_text(encoding="utf-8"))
+            document = self.load_manifest(output)
             with (dumps / "go_order_ordering.sql").open("a", encoding="utf-8") as handle:
                 handle.write("-- corruption\n")
             with self.assertRaisesRegex(ValueError, "dump size mismatch|dump checksum mismatch"):
@@ -82,7 +97,7 @@ class BackupManifestTest(unittest.TestCase):
             root = pathlib.Path(temp)
             dumps = self.create_dumps(root)
             output = self.create_manifest(root, dumps)
-            document = json.loads(output.read_text(encoding="utf-8"))
+            document = self.load_manifest(output)
             document["databases"][0]["database"] = "unexpected_database"
             with self.assertRaisesRegex(ValueError, "database order or membership drifted"):
                 manifest.validate_manifest(document, dumps, REPOSITORY, COMMIT)
@@ -92,11 +107,33 @@ class BackupManifestTest(unittest.TestCase):
             root = pathlib.Path(temp)
             dumps = self.create_dumps(root)
             output = self.create_manifest(root, dumps)
-            document = json.loads(output.read_text(encoding="utf-8"))
+            document = self.load_manifest(output)
             with self.assertRaisesRegex(ValueError, "repository does not match"):
                 manifest.validate_manifest(document, dumps, "other/repository", COMMIT)
             with self.assertRaisesRegex(ValueError, "commit does not match"):
                 manifest.validate_manifest(document, dumps, REPOSITORY, "f" * 40)
+
+    def test_timestamp_and_mysql_version_are_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            dumps = self.create_dumps(root)
+            output = self.create_manifest(root, dumps)
+            original = self.load_manifest(output)
+
+            for field, message in (
+                ("created_at", "created_at is required"),
+                ("mysql_version", "MySQL version is required"),
+            ):
+                document = dict(original)
+                document.pop(field)
+                with self.subTest(field=field):
+                    with self.assertRaisesRegex(ValueError, message):
+                        manifest.validate_manifest(document, dumps, REPOSITORY, COMMIT)
+
+            non_utc = dict(original)
+            non_utc["created_at"] = "2026-07-13T12:00:00+08:00"
+            with self.assertRaisesRegex(ValueError, "created_at must be UTC"):
+                manifest.validate_manifest(non_utc, dumps, REPOSITORY, COMMIT)
 
 
 if __name__ == "__main__":
