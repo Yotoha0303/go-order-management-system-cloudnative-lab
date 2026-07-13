@@ -5,6 +5,7 @@ OUTPUT_DIR="${1:-fault-evidence/migration}"
 CONTAINER="go-order-migration-drill-${GITHUB_RUN_ID:-local}"
 PASSWORD="migration-drill-password"
 DATABASE="fault_migration"
+HOST_PORT="${FAULT_MIGRATION_MYSQL_PORT:-13307}"
 mkdir -p "${OUTPUT_DIR}" "${OUTPUT_DIR}/invalid"
 
 cleanup() {
@@ -15,12 +16,13 @@ cleanup
 
 docker run -d --name "${CONTAINER}" \
   --tmpfs /var/lib/mysql:rw,noexec,nosuid,size=512m \
+  -p "127.0.0.1:${HOST_PORT}:3306" \
   -e "MYSQL_ROOT_PASSWORD=${PASSWORD}" \
   mysql:8.4 >/dev/null
 
 for attempt in $(seq 1 60); do
-  if docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
-    mysqladmin ping --protocol=tcp -h 127.0.0.1 -uroot --silent >/dev/null 2>&1; then
+  if MYSQL_PWD="${PASSWORD}" mysqladmin ping \
+    --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot --silent >/dev/null 2>&1; then
     break
   fi
   if [[ "${attempt}" -eq 60 ]]; then
@@ -30,8 +32,7 @@ for attempt in $(seq 1 60); do
   sleep 2
 done
 
-docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
-  mysql --protocol=tcp -h 127.0.0.1 -uroot \
+MYSQL_PWD="${PASSWORD}" mysql --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot \
   -e "CREATE DATABASE ${DATABASE};"
 
 cat > "${OUTPUT_DIR}/invalid/00001_invalid.sql" <<'SQL'
@@ -43,27 +44,17 @@ CREATE TABLE should_never_exist (id BIGINT PRIMARY KEY);
 DROP TABLE IF EXISTS should_never_exist;
 SQL
 
-DSN="root:${PASSWORD}@tcp(127.0.0.1:3306)/${DATABASE}?parseTime=true&multiStatements=true"
+DSN="root:${PASSWORD}@tcp(127.0.0.1:${HOST_PORT})/${DATABASE}?parseTime=true&multiStatements=true"
 started_ns="$(date +%s%N)"
-if docker exec -i -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" sh -c \
-  'cat > /tmp/00001_invalid.sql && mkdir -p /tmp/invalid && mv /tmp/00001_invalid.sql /tmp/invalid/' \
-  < "${OUTPUT_DIR}/invalid/00001_invalid.sql"; then
-  :
-else
-  echo "failed to copy invalid migration fixture" >&2
-  exit 1
-fi
-
-if docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" sh -c \
-  "goose -dir /tmp/invalid mysql '${DSN}' up" \
+if goose -dir "${OUTPUT_DIR}/invalid" mysql "${DSN}" up \
   > "${OUTPUT_DIR}/invalid-migration.log" 2>&1; then
   echo "deliberately invalid migration unexpectedly succeeded" >&2
   exit 1
 fi
 failed_ns="$(date +%s%N)"
 
-table_count="$(docker exec -e "MYSQL_PWD=${PASSWORD}" "${CONTAINER}" \
-  mysql --protocol=tcp -h 127.0.0.1 -uroot --batch --skip-column-names \
+table_count="$(MYSQL_PWD="${PASSWORD}" mysql \
+  --protocol=tcp -h 127.0.0.1 -P "${HOST_PORT}" -uroot --batch --skip-column-names \
   -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DATABASE}' AND table_name='should_never_exist';")"
 test "${table_count}" = "0"
 test ! -e "${OUTPUT_DIR}/promotion-approved"
