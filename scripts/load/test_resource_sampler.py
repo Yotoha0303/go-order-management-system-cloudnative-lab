@@ -25,7 +25,7 @@ class ResourceSamplerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "completed before"):
                 resource_sampler.wait_for_measurement_start(start, stop, 0.1, poll_seconds=0.001)
 
-    def test_sampler_does_not_take_snapshot_after_completion_marker(self) -> None:
+    def test_sampler_discards_snapshot_overlapping_completion(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
             output = root / "samples.jsonl"
@@ -35,8 +35,14 @@ class ResourceSamplerTest(unittest.TestCase):
             def snapshot() -> list[dict[str, object]]:
                 nonlocal calls
                 calls += 1
-                stop.touch()
-                return [{"captured_at": "now", "container": {"Name": "order-service", "CPUPerc": "1%"}}]
+                if calls == 2:
+                    stop.touch()
+                return [
+                    {
+                        "captured_at": f"sample-{calls}",
+                        "container": {"Name": "order-service", "CPUPerc": "1%"},
+                    }
+                ]
 
             samples, reason = resource_sampler.sample_until_complete(
                 output,
@@ -45,10 +51,13 @@ class ResourceSamplerTest(unittest.TestCase):
                 interval_seconds=0.001,
                 snapshot_func=snapshot,
             )
-            self.assertEqual(calls, 1)
+            self.assertEqual(calls, 2)
             self.assertEqual(samples, 1)
             self.assertEqual(reason, "completion_file")
-            self.assertEqual(len(output.read_text(encoding="utf-8").splitlines()), 1)
+            lines = output.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            self.assertIn("sample-1", lines[0])
+            self.assertNotIn("sample-2", lines[0])
 
 
 if __name__ == "__main__":
