@@ -91,16 +91,20 @@ def api_json(
     base_url: str,
     path: str,
     method: str,
-    payload: dict[str, Any],
+    payload: dict[str, Any] | None,
     timeout_seconds: float,
     bearer_token: str | None = None,
 ) -> dict[str, Any]:
-    headers = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {}
+    data: bytes | None = None
+    if payload is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode("utf-8")
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}{path}",
-        data=json.dumps(payload).encode("utf-8"),
+        data=data,
         method=method,
         headers=headers,
     )
@@ -135,25 +139,29 @@ def prepare_fixture(
         payload={"username": buyer_username, "password": buyer_password},
         timeout_seconds=timeout_seconds,
     )
-    admin_token = str(admin_login["data"]["token"])
-    buyer_token = str(buyer_login["data"]["token"])
+    admin_token = str(admin_login["data"]["access_token"])
+    buyer_token = str(buyer_login["data"]["access_token"])
     if not admin_token or not buyer_token:
-        raise RuntimeError("fixture login returned an empty token")
+        raise RuntimeError("fixture login returned an empty access token")
 
     product = api_json(
         base_url=base_url,
         path="/api/v1/products",
         method="POST",
-        payload={"name": f"Load Product {run_id}", "price": 1999},
+        payload={
+            "name": f"Load Product {run_id}",
+            "description": "bounded synthetic load-test product",
+            "price_fen": 1999,
+        },
         timeout_seconds=timeout_seconds,
         bearer_token=admin_token,
     )
     product_id = int(product["data"]["id"])
     api_json(
         base_url=base_url,
-        path=f"/api/v1/products/{product_id}/status",
+        path=f"/api/v1/products/{product_id}/on-sale",
         method="PATCH",
-        payload={"status": "on_sale"},
+        payload=None,
         timeout_seconds=timeout_seconds,
         bearer_token=admin_token,
     )
