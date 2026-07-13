@@ -14,7 +14,11 @@ DATABASES=(
   go_order_ordering
 )
 
-mkdir -p "${OUTPUT_DIR}/dumps" "${OUTPUT_DIR}/source-after" "${OUTPUT_DIR}/restored"
+mkdir -p \
+  "${OUTPUT_DIR}/dumps" \
+  "${OUTPUT_DIR}/logical/source-before" \
+  "${OUTPUT_DIR}/logical/restored" \
+  "${OUTPUT_DIR}/logical/source-after"
 
 cleanup() {
   docker rm -fv "${RESTORE_CONTAINER}" >/dev/null 2>&1 || true
@@ -35,7 +39,7 @@ mysql_exec() {
   local password="$2"
   shift 2
   docker exec -e "MYSQL_PWD=${password}" "${container}" mysql \
-    --protocol=tcp -h 127.0.0.1 -uroot --batch --skip-column-names "$@"
+    --protocol=tcp -h 127.0.0.1 -uroot --batch --raw --skip-column-names "$@"
 }
 
 mysql_dump() {
@@ -52,10 +56,84 @@ mysql_dump() {
   grep -q 'FOREIGN_KEY_CHECKS=0' "${destination}"
 }
 
+query_fingerprint() {
+  local container="$1"
+  local password="$2"
+  local query="$3"
+  local destination="$4"
+  mysql_exec "${container}" "${password}" -e "${query}" > "${destination}"
+}
+
+logical_fingerprint() {
+  local container="$1"
+  local password="$2"
+  local database="$3"
+  local destination_dir="$4"
+  mkdir -p "${destination_dir}"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT TABLE_NAME, ENGINE, COALESCE(TABLE_COLLATION,''), COALESCE(CREATE_OPTIONS,'') FROM information_schema.TABLES WHERE TABLE_SCHEMA='${database}' AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;" \
+    "${destination_dir}/${database}.tables.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT,'<NULL>'), EXTRA, COALESCE(CHARACTER_SET_NAME,''), COALESCE(COLLATION_NAME,''), COALESCE(GENERATION_EXPRESSION,'') FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='${database}' ORDER BY TABLE_NAME, ORDINAL_POSITION;" \
+    "${destination_dir}/${database}.columns.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COALESCE(COLUMN_NAME,''), COALESCE(SUB_PART,0), INDEX_TYPE, COALESCE(COLLATION,''), NULLABLE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA='${database}' ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX;" \
+    "${destination_dir}/${database}.indexes.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, COALESCE(kcu.COLUMN_NAME,''), COALESCE(kcu.ORDINAL_POSITION,0), COALESCE(kcu.REFERENCED_TABLE_NAME,''), COALESCE(kcu.REFERENCED_COLUMN_NAME,'') FROM information_schema.TABLE_CONSTRAINTS tc LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu ON tc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA AND tc.TABLE_NAME=kcu.TABLE_NAME AND tc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA='${database}' ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION;" \
+    "${destination_dir}/${database}.constraints.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT CONSTRAINT_NAME, TABLE_NAME, REFERENCED_TABLE_NAME, UPDATE_RULE, DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA='${database}' ORDER BY TABLE_NAME, CONSTRAINT_NAME;" \
+    "${destination_dir}/${database}.references.tsv"
+
+  query_fingerprint "${container}" "${password}" \
+    "SELECT TRIGGER_NAME, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_TIMING, ACTION_ORIENTATION, ACTION_STATEMENT FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA='${database}' ORDER BY TRIGGER_NAME;" \
+    "${destination_dir}/${database}.triggers.tsv"
+
+  docker exec -e "MYSQL_PWD=${password}" "${container}" mysqldump \
+    --protocol=tcp -h 127.0.0.1 -uroot \
+    --single-transaction --quick --hex-blob --set-gtid-purged=OFF \
+    --skip-dump-date --skip-comments --no-create-info --skip-triggers \
+    --order-by-primary "${database}" > "${destination_dir}/${database}.data.sql"
+
+  (
+    cd "${destination_dir}"
+    sha256sum \
+      "${database}.tables.tsv" \
+      "${database}.columns.tsv" \
+      "${database}.indexes.tsv" \
+      "${database}.constraints.tsv" \
+      "${database}.references.tsv" \
+      "${database}.triggers.tsv" \
+      "${database}.data.sql" \
+      | sort -k2 > "${database}.fingerprint.sha256"
+  )
+}
+
+compare_fingerprints() {
+  local expected_dir="$1"
+  local actual_dir="$2"
+  local database="$3"
+  local component
+  for component in \
+    tables.tsv columns.tsv indexes.tsv constraints.tsv references.tsv triggers.tsv data.sql fingerprint.sha256; do
+    cmp \
+      "${expected_dir}/${database}.${component}" \
+      "${actual_dir}/${database}.${component}"
+  done
+}
+
 backup_started_ns="$(date +%s%N)"
 for database in "${DATABASES[@]}"; do
   mysql_dump "${SOURCE_CONTAINER}" "${SOURCE_PASSWORD}" "${database}" \
     "${OUTPUT_DIR}/dumps/${database}.sql"
+  logical_fingerprint "${SOURCE_CONTAINER}" "${SOURCE_PASSWORD}" "${database}" \
+    "${OUTPUT_DIR}/logical/source-before"
 done
 backup_finished_ns="$(date +%s%N)"
 backup_duration_ms="$(( (backup_finished_ns - backup_started_ns) / 1000000 ))"
@@ -115,16 +193,28 @@ test "$(read_value order_items)" -ge 3
 test "$(read_value ordering_migrations)" -ge 1
 
 for database in "${DATABASES[@]}"; do
-  mysql_dump "${RESTORE_CONTAINER}" "${RESTORE_PASSWORD}" "${database}" \
-    "${OUTPUT_DIR}/restored/${database}.sql"
-  cmp "${OUTPUT_DIR}/dumps/${database}.sql" "${OUTPUT_DIR}/restored/${database}.sql"
-  mysql_dump "${SOURCE_CONTAINER}" "${SOURCE_PASSWORD}" "${database}" \
-    "${OUTPUT_DIR}/source-after/${database}.sql"
-  cmp "${OUTPUT_DIR}/dumps/${database}.sql" "${OUTPUT_DIR}/source-after/${database}.sql"
+  logical_fingerprint "${RESTORE_CONTAINER}" "${RESTORE_PASSWORD}" "${database}" \
+    "${OUTPUT_DIR}/logical/restored"
+  logical_fingerprint "${SOURCE_CONTAINER}" "${SOURCE_PASSWORD}" "${database}" \
+    "${OUTPUT_DIR}/logical/source-after"
+  compare_fingerprints \
+    "${OUTPUT_DIR}/logical/source-before" \
+    "${OUTPUT_DIR}/logical/restored" \
+    "${database}"
+  compare_fingerprints \
+    "${OUTPUT_DIR}/logical/source-before" \
+    "${OUTPUT_DIR}/logical/source-after" \
+    "${database}"
 done
 
-sha256sum "${OUTPUT_DIR}"/restored/*.sql | sort -k2 > "${OUTPUT_DIR}/restored.sha256"
-sha256sum "${OUTPUT_DIR}"/source-after/*.sql | sort -k2 > "${OUTPUT_DIR}/source-after.sha256"
+(
+  cd "${OUTPUT_DIR}/logical/restored"
+  sha256sum *.fingerprint.sha256 | sort -k2 > "../../restored-logical.sha256"
+)
+(
+  cd "${OUTPUT_DIR}/logical/source-after"
+  sha256sum *.fingerprint.sha256 | sort -k2 > "../../source-after-logical.sha256"
+)
 
 mysql_version="$(docker exec "${SOURCE_CONTAINER}" mysqldump --version | tr '\n' ' ')"
 cat > "${OUTPUT_DIR}/timings.env" <<EOF
@@ -135,4 +225,4 @@ EOF
 
 printf 'backup_duration_ms=%s\nrestore_duration_ms=%s\n' \
   "${backup_duration_ms}" "${restore_duration_ms}"
-printf 'All four logical dumps restored exactly and the source databases remained unchanged.\n'
+printf 'All four databases matched by logical schema and ordered-data fingerprints; source fingerprints remained unchanged.\n'
