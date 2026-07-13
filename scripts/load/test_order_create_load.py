@@ -105,7 +105,7 @@ class LoadDriverTest(unittest.TestCase):
             warmup_seconds=1.0,
             stage_seconds=2.0,
             request_timeout_seconds=3.0,
-            max_requests=100,
+            max_requests_per_stage=100,
             measurement_start_file=None,
         )
 
@@ -122,17 +122,15 @@ class LoadDriverTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load.validate_levels(value)
 
-    def test_stage_budget_reserves_requests_for_later_stages(self) -> None:
-        self.assertEqual(load.stage_request_limit(3000, 5), 600)
-        with self.assertRaisesRegex(ValueError, "reserve at least one"):
-            load.stage_request_limit(1, 2)
-
-    def test_validate_args_enforces_runtime_caps(self) -> None:
+    def test_validate_args_enforces_per_stage_request_cap(self) -> None:
         valid = self.base_args()
         self.assertEqual(load.validate_args(valid), (1, 4))
         invalid = argparse.Namespace(**vars(valid))
-        invalid.max_requests = load.MAX_REQUESTS + 1
-        with self.assertRaisesRegex(ValueError, "maximum requests"):
+        invalid.max_requests_per_stage = load.MAX_REQUESTS_PER_STAGE + 1
+        with self.assertRaisesRegex(ValueError, "maximum requests per stage"):
+            load.validate_args(invalid)
+        invalid.max_requests_per_stage = 0
+        with self.assertRaisesRegex(ValueError, "maximum requests per stage"):
             load.validate_args(invalid)
 
     def test_fixture_preparation_requires_named_users_and_password_env(self) -> None:
@@ -219,7 +217,8 @@ class LoadDriverTest(unittest.TestCase):
             "run_id": "unit",
             "product_id": 1,
             "request_timeout_seconds": 2.0,
-            "max_requests": 10,
+            "max_requests_per_stage": 10,
+            "max_total_measured_requests": 20,
             "warmup": {"requests": 1, "elapsed_seconds": 0.1},
             "stages": [
                 {
@@ -240,6 +239,7 @@ class LoadDriverTest(unittest.TestCase):
         rendered = load.render_markdown(document)
         self.assertIn("request_limit", rendered)
         self.assertIn("not treated as a sustained-duration", rendered)
+        self.assertIn("Maximum requests per measured stage", rendered)
         self.assertIn("Success RPS", rendered)
         self.assertNotIn("unit-token", rendered)
 
