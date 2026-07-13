@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
     env:
+      COMPOSE_FILE: compose.yml:compose.observability.yml
       BASE_URL: http://127.0.0.1:8082
       PROMETHEUS_URL: http://127.0.0.1:19090
       MYSQL_PASSWORD: load-ci-password
@@ -78,7 +79,7 @@ jobs:
         id: startup
         continue-on-error: true
         run: |
-          docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
+          docker compose up -d --build --wait \
             --scale order-timeout-worker=2 \
             --scale order-reconciliation-worker=2
 
@@ -86,10 +87,8 @@ jobs:
         if: steps.startup.outcome == 'failure'
         run: |
           mkdir -p load-evidence/diagnostics
-          docker compose -f compose.yml -f compose.observability.yml ps -a \
-            > load-evidence/diagnostics/startup-ps.txt 2>&1 || true
-          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
-            > load-evidence/diagnostics/startup.log 2>&1 || true
+          docker compose ps -a > load-evidence/diagnostics/startup-ps.txt 2>&1 || true
+          docker compose logs --no-color --timestamps > load-evidence/diagnostics/startup.log 2>&1 || true
 
       - name: Enforce startup result
         if: steps.startup.outcome == 'failure'
@@ -143,22 +142,26 @@ jobs:
       - name: Capture baseline operational state
         run: bash scripts/load/capture_state.sh load-evidence baseline
 
-      - name: Start bounded resource sampler
-        id: sampler
+      - name: Execute staged load with bounded resource sampling
         shell: bash
         run: |
           set -euo pipefail
+          sampler_pid=""
+          cleanup_sampler() {
+            if [[ -n "${sampler_pid}" ]] && kill -0 "${sampler_pid}" >/dev/null 2>&1; then
+              kill "${sampler_pid}" >/dev/null 2>&1 || true
+              wait "${sampler_pid}" >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup_sampler EXIT
+
           python3 scripts/load/resource_sampler.py \
             --output load-evidence/resource-samples.jsonl \
             --duration-seconds 70 \
             --interval-seconds 2 \
             > load-evidence/resource-sampler.log 2>&1 &
-          echo "pid=$!" >> "${GITHUB_OUTPUT}"
+          sampler_pid="$!"
 
-      - name: Execute staged order-creation load
-        shell: bash
-        run: |
-          set -euo pipefail
           python3 scripts/load/order_create_load.py \
             --base-url "${BASE_URL}" \
             --run-id "${GITHUB_RUN_ID}" \
@@ -172,14 +175,12 @@ jobs:
             --max-requests 3000 \
             --output-dir load-evidence/load \
             | tee load-evidence/load-driver.log
-          test "$(python3 -c 'import json; print(len(json.load(open("load-evidence/load/load-summary.json"))["stages"]))')" = "5"
 
-      - name: Complete resource sampling
-        shell: bash
-        run: |
-          set -euo pipefail
-          wait "${{ steps.sampler.outputs.pid }}"
+          wait "${sampler_pid}"
+          sampler_pid=""
+          trap - EXIT
           test -s load-evidence/resource-samples.jsonl
+          test "$(python3 -c 'import json; print(len(json.load(open("load-evidence/load/load-summary.json"))["stages"]))')" = "5"
 
       - name: Capture post-load operational state
         run: bash scripts/load/capture_state.sh load-evidence post
@@ -199,11 +200,13 @@ jobs:
             > load-evidence/post-load-ready.txt
           python3 - <<'PY' >> "${GITHUB_OUTPUT}"
           import json
+          import os
+
           report = json.load(open("load-evidence/capacity-report.json", encoding="utf-8"))
           load = report["load"]
           stages = load["stages"]
           boundary = report["first_observed_boundary"]
-          print(f"artifact_name=bounded-load-test-{__import__('os').environ['GITHUB_SHA']}-{__import__('os').environ['GITHUB_RUN_ID']}")
+          print(f"artifact_name=bounded-load-test-{os.environ['GITHUB_SHA']}-{os.environ['GITHUB_RUN_ID']}")
           print(f"best_rps={max(stage['throughput_rps'] for stage in stages):.3f}")
           print(f"highest_p95_ms={max(stage['latency_ms']['p95'] for stage in stages):.3f}")
           print(f"measured_errors={load['measured_errors']}")
@@ -216,10 +219,8 @@ jobs:
         if: failure()
         run: |
           mkdir -p load-evidence/diagnostics
-          docker compose -f compose.yml -f compose.observability.yml ps -a \
-            > load-evidence/diagnostics/compose-ps.txt 2>&1 || true
-          docker compose -f compose.yml -f compose.observability.yml logs --no-color --timestamps \
-            > load-evidence/diagnostics/compose.log 2>&1 || true
+          docker compose ps -a > load-evidence/diagnostics/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color --timestamps > load-evidence/diagnostics/compose.log 2>&1 || true
           docker stats --no-stream > load-evidence/diagnostics/docker-stats.txt 2>&1 || true
           curl --silent --show-error "${PROMETHEUS_URL}/api/v1/targets" \
             > load-evidence/diagnostics/prometheus-targets.json 2>&1 || true
@@ -235,7 +236,7 @@ jobs:
 
       - name: Remove disposable resources
         if: always()
-        run: docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans || true
+        run: docker compose down -v --remove-orphans || true
 
   evidence:
     name: Record Runbook and load-test acceptance in GitHub
