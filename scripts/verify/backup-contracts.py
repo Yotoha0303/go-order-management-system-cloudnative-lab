@@ -87,12 +87,19 @@ def verify_tooling_and_documentation() -> None:
     require("--compact" not in restore, "restorable dumps must retain foreign-key restore guards")
     require("FOREIGN_KEY_CHECKS=0" in restore, "logical dumps must retain foreign-key restore guards")
     require("logical_fingerprint" in restore, "logical fingerprint generation is missing")
-    require("information_schema.TABLES" in restore, "table metadata fingerprint is missing")
+    require("information_schema.SCHEMATA" in restore and "DEFAULT_ENCRYPTION" in restore, "database default metadata fingerprint is missing")
+    require("information_schema.TABLES" in restore and "AUTO_INCREMENT" in restore, "table metadata or next auto-increment fingerprint is missing")
     require("information_schema.COLUMNS" in restore, "column metadata fingerprint is missing")
     require("information_schema.STATISTICS" in restore, "index metadata fingerprint is missing")
-    require("information_schema.TABLE_CONSTRAINTS" in restore, "constraint metadata fingerprint is missing")
+    require("information_schema.TABLE_CONSTRAINTS" in restore and "tc.ENFORCED" in restore, "constraint metadata or enforcement fingerprint is missing")
+    require("information_schema.CHECK_CONSTRAINTS" in restore and "CHECK_CLAUSE" in restore, "check-constraint expression fingerprint is missing")
     require("information_schema.REFERENTIAL_CONSTRAINTS" in restore, "referential metadata fingerprint is missing")
     require("information_schema.TRIGGERS" in restore, "trigger metadata fingerprint is missing")
+    require("SQL_MODE, DEFINER, CHARACTER_SET_CLIENT, COLLATION_CONNECTION, DATABASE_COLLATION" in restore, "trigger execution-context fingerprint is incomplete")
+    require("information_schema.ROUTINES" in restore and "ROUTINE_DEFINITION" in restore, "stored-routine fingerprint is missing")
+    require("information_schema.PARAMETERS" in restore and "DTD_IDENTIFIER" in restore, "stored-routine parameter fingerprint is missing")
+    require("schema.tsv tables.tsv columns.tsv indexes.tsv constraints.tsv checks.tsv references.tsv" in restore, "logical component comparison list is incomplete")
+    require("triggers.tsv routines.tsv parameters.tsv data.sql fingerprint.sha256" in restore, "executable-object or data component comparison list is incomplete")
     require("--no-create-info" in restore and "--order-by-primary" in restore, "ordered data-only fingerprint is missing")
     require("compare_fingerprints" in restore, "restored/source logical comparisons are missing")
     require('cmp "${OUTPUT_DIR}/dumps/${database}.sql"' not in restore, "full SQL serialization must not be compared as logical equality")
@@ -103,6 +110,11 @@ def verify_tooling_and_documentation() -> None:
         "四个服务数据库",
         "隔离恢复",
         "SHA-256",
+        "数据库默认字符集",
+        "AUTO_INCREMENT",
+        "CHECK 约束表达式",
+        "触发器执行上下文",
+        "存储过程与函数",
         "逻辑 Schema 指纹",
         "有序数据指纹",
         "源数据库保持不变",
