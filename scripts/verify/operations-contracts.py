@@ -15,15 +15,15 @@ CAPTURE = ROOT / "scripts/load/capture_state.sh"
 RUNBOOK = ROOT / "docs/runbooks/operations.md"
 LOAD_DOC = ROOT / "docs/verification/load-test.md"
 
-EXPECTED_PROMETHEUS_JOBS = (
-    "api-gateway",
-    "identity-service",
-    "catalog-service",
-    "inventory-service",
-    "order-service",
-    "order-timeout-worker",
-    "order-reconciliation-worker",
-)
+EXPECTED_PROMETHEUS_TARGETS = {
+    "api-gateway": 1,
+    "identity-service": 1,
+    "catalog-service": 1,
+    "inventory-service": 1,
+    "order-service": 1,
+    "order-timeout-worker": 2,
+    "order-reconciliation-worker": 2,
+}
 
 
 def require(condition: bool, message: str) -> None:
@@ -51,11 +51,13 @@ def verify_runtime_workflow() -> None:
     require("--warmup-seconds 5" in workflow, "warm-up duration is missing")
     require("--stage-seconds 8" in workflow, "measured stage duration is missing")
     require("--max-requests-per-stage 3000" in workflow, "independent per-stage request ceiling is missing")
-    require('max_total_measured_requests"])\')" = "15000"' in workflow, "total measured-request ceiling is not asserted")
-    require("Wait for seven healthy Prometheus targets" in workflow, "seven-target readiness gate is missing")
+    require("max_total_measured_requests" in workflow and '"15000"' in workflow, "total measured-request ceiling is not asserted")
+    require("Wait for nine healthy Prometheus targets across seven jobs" in workflow, "nine-target readiness gate is missing")
+    require("from collections import Counter" in workflow, "Prometheus readiness must count individual targets")
     require("activeTargets" in workflow and 'target.get("health") == "up"' in workflow, "Prometheus readiness must inspect active healthy targets")
-    for job in EXPECTED_PROMETHEUS_JOBS:
-        require(f'"{job}"' in workflow, f"Prometheus readiness is missing job: {job}")
+    require("active_counts" in workflow and "healthy_counts" in workflow and "mismatches" in workflow, "Prometheus target-count comparison is incomplete")
+    for job, expected_count in EXPECTED_PROMETHEUS_TARGETS.items():
+        require(f'"{job}": {expected_count}' in workflow, f"Prometheus readiness count is wrong or missing for {job}")
     require("resource_sampler.py" in workflow, "resource sampler is not executed")
     require("--start-file" in workflow and "load-evidence/measurement-start" in workflow, "measured-stage start marker is missing")
     require("--measurement-start-file" in workflow, "load driver does not publish the measurement-start marker")
@@ -79,9 +81,9 @@ def verify_runtime_workflow() -> None:
     require("retention-days: 30" in workflow, "load artifact retention must be explicit")
     require("if: always()" in workflow and "down -v --remove-orphans" in workflow, "disposable load resources must always be removed")
     require('ACCEPTANCE_ISSUE_NUMBER: "52"' in workflow, "Phase 8.5 evidence target is missing")
-    require("All seven Prometheus scrape jobs were healthy" in workflow, "target-health evidence claim is missing")
+    require("All nine expected Prometheus targets across seven scrape jobs were healthy" in workflow, "target-health evidence claim is missing")
     require("independent 3000-request safety ceiling" in workflow, "per-stage request-boundary evidence claim is missing")
-    require("after fixture/warm-up and before the completion marker" in workflow, "measured-stage resource boundary claim is missing")
+    require("snapshots overlapping completion are discarded" in workflow, "overlapping snapshot evidence boundary is missing")
     require("no production SLO or capacity guarantee is claimed" in workflow, "non-production evidence boundary is missing")
 
 
@@ -130,10 +132,11 @@ def verify_load_tooling() -> None:
     require("MAX_START_TIMEOUT_SECONDS = 120.0" in sampler, "resource sampling start wait is not bounded")
     require("--start-file" in sampler and "measurement_start_file" in sampler, "sampler must wait for measured stages")
     require("--stop-file" in sampler and "completion_file" in sampler, "sampler must follow the load-driver completion marker")
-    require(sampler.count("if stop_file.is_file():") >= 2, "sampler must check completion before and after every snapshot")
+    require("records = snapshot_func()" in sampler, "sampler must stage a snapshot before deciding whether to persist it")
+    require(sampler.count("if stop_file.is_file():") >= 2, "sampler must check completion before collection and before persisting every snapshot")
     require("maximum duration before the load driver completed" in sampler, "premature sampler completion must fail")
     require('["docker", "stats"' in sampler, "Docker resource sampling is missing")
-    require("test_sampler_does_not_take_snapshot_after_completion_marker" in sampler_tests, "post-completion sampling regression test is missing")
+    require("test_sampler_discards_snapshot_overlapping_completion" in sampler_tests, "overlapping completion snapshot regression test is missing")
     require("test_wait_for_measurement_start_rejects_early_completion" in sampler_tests, "early completion/start ordering test is missing")
     require("gateway_rate_limit" in analyzer, "Gateway rate-limit classification is missing")
     require("request_error_boundary" in analyzer, "request error classification is missing")
@@ -155,11 +158,11 @@ def verify_load_tooling() -> None:
     require("service,method,route_group,status_class" in capture, "server request evidence must preserve emitted route and status labels")
     require("route,status" not in capture, "obsolete server metric labels must not be queried")
     require("upstream,operation,outcome,status_class,retryable" in capture, "HTTP client evidence must preserve all emitted labels")
+    require("max by (job,role) (go_order_rabbitmq_session_up)" in capture, "RabbitMQ session evidence must preserve role and scrape job")
     require("sum by (job,outcome) (go_order_rabbitmq_publish_total)" in capture, "RabbitMQ publish evidence must use actual labels plus scrape job")
     require("sum by (job,outcome) (go_order_rabbitmq_delivery_total)" in capture, "RabbitMQ delivery evidence must use actual labels plus scrape job")
     require("service,operation,outcome" not in capture, "nonexistent RabbitMQ publish labels must not be queried")
     require("go_order_http_server_request_duration_seconds_bucket" in capture, "server latency metric capture is missing")
-    require("go_order_rabbitmq_session_up" in capture, "RabbitMQ session metric capture is missing")
     require("go_order_rabbitmq_consume_total" not in capture, "nonexistent RabbitMQ consume metric must not be queried")
 
 
@@ -186,10 +189,12 @@ def verify_documentation() -> None:
         "Measured request ceiling per stage",
         "Maximum total measured requests",
         "Tokens remain in the Python process memory",
-        "seven Prometheus scrape jobs",
+        "nine expected Prometheus targets",
+        "two healthy targets",
         "measured stages only",
         "successful throughput",
         "emitted metric labels",
+        "RabbitMQ session",
         "Operational evidence",
         "Capacity-boundary rules",
         "measured evidence from inference",
