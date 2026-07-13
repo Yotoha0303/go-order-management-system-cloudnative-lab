@@ -8,6 +8,7 @@ import dataclasses
 import datetime as dt
 import json
 import math
+import os
 import pathlib
 import threading
 import time
@@ -85,6 +86,97 @@ def validate_levels(raw: str) -> tuple[int, ...]:
     return levels
 
 
+def api_json(
+    *,
+    base_url: str,
+    path: str,
+    method: str,
+    payload: dict[str, Any],
+    timeout_seconds: float,
+    bearer_token: str | None = None,
+) -> dict[str, Any]:
+    headers = {"Content-Type": "application/json"}
+    if bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        method=method,
+        headers=headers,
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        body = json.loads(response.read())
+    if not isinstance(body, dict) or body.get("code") != 0:
+        raise RuntimeError(f"fixture API failed for {method} {path}")
+    return body
+
+
+def prepare_fixture(
+    *,
+    base_url: str,
+    run_id: str,
+    admin_username: str,
+    admin_password: str,
+    buyer_username: str,
+    buyer_password: str,
+    timeout_seconds: float,
+) -> tuple[str, int, dict[str, Any]]:
+    admin_login = api_json(
+        base_url=base_url,
+        path="/api/v1/auth/login",
+        method="POST",
+        payload={"username": admin_username, "password": admin_password},
+        timeout_seconds=timeout_seconds,
+    )
+    buyer_login = api_json(
+        base_url=base_url,
+        path="/api/v1/auth/login",
+        method="POST",
+        payload={"username": buyer_username, "password": buyer_password},
+        timeout_seconds=timeout_seconds,
+    )
+    admin_token = str(admin_login["data"]["token"])
+    buyer_token = str(buyer_login["data"]["token"])
+    if not admin_token or not buyer_token:
+        raise RuntimeError("fixture login returned an empty token")
+
+    product = api_json(
+        base_url=base_url,
+        path="/api/v1/products",
+        method="POST",
+        payload={"name": f"Load Product {run_id}", "price": 1999},
+        timeout_seconds=timeout_seconds,
+        bearer_token=admin_token,
+    )
+    product_id = int(product["data"]["id"])
+    api_json(
+        base_url=base_url,
+        path=f"/api/v1/products/{product_id}/status",
+        method="PATCH",
+        payload={"status": "on_sale"},
+        timeout_seconds=timeout_seconds,
+        bearer_token=admin_token,
+    )
+    api_json(
+        base_url=base_url,
+        path="/api/v1/inventory/init",
+        method="POST",
+        payload={"product_id": product_id, "quantity": 100000},
+        timeout_seconds=timeout_seconds,
+        bearer_token=admin_token,
+    )
+    fixture = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "admin_username": admin_username,
+        "buyer_username": buyer_username,
+        "product_id": product_id,
+        "initial_inventory": 100000,
+        "tokens_persisted": False,
+    }
+    return buyer_token, product_id, fixture
+
+
 def request_order(
     *,
     base_url: str,
@@ -132,7 +224,7 @@ def request_order(
     except TimeoutError:
         outcome = "timeout"
         error = "TimeoutError"
-    except Exception as exc:  # bounded evidence, not raw error text
+    except Exception as exc:
         outcome = "client_error"
         error = type(exc).__name__
     duration_ms = (time.perf_counter() - started) * 1000.0
@@ -264,9 +356,14 @@ def render_markdown(document: dict[str, Any]) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a bounded staged order-creation load measurement")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--token", required=True)
-    parser.add_argument("--product-id", type=int, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--prepare-fixture", action="store_true")
+    parser.add_argument("--admin-username")
+    parser.add_argument("--buyer-username")
+    parser.add_argument("--admin-password-env", default="LOAD_ADMIN_PASSWORD")
+    parser.add_argument("--buyer-password-env", default="LOAD_BUYER_PASSWORD")
+    parser.add_argument("--token-env", default="LOAD_BEARER_TOKEN")
+    parser.add_argument("--product-id", type=int)
     parser.add_argument("--concurrency-levels", default="1,4,8,16,32")
     parser.add_argument("--warmup-seconds", type=float, default=5.0)
     parser.add_argument("--stage-seconds", type=float, default=8.0)
@@ -278,8 +375,16 @@ def parse_args() -> argparse.Namespace:
 
 def validate_args(args: argparse.Namespace) -> tuple[int, ...]:
     levels = validate_levels(args.concurrency_levels)
-    if args.product_id < 1:
-        raise ValueError("product ID must be positive")
+    if args.prepare_fixture:
+        if not args.admin_username or not args.buyer_username:
+            raise ValueError("fixture preparation requires admin and buyer usernames")
+        if not os.environ.get(args.admin_password_env) or not os.environ.get(args.buyer_password_env):
+            raise ValueError("fixture preparation requires password environment variables")
+    else:
+        if args.product_id is None or args.product_id < 1:
+            raise ValueError("product ID must be positive when fixture preparation is disabled")
+        if not os.environ.get(args.token_env):
+            raise ValueError("bearer token environment variable is required")
     if not 0.1 <= args.warmup_seconds <= MAX_WARMUP_SECONDS:
         raise ValueError(f"warm-up must be between 0.1 and {MAX_WARMUP_SECONDS} seconds")
     if not 0.1 <= args.stage_seconds <= MAX_STAGE_SECONDS:
@@ -296,10 +401,27 @@ def main() -> int:
     levels = validate_args(args)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.prepare_fixture:
+        token, product_id, fixture = prepare_fixture(
+            base_url=args.base_url,
+            run_id=args.run_id,
+            admin_username=args.admin_username,
+            admin_password=os.environ[args.admin_password_env],
+            buyer_username=args.buyer_username,
+            buyer_password=os.environ[args.buyer_password_env],
+            timeout_seconds=args.request_timeout_seconds,
+        )
+        (args.output_dir / "fixture.json").write_text(
+            json.dumps(fixture, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    else:
+        token = os.environ[args.token_env]
+        product_id = int(args.product_id)
+
     warmup_samples, warmup_elapsed, sequence = run_stage(
         base_url=args.base_url,
-        token=args.token,
-        product_id=args.product_id,
+        token=token,
+        product_id=product_id,
         run_id=args.run_id,
         stage_name="warmup",
         concurrency=min(4, levels[-1]),
@@ -318,8 +440,8 @@ def main() -> int:
         stage_name = f"c{concurrency}"
         samples, elapsed, sequence = run_stage(
             base_url=args.base_url,
-            token=args.token,
-            product_id=args.product_id,
+            token=token,
+            product_id=product_id,
             run_id=args.run_id,
             stage_name=stage_name,
             concurrency=concurrency,
@@ -340,7 +462,7 @@ def main() -> int:
     document = {
         "schema_version": 1,
         "run_id": args.run_id,
-        "product_id": args.product_id,
+        "product_id": product_id,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "profile": "POST /api/v1/orders with one item and unique idempotency key",
         "concurrency_levels": list(levels),
@@ -352,6 +474,7 @@ def main() -> int:
         "measured_requests": len(all_samples),
         "measured_successes": sum(sample.outcome == "success" for sample in all_samples),
         "measured_errors": sum(sample.outcome != "success" for sample in all_samples),
+        "credentials_persisted": False,
     }
     with (args.output_dir / "samples.jsonl").open("w", encoding="utf-8") as handle:
         for sample in all_samples:
