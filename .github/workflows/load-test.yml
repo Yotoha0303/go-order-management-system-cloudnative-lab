@@ -57,6 +57,7 @@ jobs:
       best_rps: ${{ steps.summary.outputs.best_rps }}
       highest_p95_ms: ${{ steps.summary.outputs.highest_p95_ms }}
       measured_errors: ${{ steps.summary.outputs.measured_errors }}
+      eligible_stage_count: ${{ steps.summary.outputs.eligible_stage_count }}
       boundary: ${{ steps.summary.outputs.boundary }}
       boundary_concurrency: ${{ steps.summary.outputs.boundary_concurrency }}
     steps:
@@ -124,29 +125,30 @@ jobs:
           mkdir -p load-evidence/setup
           mv load-admin-register.json load-buyer-register.json load-evidence/setup/
 
-      - name: Wait for Prometheus application targets
+      - name: Wait for non-empty Prometheus application series
         shell: bash
         run: |
           set -euo pipefail
           for attempt in $(seq 1 60); do
             if curl --fail --silent --show-error \
               "${PROMETHEUS_URL}/api/v1/query?query=go_order_http_server_requests_total" \
-              | python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("status")=="success" else 1)'; then
+              | python3 -c 'import json,sys; data=json.load(sys.stdin); result=data.get("data", {}).get("result", []); raise SystemExit(0 if data.get("status")=="success" and len(result)>0 else 1)'; then
               exit 0
             fi
             sleep 2
           done
-          echo "Prometheus application query did not become ready" >&2
+          echo "Prometheus application series did not become non-empty" >&2
           exit 1
 
       - name: Capture baseline operational state
         run: bash scripts/load/capture_state.sh load-evidence baseline
 
-      - name: Execute staged load with bounded resource sampling
+      - name: Execute staged load with completion-bound resource sampling
         shell: bash
         run: |
           set -euo pipefail
           sampler_pid=""
+          stop_file="load-evidence/load-complete"
           cleanup_sampler() {
             if [[ -n "${sampler_pid}" ]] && kill -0 "${sampler_pid}" >/dev/null 2>&1; then
               kill "${sampler_pid}" >/dev/null 2>&1 || true
@@ -155,9 +157,11 @@ jobs:
           }
           trap cleanup_sampler EXIT
 
+          rm -f "${stop_file}"
           python3 scripts/load/resource_sampler.py \
             --output load-evidence/resource-samples.jsonl \
-            --duration-seconds 70 \
+            --stop-file "${stop_file}" \
+            --max-duration-seconds 180 \
             --interval-seconds 2 \
             > load-evidence/resource-sampler.log 2>&1 &
           sampler_pid="$!"
@@ -176,9 +180,11 @@ jobs:
             --output-dir load-evidence/load \
             | tee load-evidence/load-driver.log
 
+          touch "${stop_file}"
           wait "${sampler_pid}"
           sampler_pid=""
           trap - EXIT
+          grep -q '^stop_reason=completion_file$' load-evidence/resource-sampler.log
           test -s load-evidence/resource-samples.jsonl
           test "$(python3 -c 'import json; print(len(json.load(open("load-evidence/load/load-summary.json"))["stages"]))')" = "5"
 
@@ -205,11 +211,13 @@ jobs:
           report = json.load(open("load-evidence/capacity-report.json", encoding="utf-8"))
           load = report["load"]
           stages = load["stages"]
+          eligible = [stage for stage in stages if stage.get("measurement_eligible")]
           boundary = report["first_observed_boundary"]
           print(f"artifact_name=bounded-load-test-{os.environ['GITHUB_SHA']}-{os.environ['GITHUB_RUN_ID']}")
-          print(f"best_rps={max(stage['throughput_rps'] for stage in stages):.3f}")
-          print(f"highest_p95_ms={max(stage['latency_ms']['p95'] for stage in stages):.3f}")
+          print(f"best_rps={max((stage['throughput_rps'] for stage in eligible), default=0.0):.3f}")
+          print(f"highest_p95_ms={max((stage['latency_ms']['p95'] for stage in eligible), default=0.0):.3f}")
           print(f"measured_errors={load['measured_errors']}")
+          print(f"eligible_stage_count={len(eligible)}")
           print(f"boundary={boundary['classification']}")
           value = boundary['first_observed_at_concurrency']
           print(f"boundary_concurrency={value if value is not None else 'not-observed'}")
@@ -255,6 +263,7 @@ jobs:
           BEST_RPS: ${{ needs.load.outputs.best_rps }}
           HIGHEST_P95_MS: ${{ needs.load.outputs.highest_p95_ms }}
           MEASURED_ERRORS: ${{ needs.load.outputs.measured_errors }}
+          ELIGIBLE_STAGE_COUNT: ${{ needs.load.outputs.eligible_stage_count }}
           BOUNDARY: ${{ needs.load.outputs.boundary }}
           BOUNDARY_CONCURRENCY: ${{ needs.load.outputs.boundary_concurrency }}
         with:
@@ -268,11 +277,14 @@ jobs:
               '',
               `- GitHub Actions run: ${runUrl}`,
               `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
-              `- Best measured throughput: ${process.env.BEST_RPS} requests/second`,
-              `- Highest measured stage P95: ${process.env.HIGHEST_P95_MS} ms`,
+              `- Best sustained-duration throughput: ${process.env.BEST_RPS} requests/second`,
+              `- Highest sustained-duration stage P95: ${process.env.HIGHEST_P95_MS} ms`,
+              `- Sustained-duration eligible stages: ${process.env.ELIGIBLE_STAGE_COUNT}`,
               `- Measured errors: ${process.env.MEASURED_ERRORS}`,
               `- First observed boundary: \`${process.env.BOUNDARY}\` at concurrency \`${process.env.BOUNDARY_CONCURRENCY}\``,
               '- Five bounded concurrency levels (1/4/8/16/32) used unique Idempotency Keys against synthetic order creation.',
+              '- A request-ceiling-truncated stage is preserved as safety evidence but excluded from sustained capacity inference.',
+              '- Resource sampling remained active until the load driver wrote its completion marker.',
               '- Raw request samples, P50/P95/P99, container resources, MySQL, RabbitMQ and Prometheus evidence are in the artifact.',
               '- Measured evidence and bottleneck inference are separated; no production SLO or capacity guarantee is claimed.',
               '- The operator Runbook is maintained at `docs/runbooks/operations.md`.',
