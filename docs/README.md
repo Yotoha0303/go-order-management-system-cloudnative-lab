@@ -54,7 +54,7 @@ scripts/load/analyze_load.py
 ```text
 ci.yml
 kubernetes-contracts.yml
-observability.yml
+prometheus-metrics.yml
 release-contracts.yml
 publish-images.yml
 delivery-contracts.yml
