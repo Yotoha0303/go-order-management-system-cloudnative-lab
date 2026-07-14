@@ -163,7 +163,7 @@ Kubernetes Contracts
 Observability Stack
 Release Contracts
 Publish Immutable Images
-Test Environment Deployment
+Deploy Verified Release to Test
 Backup Contracts
 Verify MySQL Backup and Restore
 Fault Drill Contracts
