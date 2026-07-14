@@ -22,6 +22,7 @@ MAX_CONCURRENCY = 32
 MAX_STAGE_SECONDS = 15.0
 MAX_WARMUP_SECONDS = 10.0
 MAX_REQUESTS_PER_STAGE = 3000
+MAX_TOTAL_MEASURED_REQUESTS = 15000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -430,6 +431,10 @@ def validate_args(args: argparse.Namespace) -> tuple[int, ...]:
         raise ValueError("request timeout must be between 0.1 and 20 seconds")
     if not 1 <= args.max_requests_per_stage <= MAX_REQUESTS_PER_STAGE:
         raise ValueError(f"maximum requests per stage must be between 1 and {MAX_REQUESTS_PER_STAGE}")
+    if args.max_requests_per_stage * len(levels) > MAX_TOTAL_MEASURED_REQUESTS:
+        raise ValueError(
+            f"maximum total measured requests must not exceed {MAX_TOTAL_MEASURED_REQUESTS}"
+        )
     return levels
 
 
