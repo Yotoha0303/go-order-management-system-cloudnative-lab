@@ -69,6 +69,13 @@ def healthy_stages_before_boundary(
     return healthy
 
 
+def healthy_error_count(
+    stages: list[dict[str, Any]],
+    boundary: dict[str, Any],
+) -> int:
+    return sum(int(stage.get("errors", 0)) for stage in healthy_stages_before_boundary(stages, boundary))
+
+
 def best_healthy_successful_throughput(
     stages: list[dict[str, Any]],
     boundary: dict[str, Any],
@@ -94,7 +101,7 @@ def infer_capacity_boundary(
                 "classification": "request_ceiling_before_stage_duration",
                 "first_observed_at_concurrency": concurrency,
                 "measured_evidence": (
-                    f"The global request ceiling stopped concurrency {concurrency} after "
+                    f"The per-stage request ceiling stopped concurrency {concurrency} after "
                     f"{stage.get('issuance_elapsed_seconds', stage.get('elapsed_seconds', 0))}s, "
                     f"before the configured {stage.get('configured_duration_seconds', 'unknown')}s issuance window."
                 ),
@@ -172,9 +179,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Measured result",
         "",
-        f"- Measured requests: {load['measured_requests']}",
-        f"- Successes: {load['measured_successes']}",
-        f"- Errors: {load['measured_errors']}",
+        f"- All bounded measured requests retained in the artifact: {load['measured_requests']}",
+        f"- All bounded successes retained in the artifact: {load['measured_successes']}",
+        f"- All bounded errors retained in the artifact: {load['measured_errors']}",
+        f"- Errors in healthy sustained stages before boundary: {report['healthy_measured_errors']}",
         f"- Healthy sustained stages before boundary: {report['healthy_stage_count']}",
         f"- Best healthy sustained successful throughput: {report['best_healthy_successful_throughput_rps']:.3f} requests/second",
         f"- Highest healthy sustained P95: {report['highest_healthy_p95_ms']:.3f} ms",
@@ -199,7 +207,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "> Summary throughput and P95 exclude the boundary stage and any later stage, and throughput uses successful rather than attempted requests.",
+            "> Summary throughput, P95 and healthy error count exclude the boundary stage and any later stage; throughput uses successful rather than attempted requests.",
+            "",
+            "> Raw all-stage requests and errors remain in the artifact for diagnosis and are not presented as healthy capacity evidence.",
             "",
             "> Measured evidence and inference are intentionally separated. "
             "This single-runner synthetic test is not a production capacity guarantee.",
@@ -232,6 +242,7 @@ def main() -> int:
         "resource_peaks": peaks,
         "first_observed_boundary": boundary,
         "healthy_stage_count": len(healthy),
+        "healthy_measured_errors": healthy_error_count(stages, boundary),
         "best_healthy_successful_throughput_rps": round(
             max((successful_throughput(stage) for stage in healthy), default=0.0), 3
         ),
