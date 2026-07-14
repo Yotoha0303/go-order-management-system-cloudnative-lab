@@ -1,157 +1,117 @@
 # 项目文档导航
 
-本文档区分**当前实现**、**验证证据**、**历史单体基线**和**后续规划**，避免把旧设计或尚未运行验收的能力误认为当前状态。
+本文档区分**当前实现**、**运行证据**、**历史基线**和**生产增强项**，避免把代码存在、配置可渲染和真实运行验收混为一谈。
 
-## 当前实现：优先阅读
+## 当前实现
 
 | 文档 | 内容 |
 | --- | --- |
-| [../README.md](../README.md) | 当前项目定位、运行拓扑、Compose/kind/Prometheus/Grafana/Tempo 启动方式和能力边界 |
-| [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、服务调用、Inventory Reservation 和 Order Saga |
-| [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | 独立 Goose 迁移、Outbox 租约、多 Worker 和 Publisher Confirms |
-| [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | 请求预算、Transport 超时、有限重试和安全边界 |
-| [architecture/circuit-breaker-rate-limit.md](architecture/circuit-breaker-rate-limit.md) | 操作级熔断与 Gateway Token Bucket 限流 |
-| [architecture/reliability-indicators.md](architecture/reliability-indicators.md) | Outbox/Saga 聚合指标、内部端点和周期日志 |
-| [architecture/reconciliation-worker.md](architecture/reconciliation-worker.md) | 对账任务、事务触发器、租约 Worker、修复动作和 dry-run |
-| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize base/local/test、StatefulSet、Migration Job、Deployment、Ingress、PDB、kind 部署和回滚验收 |
-| [architecture/prometheus-metrics.md](architecture/prometheus-metrics.md) | Prometheus registry、scrape endpoints、HTTP/Order/Outbox/Worker/RabbitMQ 指标与标签基数 |
-| [architecture/grafana-alerts.md](architecture/grafana-alerts.md) | Grafana Provisioning、总览 Dashboard、recording rules、alert rules、阈值和边界 |
-| [architecture/opentelemetry-tracing.md](architecture/opentelemetry-tracing.md) | OpenTelemetry SDK、W3C Trace Context、OTLP、Tempo、日志关联、采样和隐私边界 |
-| [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | 云原生完成度、已完成能力和生产级缺口 |
-| [project_evolution.md](project_evolution.md) | 从单体到微服务、可靠性、Kubernetes 和可观测性的演进记录 |
+| [../README.md](../README.md) | 当前项目定位、能力矩阵、运行入口和生产边界 |
+| [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、Inventory Reservation 和 Order Saga |
+| [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | Goose migration、Outbox 租约、多 Worker 与 Publisher Confirms |
+| [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | Request Deadline、Transport 超时和有限重试 |
+| [architecture/circuit-breaker-rate-limit.md](architecture/circuit-breaker-rate-limit.md) | 操作级熔断与 Gateway Token Bucket |
+| [architecture/reconciliation-worker.md](architecture/reconciliation-worker.md) | 自动对账任务、租约、修复动作与 dry-run |
+| [architecture/kubernetes-foundation.md](architecture/kubernetes-foundation.md) | Kustomize、Migration Job、Deployment、Ingress、PDB、kind 与回滚 |
+| [architecture/prometheus-metrics.md](architecture/prometheus-metrics.md) | HTTP、Saga、Outbox、Worker 与 RabbitMQ 指标 |
+| [architecture/grafana-alerts.md](architecture/grafana-alerts.md) | Dashboard、recording rules 和 alert rules |
+| [architecture/opentelemetry-tracing.md](architecture/opentelemetry-tracing.md) | W3C Context、OTLP、Tempo 和日志关联 |
+| [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | Phase 5–8 完成状态与生产级缺口 |
+| [project_evolution.md](project_evolution.md) | 从单体到运行保障闭环的演进记录 |
 
-## 验证资料
+## Phase 8 验收与运营资料
 
-| 文档或脚本 | 验证内容 |
+| 文档 | 内容 |
 | --- | --- |
-| [verification/ci-baseline.md](verification/ci-baseline.md) | 当前 Go、迁移、镜像、Compose 和 Saga 质量门禁 |
-| [verification/publisher-confirms.md](verification/publisher-confirms.md) | RabbitMQ Broker ACK 与 Outbox 状态 |
-| [verification/http-timeout-retry.md](verification/http-timeout-retry.md) | 请求预算和有限重试 |
-| [verification/circuit-breaker-rate-limit.md](verification/circuit-breaker-rate-limit.md) | 熔断状态、Token Bucket 和 HTTP 429 |
-| [verification/reliability-indicators.md](verification/reliability-indicators.md) | 聚合查询、内部鉴权和年龄边界 |
-| [verification/reconciliation-worker.md](verification/reconciliation-worker.md) | 对账映射、事务回滚、租约和修复动作 |
-| [verification/grafana-alerts.md](verification/grafana-alerts.md) | Dashboard 合同、promtool 规则测试、Prometheus/Grafana 运行验收和诊断边界 |
-| [verification/opentelemetry-tracing.md](verification/opentelemetry-tracing.md) | 无 exporter Trace Context、W3C 传播、Tempo 跨服务 Trace 和诊断证据 |
-| [verification/ghcr-release-images.md](verification/ghcr-release-images.md) | GHCR commit-SHA 标签、覆盖拒绝、OCI digest、发布清单、权限和首次实际验收边界 |
-| `scripts/smoke/microservices-saga.sh` | Compose 与 Kubernetes 共用的微服务业务断言；可注入 `traceparent`/`tracestate` |
-| `scripts/smoke/microservices-saga-kubernetes.sh` | Kubernetes Saga 包装入口 |
-| `scripts/smoke/prometheus-metrics.py` | 七 target、规则健康、基础指标和 recording series 查询 |
-| `scripts/smoke/grafana-provisioning.py` | Grafana 健康、Prometheus/Tempo 数据源和 Dashboard Provisioning API |
-| `scripts/smoke/tempo-trace.py` | 按 Trace ID 验证五服务 Trace、Saga span 和有界 span name |
-| `scripts/verify/observability-contracts.py` | Dashboard JSON、规则名称、显式 `for` 窗口和高基数标签静态合同 |
-| `scripts/verify/release-contracts.py` | 发布触发、最小权限、固定七服务、不可变标签、digest 清单和共享 Dockerfile 静态合同 |
-| `scripts/release/manifest.py` | 生成服务片段、聚合七镜像发布清单并输出 digest-qualified references |
-| `scripts/k8s/deploy-local.sh` | 已进入 CI 实机验收的 kind 部署流程 |
-| `deploy/kubernetes/overlays/test/README.md` | test overlay 的 Ingress、PDB、DNS、Secret 和控制器前置条件 |
+| [verification/phase-08-closure.md](verification/phase-08-closure.md) | Phase 8.1–8.5 最终验收总表、运行编号和边界 |
+| [verification/ghcr-release-images.md](verification/ghcr-release-images.md) | 不可变 GHCR 镜像、OCI Digest 和发布清单 |
+| [verification/test-environment-deployment.md](verification/test-environment-deployment.md) | 精确 Digest 测试环境部署、坏版本和回滚 |
+| [verification/mysql-backup-restore.md](verification/mysql-backup-restore.md) | 四库逻辑备份、SHA-256 与隔离恢复 |
+| [verification/runtime-fault-drills.md](verification/runtime-fault-drills.md) | RabbitMQ、HTTP、Worker 和 Migration 故障演练 |
+| [runbooks/operations.md](runbooks/operations.md) | Operator Runbook：检测、诊断、缓解、恢复和复盘 |
+| [verification/load-test.md](verification/load-test.md) | 有界压测方法、数据边界和容量解释规则 |
 
-## 当前代码与交付路径
+## 主要验证脚本
 
 ```text
-cmd/
-├── api-gateway
-├── identity-service
-├── catalog-service
-├── inventory-service
-├── order-service
-├── order-timeout-worker
-└── order-reconciliation-worker
-
-internal/
-├── catalogsvc
-├── inventorysvc
-├── ordersvc
-└── platform
-    ├── metrics
-    └── telemetry
-
-migrations/
-├── identity
-├── catalog
-├── inventory
-└── ordering
-
-.github/workflows/
-├── ci.yml
-├── observability.yml
-├── kubernetes-contracts.yml
-├── publish-images.yml
-└── release-contracts.yml
-
-scripts/
-├── release
-├── smoke
-└── verify
-
-deploy/
-├── docker
-├── prometheus
-├── grafana
-├── otel
-├── tempo
-└── kubernetes
-    ├── base
-    └── overlays
-        ├── local
-        └── test
+scripts/smoke/microservices-saga.sh
+scripts/smoke/microservices-saga-kubernetes.sh
+scripts/smoke/prometheus-metrics.py
+scripts/smoke/grafana-provisioning.py
+scripts/smoke/tempo-trace.py
+scripts/release/manifest.py
+scripts/deployment/deployment.py
+scripts/backup/manifest.py
+scripts/backup/run-backup-restore.sh
+scripts/fault-drills/migration-failure.sh
+scripts/load/order_create_load.py
+scripts/load/resource_sampler.py
+scripts/load/analyze_load.py
 ```
+
+## 主要 GitHub Actions 工作流
+
+```text
+ci.yml
+kubernetes-contracts.yml
+observability.yml
+release-contracts.yml
+publish-images.yml
+test-environment-deployment.yml
+backup-contracts.yml
+mysql-backup-restore.yml
+fault-drill-contracts.yml
+fault-drills.yml
+operations-contracts.yml
+load-test.yml
+```
+
+执行边界：
+
+- PR 合同工作流只读、非破坏；
+- GHCR 发布、真实自动 CD、备份恢复、故障演练和压测只在受信任的 `main` 或手动入口执行；
+- 所有一次性环境都在 `if: always()` 清理；
+- 项目与证据仅保存在 GitHub、GitHub Actions、GitHub Issues 和 GHCR。
+
+## 已接受的 Phase 8 证据
+
+| Issue | 验收 |
+| --- | --- |
+| #43 | 七个不可变 GHCR 镜像和发布清单 |
+| #48 | 一次性 kind 自动 CD、Smoke、坏版本和回滚 |
+| #50 | 四库备份、隔离恢复与损坏输入拒绝 |
+| #51 | 四类真实故障演练和最终 Saga |
+| #52 | Operator Runbook 与有界压测 |
 
 ## 当前验证边界
 
-### 主 CI 已通过
+### 已完成
 
-- lint、unit/integration test、race、vet 和 build；
-- 单体历史迁移与四套服务迁移校验；
-- Docker 镜像构建；
-- Compose 四库、RabbitMQ、双类 Worker 副本和完整 Order Saga；
-- disposable kind 集群、StatefulSet、Migration Job 和七个 Deployment；
-- Gateway NodePort 与内部 ClusterIP 边界；
-- 不可用 Gateway revision、`kubectl rollout undo` 和恢复后的 Kubernetes Saga。
+- lint、unit/integration、race、vet 和 build；
+- 四套服务迁移与历史迁移校验；
+- 七服务镜像、Compose 四库和完整 Saga；
+- kind 部署、坏 revision、undo 与恢复后 Saga；
+- Prometheus/Grafana/Tempo 运行验收；
+- 七个 GHCR Digest 镜像和发布清单；
+- 精确 Digest 的测试环境自动部署和回滚；
+- 四库逻辑备份与隔离恢复；
+- RabbitMQ、HTTP、Worker 租约与 Migration 故障演练；
+- 有界负载、P50/P95/P99、成功吞吐和资源证据。
 
-### Kubernetes Contracts workflow 已通过
+### 生产增强项
 
-- local/test overlay 渲染；
-- Gateway Ingress、七个 PDB、七个 2 副本 Deployment；
-- test overlay 无 NodePort；
-- MySQL/RabbitMQ 无错误 PDB；
-- Prometheus scrape annotations 和 Worker metrics ports 可渲染；
-- 渲染 YAML 作为 artifact 保存。
+- RabbitMQ 消息 W3C Trace Context；
+- Alertmanager 通知、正式 SLO/错误预算；
+- 基础设施 Exporter 与 Kubernetes 内长期监控栈；
+- mTLS、Workload Identity 和数据库最小权限账号；
+- 多节点/跨区、PITR、托管存储、正式 RPO/RTO；
+- TLS、HPA、NetworkPolicy 和真实生产流量规划。
 
-### Observability Stack workflow 已通过
+这些内容不再属于已完成的 Phase 8，应由新的生产化路线单独管理。
 
-- Compose 与 observability overlay 合并校验；
-- Dashboard/Provisioning/规则与标签基数静态合同；
-- `promtool check config` 和 firing/non-firing 规则测试；
-- 完整应用、双类 Worker、Prometheus、Grafana、Collector 和 Tempo；
-- 完整 Order Saga；
-- 七个 scrape target、四个规则组和 recording series；
-- Grafana Prometheus/Tempo 数据源和 Dashboard API；
-- 固定 W3C Trace Context 的五服务跨服务 Trace；
-- `order.create_saga`、有界 HTTP span name 与无资源 ID 泄漏；
-- 失败时保存 Compose、Prometheus、Grafana 和 Tempo diagnostics。
+## 历史基线
 
-### Release Contracts workflow 的职责
-
-- 在 PR 中以只读权限编译和测试发布清单工具；
-- 拒绝缺失、重复、非法 digest、可变 tag 和大写 GHCR 路径；
-- 静态验证发布工作流没有 PR 写入路径；
-- 验证 `packages: write` 只属于镜像发布矩阵；
-- 验证七服务、commit-SHA 标签、覆盖拒绝、SBOM/provenance、digest 聚合和终检合同；
-- 不登录 GHCR、不推送镜像，也不把合同通过写成 Registry 运行成功。
-
-### 尚未完成
-
-- RabbitMQ 消息头中的 W3C Context 传播；
-- 生产采样策略、tail sampling 和托管 Trace backend；
-- Alertmanager receiver、通知路由和生产 SLO/错误预算；
-- RabbitMQ consumer 细粒度计数和基础设施 exporter；
-- Kubernetes 内 Prometheus/Grafana/Collector/Tempo 或 Operator；
-- Ingress Controller 真实流量、TLS、HPA、NetworkPolicy 和多节点故障；
-- `main` 上首次真实 GHCR 七镜像 push、digest 清单 artifact 和重复运行拒绝验收；
-- 测试环境 CD、正式环境 overlay、托管云存储、负载均衡和 Workload Identity。
-
-## 历史基线文档
-
-以下内容保留为微服务改造前的演进证据，不代表当前运行形态：
+以下文档保留为演进证据，不代表当前运行形态：
 
 - [architecture/current-state.md](architecture/current-state.md)
 - [architecture/dependency-map.md](architecture/dependency-map.md)
@@ -160,17 +120,11 @@ deploy/
 - [architecture/transaction-boundaries.md](architecture/transaction-boundaries.md)
 - [architecture/risk-register.md](architecture/risk-register.md)
 - [architecture/microservices-v1.md](architecture/microservices-v1.md)
-- [table_design.md](table_design.md)
-- [order_flow.md](order_flow.md)
-- [idempotency.md](idempotency.md)
-- [cache_design.md](cache_design.md)
-- [business_rules.md](business_rules.md)
-- [api_list.md](api_list.md)
 
 ## 文档维护规则
 
 1. 根 README 只描述 `main` 的真实状态。
-2. “代码存在”“能够渲染”“组件已启动”“业务或可观测信号已验收”必须分开表述。
-3. 架构变化必须同步更新当前架构、验证边界和演进记录。
-4. 历史文档不删除，但必须明确阶段。
-5. 未通过自动或可复现验收的能力不能写成“已完成”。
+2. “代码存在”“可渲染”“已启动”“通过业务验收”必须分开表述。
+3. 只有存在自动或可重复证据的能力才标记为完成。
+4. 生产增强不得倒灌为 Phase 8 未完成项。
+5. 新阶段必须使用独立 Issue、PR 和验收边界。
