@@ -148,7 +148,7 @@ Gateway 恢复
 ### Grafana 与规则
 
 - 自动 Provisioning Prometheus/Tempo 数据源；
-- 应用与基础设施 Dashboard；
+- 应用、Saga、Outbox、Reconciliation 与 Worker 总览 Dashboard；
 - recording rules；
 - alert rules 与 promtool firing/non-firing 测试。
 
@@ -196,8 +196,8 @@ Readiness + Saga Smoke
 - Repository/Commit/UTC/MySQL Version/Size/SHA-256 清单；
 - 独立 MySQL 8.4 容器恢复；
 - 迁移状态和代表性业务数据验证；
-- 恢复导出与源 Dump 逐字节一致；
-- 源数据库恢复前后不变；
+- 恢复库逻辑 Schema 与主键有序数据指纹和源库恢复前指纹精确一致；
+- 源库恢复后逻辑指纹与恢复前保持一致；
 - 损坏 Dump 必须被拒绝。
 
 验收：Issue #50。
