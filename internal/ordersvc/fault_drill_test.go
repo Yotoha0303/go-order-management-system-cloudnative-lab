@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,17 @@ func faultDrillWorker(t *testing.T, db *gorm.DB, workerID string, lease time.Dur
 	return worker
 }
 
+func resolveFaultDrillPath(path string) string {
+	resolved := filepath.Clean(path)
+	if filepath.IsAbs(resolved) {
+		return resolved
+	}
+	if workspace := strings.TrimSpace(os.Getenv("GITHUB_WORKSPACE")); workspace != "" {
+		return filepath.Join(workspace, resolved)
+	}
+	return resolved
+}
+
 func TestFaultDrillWorkerLeaseProcess(t *testing.T) {
 	if os.Getenv(faultDrillHelperEnv) == "1" {
 		runFaultDrillLeaseHelper(t)
@@ -66,6 +78,8 @@ func TestFaultDrillWorkerLeaseProcess(t *testing.T) {
 	outputDir := os.Getenv("FAULT_DRILL_OUTPUT_DIR")
 	if outputDir == "" {
 		outputDir = t.TempDir()
+	} else {
+		outputDir = resolveFaultDrillPath(outputDir)
 	}
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		t.Fatalf("create fault-drill output directory: %v", err)
@@ -213,8 +227,28 @@ func writeFaultDrillJSON(t *testing.T, path string, value any) {
 		t.Fatalf("marshal fault-drill JSON: %v", err)
 	}
 	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create fault-drill JSON parent %s: %v", path, err)
+	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write fault-drill JSON %s: %v", path, err)
+	}
+}
+
+func TestResolveFaultDrillPathAnchorsRelativePathToWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("GITHUB_WORKSPACE", workspace)
+	relative := filepath.Join("fault-evidence", "worker")
+	resolved := resolveFaultDrillPath(relative)
+	if resolved != filepath.Join(workspace, relative) {
+		t.Fatalf("relative Worker evidence path was not workspace-anchored: %s", resolved)
+	}
+}
+
+func TestResolveFaultDrillPathPreservesAbsolutePath(t *testing.T) {
+	absolute := filepath.Join(t.TempDir(), "worker")
+	if resolved := resolveFaultDrillPath(absolute); resolved != absolute {
+		t.Fatalf("absolute Worker evidence path changed: %s", resolved)
 	}
 }
 

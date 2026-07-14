@@ -128,14 +128,14 @@ jobs:
           import pathlib
           import sys
           pathlib.Path(sys.argv[1]).write_text(json.dumps({
-              "schema_version": 1,
-              "fault": "rabbitmq_outage",
-              "session_down_detected": True,
-              "session_recovered": True,
-              "worker_restart_required": False,
-              "detection_ms": int(sys.argv[2]),
-              "recovery_ms": int(sys.argv[3]),
-              "post_recovery_order_saga": "passed",
+            "schema_version": 1,
+            "fault": "rabbitmq_outage",
+            "session_down_detected": True,
+            "session_recovered": True,
+            "worker_restart_required": False,
+            "detection_ms": int(sys.argv[2]),
+            "recovery_ms": int(sys.argv[3]),
+            "post_recovery_order_saga": "passed",
           }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
 
@@ -193,22 +193,22 @@ jobs:
 
           root = pathlib.Path("fault-evidence")
           paths = {
-              "rabbitmq": root / "rabbitmq/rabbitmq-recovery.json",
-              "http": root / "http/http-circuit-recovery.json",
-              "worker": root / "worker/worker-lease-recovery.json",
-              "migration": root / "migration/migration-failure.json",
+            "rabbitmq": root / "rabbitmq/rabbitmq-recovery.json",
+            "http": root / "http/http-circuit-recovery.json",
+            "worker": root / "worker/worker-lease-recovery.json",
+            "migration": root / "migration/migration-failure.json",
           }
           drills = {name: json.loads(path.read_text(encoding="utf-8")) for name, path in paths.items()}
           document = {
-              "schema_version": 1,
-              "commit_sha": os.environ["GITHUB_SHA"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "drills": drills,
-              "final_order_saga": "passed",
-              "environment": "disposable GitHub Actions Docker Compose",
+            "schema_version": 1,
+            "commit_sha": os.environ["GITHUB_SHA"],
+            "run_id": os.environ["GITHUB_RUN_ID"],
+            "drills": drills,
+            "final_order_saga": "passed",
+            "environment": "disposable GitHub Actions Docker Compose",
           }
           (root / "fault-drill-summary.json").write_text(
-              json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
           )
           PY
           artifact_name="runtime-fault-drills-${GITHUB_SHA}-${GITHUB_RUN_ID}"
@@ -241,25 +241,27 @@ jobs:
           docker compose -f compose.yml -f compose.observability.yml down -v --remove-orphans || true
 
   evidence:
-    name: Record fault-drill acceptance in GitHub
+    name: Record fault-drill result in GitHub
     needs: drill
-    if: needs.drill.result == 'success'
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
     steps:
-      - name: Comment Phase 8.4 evidence
+      - name: Comment Phase 8.4 result
         uses: actions/github-script@v7
         env:
           ACCEPTANCE_ISSUE_NUMBER: "51"
-          ARTIFACT_NAME: ${{ needs.drill.outputs.artifact_name }}
+          DRILL_RESULT: ${{ needs.drill.result }}
+          ARTIFACT_NAME: runtime-fault-drills-${{ github.sha }}-${{ github.run_id }}
         with:
           script: |
             const issueNumber = Number(process.env.ACCEPTANCE_ISSUE_NUMBER);
+            const succeeded = process.env.DRILL_RESULT === 'success';
             const marker = `<!-- runtime-fault-drill-evidence:${context.sha} -->`;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = [
+            const body = succeeded ? [
               marker,
               `Phase 8.4 runtime fault drills succeeded for commit \`${context.sha}\`.`,
               '',
@@ -271,6 +273,16 @@ jobs:
               '- Deliberately invalid SQL failed against an isolated MySQL database, promotion remained blocked and all normal migration directories still validated.',
               '- The complete Order Saga passed after the full drill set.',
               '- All faults were bounded to disposable GitHub-hosted resources and cleaned up.',
+            ].join('\n') : [
+              marker,
+              `Phase 8.4 runtime fault drills failed for commit \`${context.sha}\`.`,
+              '',
+              `- GitHub Actions run: ${runUrl}`,
+              `- Evidence artifact: \`${process.env.ARTIFACT_NAME}\``,
+              `- Workflow result: \`${process.env.DRILL_RESULT}\``,
+              '- Inspect the uploaded artifact and workflow steps to identify the first failed drill.',
+              '- Issue #51 remains open; no successful acceptance is claimed.',
+              '- All faults were bounded to disposable GitHub-hosted resources and cleanup ran unconditionally.',
             ].join('\n');
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
