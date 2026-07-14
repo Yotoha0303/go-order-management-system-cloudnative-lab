@@ -1,54 +1,83 @@
 # Go Order Management Cloud-Native Lab
 
-> 一个从 Go 分层单体持续演进而来的云原生实验项目，重点展示微服务数据边界、Inventory Reservation、Order Saga、Transactional Outbox、RabbitMQ Publisher Confirms、请求预算、有限重试、熔断、限流、自动对账、多 Worker 租约、Kubernetes 交付，以及 Prometheus、Grafana 和 OpenTelemetry 可观测性。
+> 一个从 Go 分层单体演进而来的云原生工程实验项目，重点展示微服务数据边界、订单与库存一致性、消息可靠性、应用韧性、Kubernetes 交付、可观测性和可重复运行保障。
 
-本仓库不是完整电商平台，也不宣称已经达到生产级云原生标准。当前已经完成：
+## 项目定位
 
-- API Gateway、四个业务服务和两个独立 Worker；
-- Identity、Catalog、Inventory、Ordering 四库数据所有权；
-- Inventory Reservation、Order Saga、补偿和自动对账；
-- Transactional Outbox、RabbitMQ TTL/DLX、Publisher Confirms 和多 Worker 租约；
-- HTTP deadline、细分超时、有限重试、熔断和 Gateway Token Bucket 限流；
-- Docker Compose 四库拓扑与完整业务 Saga；
-- Kubernetes Kustomize base/local/test、Ingress/PDB 合同、kind 部署、失败 rollout 与 `rollout undo`；
-- 五个 HTTP 服务和两个 Worker 的 Prometheus 指标；
-- Prometheus recording rules、九条基础 alert rules 和确定性规则测试；
-- 自动 Provisioning 的 Grafana Prometheus/Tempo 数据源与应用总览 Dashboard；
-- OpenTelemetry SDK、W3C Trace Context、OTLP Collector、Tempo 和日志 Trace 关联；
-- Observability Stack CI：完整 Saga、七 target、规则健康、Grafana API 和五服务 Trace 验收。
+当前系统包含七个运行单元：
 
-Alertmanager 通知、生产 SLO/错误预算、基础设施 exporter、Kubernetes 内监控/追踪栈、RabbitMQ 消息 Trace Context、HPA、NetworkPolicy、GHCR 和正式环境持续交付仍在后续阶段。
+```text
+API Gateway
+Identity Service
+Catalog Service
+Inventory Service
+Order Service
+Order Timeout Worker
+Order Reconciliation Worker
+```
 
-## 当前能力矩阵
+数据由四个服务数据库分别拥有：
 
-| 维度 | 当前实现 |
+```text
+go_order_identity
+go_order_catalog
+go_order_inventory
+go_order_ordering
+```
+
+项目已经完成既定的 Phase 5–8 工程路线，但仍是**可执行验证的云原生实验系统**，不宣称是生产级平台。
+
+## 已完成能力
+
+| 能力域 | 当前实现 |
 | --- | --- |
-| 运行单元 | API Gateway + Identity + Catalog + Inventory + Order + Timeout Worker + Reconciliation Worker |
-| 数据边界 | `go_order_identity`、`go_order_catalog`、`go_order_inventory`、`go_order_ordering` |
-| 一致性 | Inventory Reservation + Order Saga + 补偿 + 自动对账 |
-| 异步可靠性 | Transactional Outbox + RabbitMQ TTL/DLX + Publisher Confirms + at-least-once |
-| HTTP 可靠性 | Request ID + deadline + Transport 超时 + 有限重试 + 操作级熔断 |
-| 入口保护 | Gateway 客户端/全局 Token Bucket + HTTP 429 |
-| Worker 扩容 | 两类 Worker 均使用租约与 `FOR UPDATE SKIP LOCKED` |
-| 数据库迁移 | 四套 Goose migration；Compose 与 Kubernetes 一次性迁移任务 |
-| Compose 验证 | 四库、RabbitMQ、双类 Worker 各 2 副本、完整 Order Saga |
-| Kubernetes 验证 | kind 部署、暴露面、双 Worker、失败 rollout、undo、完整 Saga |
-| 指标 | HTTP server/client、Order、Outbox、Saga、Reconciliation、Worker、RabbitMQ Confirm |
-| Dashboard | Grafana 文件 Provisioning，稳定 UID `go-order-overview`，16 个核心面板 |
-| 规则 | 6 条 recording rules、9 条 alert rules、全部显式 `for` 窗口 |
-| 分布式追踪 | W3C Trace Context + OpenTelemetry SDK + OTLP Collector + Tempo |
-| Trace 验收 | 固定 Trace ID 下验证 Gateway、Identity、Catalog、Inventory、Order 和 Saga span |
+| 业务一致性 | Inventory Reservation、Order Saga、补偿、自动对账 |
+| 消息可靠性 | Transactional Outbox、RabbitMQ TTL/DLX、Publisher Confirms、手动 ACK、at-least-once |
+| Worker 并发 | 两类 Worker 多副本、租约、`FOR UPDATE SKIP LOCKED`、崩溃后回收 |
+| HTTP 韧性 | Request ID、绝对 Deadline、细分超时、有限重试、指数退避、操作级熔断 |
+| 入口保护 | Gateway 客户端与全局 Token Bucket、HTTP 429、`Retry-After` |
+| 数据库迁移 | 四套 Goose migration；Compose/Kubernetes 一次性 Migration Job |
+| Compose 验收 | 四库、RabbitMQ、双类 Worker 各 2 副本、完整订单 Saga |
+| Kubernetes | Kustomize base/local/test、StatefulSet、Deployment、Service、Probe、resources、Ingress、PDB |
+| Kubernetes 运行验收 | disposable kind、失败 revision、`rollout undo`、恢复后完整 Saga |
+| 可观测性 | Prometheus、Grafana、recording/alert rules、OpenTelemetry、Collector、Tempo |
+| 镜像发布 | 七个 GHCR 不可变镜像、完整 Commit SHA 标签、OCI Digest、发布清单 |
+| 自动 CD | 精确 Digest 部署到一次性 kind；Smoke Test；坏版本检测；完整 Digest 回滚 |
+| 备份恢复 | 四库逻辑备份、SHA-256 清单、独立 MySQL 8.4 恢复、源库不可变证明 |
+| 故障演练 | RabbitMQ、HTTP 熔断、Worker 租约、Migration 失败四类可重复演练 |
+| 运行手册 | Operator Runbook、诊断/缓解/恢复步骤、事故复盘模板 |
+| 有界压测 | 并发 1/4/8/16/32、P50/P95/P99、资源证据、容量边界分析 |
+
+## Phase 8 最终验收
+
+| 阶段 | 结果 | 主要证据 |
+| --- | --- | --- |
+| 8.1 不可变镜像 | 完成 | 七个 GHCR Digest 镜像与发布清单，Issue #43 |
+| 8.2 自动测试环境 CD | 完成 | 精确 Digest 部署、双 Smoke、坏版本与回滚，Issue #48 |
+| 8.3 备份恢复 | 完成 | 四库备份、隔离恢复、损坏输入拒绝，Issue #50 |
+| 8.4 故障演练 | 完成 | 主分支运行 `29323288284`，Issue #51 |
+| 8.5 Runbook 与压测 | 完成 | 主分支运行 `29321080192`，Issue #52 |
+
+压测的已接受结果：
+
+```text
+健康持续阶段最佳成功吞吐：177.989 requests/second
+健康持续阶段最高 P95：31.812 ms
+健康阶段错误数：0
+首个观测边界：concurrency 8 的吞吐平台与尾延迟增长
+```
+
+这是单个 GitHub-hosted Runner 上的合成有界测试，不是生产容量承诺或 SLO。
 
 ## 运行拓扑
 
 ```mermaid
 flowchart LR
-    Client[Client] --> Gateway[API Gateway :8082]
-
-    Gateway --> Identity[Identity :8083]
-    Gateway --> Catalog[Catalog :8084]
-    Gateway --> Inventory[Inventory :8085]
-    Gateway --> Order[Order :8086]
+    Client --> Gateway[API Gateway]
+    Gateway --> Identity
+    Gateway --> Catalog
+    Gateway --> Inventory
+    Gateway --> Order
 
     Catalog -->|role check| Identity
     Inventory -->|role check| Identity
@@ -62,64 +91,32 @@ flowchart LR
 
     TimeoutWorker[Timeout Worker x N] --> OrderingDB
     TimeoutWorker --> RabbitMQ[(RabbitMQ)]
-    TimeoutWorker -->|timeout cancel| Order
+    TimeoutWorker --> Order
 
     ReconcileWorker[Reconciliation Worker x N] --> OrderingDB
-    ReconcileWorker -->|idempotent repair| Inventory
+    ReconcileWorker --> Inventory
 
-    Prometheus[Prometheus] -. scrape .-> Gateway
+    Prometheus -. scrape .-> Gateway
     Prometheus -. scrape .-> Identity
     Prometheus -. scrape .-> Catalog
     Prometheus -. scrape .-> Inventory
     Prometheus -. scrape .-> Order
-    Prometheus -. scrape :9091 .-> TimeoutWorker
-    Prometheus -. scrape :9092 .-> ReconcileWorker
-    Grafana[Grafana] --> Prometheus
+    Prometheus -. scrape .-> TimeoutWorker
+    Prometheus -. scrape .-> ReconcileWorker
+    Grafana --> Prometheus
 
     Gateway -. OTLP .-> Collector[OpenTelemetry Collector]
     Identity -. OTLP .-> Collector
     Catalog -. OTLP .-> Collector
     Inventory -. OTLP .-> Collector
     Order -. OTLP .-> Collector
-    TimeoutWorker -. OTLP .-> Collector
-    ReconcileWorker -. OTLP .-> Collector
-    Collector --> Tempo[Tempo]
+    Collector --> Tempo
     Grafana --> Tempo
 ```
 
-只有 API Gateway 对外提供业务入口。Prometheus、Grafana、Collector 和 Tempo 是可选观测组件，不参与业务 readiness 链路。
+只有 API Gateway 提供业务入口。Prometheus、Grafana、Collector 和 Tempo 不参与业务 readiness。
 
-## 核心一致性与可靠性
-
-### Order Saga
-
-```text
-Catalog snapshot
-    ↓
-create reserving Order
-    ↓
-Inventory reserve using stable reservation_id
-    ↓
-Order pending + timeout Outbox
-```
-
-- 预占失败：订单进入 `failed`；
-- 本地落单失败：释放库存预占；
-- 补偿结果不确定：进入 `reconciliation_required`；
-- 支付：确认预占；
-- 主动取消或超时：释放预占。
-
-### Outbox 与 Worker
-
-- `FOR UPDATE SKIP LOCKED` 领取事件或对账任务；
-- `lease_owner` / `lease_until` 支持多副本和崩溃恢复；
-- Broker ACK 后才将 Outbox 标记为 `published`；
-- NACK、确认超时和连接异常进入可重试失败；
-- 重复消息依靠幂等状态机处理，不宣称 exactly-once。
-
-## Docker Compose
-
-基础业务拓扑：
+## 本地 Compose 验证
 
 ```bash
 cp .env.example .env
@@ -139,9 +136,7 @@ sh scripts/smoke/microservices-saga.sh
 docker compose down -v --remove-orphans
 ```
 
-## Observability Stack
-
-可观测性通过独立 overlay 加入：
+## 可观测性环境
 
 ```bash
 docker compose -f compose.yml -f compose.observability.yml up -d --build --wait \
@@ -152,205 +147,50 @@ docker compose -f compose.yml -f compose.observability.yml up -d --build --wait 
 默认入口：
 
 ```text
-Prometheus: http://127.0.0.1:9090
-Grafana:    http://127.0.0.1:3000
-Tempo:      http://127.0.0.1:3200
-OTLP/HTTP:  http://127.0.0.1:14318
+Prometheus  http://127.0.0.1:9090
+Grafana     http://127.0.0.1:3000
+Tempo       http://127.0.0.1:3200
+OTLP/HTTP   http://127.0.0.1:14318
 ```
 
-本地端口和 Grafana 管理员信息可通过部署环境变量覆盖。非本地环境必须使用部署系统的 Secret 机制注入凭据。
-
-### Prometheus scrape endpoints
-
-| 目标 | 端点 |
-| --- | --- |
-| API Gateway | `:8082/metrics` |
-| Identity | `:8083/metrics` |
-| Catalog | `:8084/metrics` |
-| Inventory | `:8085/metrics` |
-| Order | `:8086/metrics` |
-| Timeout Worker | `:9091/metrics` |
-| Reconciliation Worker | `:9092/metrics` |
-
-### Grafana Dashboard
-
-Dashboard UID：
+## 主要自动化工作流
 
 ```text
-go-order-overview
+CI
+Kubernetes Contracts
+Observability Stack
+Release Contracts
+Publish Immutable Images
+Test Environment Deployment
+Backup Contracts
+Verify MySQL Backup and Restore
+Fault Drill Contracts
+Runtime Fault Drills
+Operations Contracts
+Bounded Load Test
 ```
 
-覆盖 target 状态、HTTP RED 信号、内部调用、Order/Saga、Outbox、Reconciliation、RabbitMQ Publisher Confirm 和 Worker availability。
+PR 工作流保持只读和非破坏性；镜像发布、真实备份恢复、故障演练与有界压测只在受信任的 `main` 或手动入口执行。
 
-### Recording rules
+## 项目边界
 
-```text
-service:http_requests:rate5m
-service:http_server_errors:rate5m
-service:http_server_error_ratio:rate5m
-service:http_server_request_duration_seconds:p95
-service:http_client_attempts:rate5m
-worker:up:max
-```
+尚未实现、且不属于本轮既定收尾范围的生产增强包括：
 
-### Alert rules
+- RabbitMQ 消息头中的 W3C Trace Context；
+- Alertmanager 通知路由、正式 SLO 和错误预算；
+- MySQL/RabbitMQ/Node 等基础设施 Exporter；
+- 生产级多节点、跨可用区、托管数据库和长期 Trace/Backup 存储；
+- mTLS、Workload Identity、运行时最小权限数据库账号；
+- TLS、HPA、NetworkPolicy 和真实生产流量容量规划；
+- MySQL PITR、增量备份和正式 RPO/RTO 承诺。
 
-```text
-GoOrderTargetDown
-GoOrderWorkerDown
-GoOrderElevatedHTTP5xxRatio
-GoOrderHighP95Latency
-GoOrderOutboxOverdue
-GoOrderOutboxActionableAgeHigh
-GoOrderReconciliationBacklog
-GoOrderSagaStuck
-GoOrderMetricsCollectionFailing
-```
-
-这些阈值是实验项目默认值，不是生产 SLO。当前未配置 Alertmanager receiver 或通知渠道。
-
-## OpenTelemetry 与 Tempo
-
-所有 HTTP 服务和 Worker 安装共享 OpenTelemetry SDK。无 OTLP exporter 时仍生成有效本地 Trace Context；配置 exporter 后通过 OTLP/HTTP 发送到 Collector，再由 Collector 转发到 Tempo。
-
-传播标准：
-
-```text
-traceparent
-tracestate
-```
-
-响应诊断头：
-
-```text
-X-Trace-ID
-X-Span-ID
-```
-
-Request ID 与 Trace ID 是不同的标识：Request ID 用于应用请求预算和日志关联，Trace ID 用于跨服务调用图。
-
-当前 span 采用有限名称：
-
-```text
-POST api_orders
-GET api_products
-POST internal_inventory
-order.create_saga
-timeout_worker.publish_batch
-timeout_worker.consume
-reconciliation_worker.process_batch
-reconciliation_worker.process_task
-```
-
-禁止把用户 ID、订单 ID、预占 ID、请求体、Token、原始 URL、查询参数或错误文本写入 span name/attribute。
-
-本地 Trace 验证：
-
-```bash
-export TRACE_ID=0123456789abcdef0123456789abcdef
-export TRACEPARENT=00-${TRACE_ID}-0123456789abcdef-01
-export TRACESTATE=goorder=local
-
-sh scripts/smoke/microservices-saga.sh
-python3 scripts/smoke/tempo-trace.py
-```
-
-当前 RabbitMQ 消息尚未携带 W3C Trace Context；消息发布和消费由 Worker 本地 span 表示。
-
-## Kubernetes
-
-```text
-deploy/kubernetes/
-├── base/
-└── overlays/
-    ├── local/
-    └── test/
-```
-
-Local overlay 用于 kind 自动验收：
-
-```bash
-kustomize build deploy/kubernetes/overlays/local >/tmp/go-order-local.yaml
-sh scripts/k8s/deploy-local.sh
-sh scripts/smoke/microservices-saga-kubernetes.sh
-```
-
-Test overlay 提供七个应用运行单元 2 副本、七个 `minAvailable: 1` PDB、一个 `nginx` Gateway Ingress、默认主机名 `go-order.test.local` 和内部 ClusterIP 边界。
-
-Kubernetes base 已提供 Prometheus scrape annotations 和 Worker metrics ports；仓库尚未在 Kubernetes 内安装 Prometheus、Grafana、Collector、Tempo 或对应 Operator。
-
-## CI 质量门禁
-
-### 主 CI
-
-```text
-golangci-lint
-go test ./...
-go test -race ./...
-go vet ./...
-go build ./...
-迁移校验与 7 个二进制构建
-镜像、四库、RabbitMQ、双类 Worker
-完整 Compose Saga
-真实 kind 部署、失败 rollout、undo、Kubernetes Saga
-```
-
-### Kubernetes Contracts
-
-```text
-local/test overlay 渲染
-Ingress、PDB、副本和 Service 边界
-Prometheus annotations 与 Worker metrics ports
-```
-
-### Observability Stack
-
-```text
-Compose overlay 合同
-Dashboard/Provisioning/Cardinality 静态检查
-promtool check config 与规则夹具
-完整应用 + Prometheus + Grafana + Collector + Tempo
-完整 Order Saga with W3C context
-七 target、规则健康与 recording series
-Grafana Prometheus/Tempo datasource 与 Dashboard API
-Tempo 五服务跨服务 Trace、Saga span 和有界 span name
-```
+项目及其运行证据仅保存在 GitHub、GitHub Actions、GitHub Issues 和 GHCR，没有发布到 GitHub 之外的公开网站或长期运行环境。
 
 ## 文档入口
 
-- [文档导航](docs/README.md)
-- [微服务数据所有权与 Order Saga](docs/architecture/microservices-v2-data-ownership.md)
-- [Outbox 租约与 Publisher Confirms](docs/architecture/migrations-outbox-leasing.md)
-- [HTTP 请求预算与有限重试](docs/architecture/http-timeout-retry.md)
-- [熔断与 Gateway 限流](docs/architecture/circuit-breaker-rate-limit.md)
-- [自动 Order 对账 Worker](docs/architecture/reconciliation-worker.md)
-- [Kubernetes 基础与运行验收](docs/architecture/kubernetes-foundation.md)
-- [Prometheus 指标基础](docs/architecture/prometheus-metrics.md)
-- [Grafana Dashboard 与告警规则](docs/architecture/grafana-alerts.md)
-- [OpenTelemetry 分布式追踪](docs/architecture/opentelemetry-tracing.md)
-- [云原生完成度与缺口](docs/architecture/cloud-native-status.md)
+- [项目文档导航](docs/README.md)
+- [云原生完成度与生产边界](docs/architecture/cloud-native-status.md)
 - [项目演进记录](docs/project_evolution.md)
-
-## 当前边界
-
-已经完成：
-
-- 微服务、独立数据所有权、Reservation、Saga、Outbox 和 Publisher Confirms；
-- 请求预算、有限重试、熔断、限流和自动对账；
-- Compose 与 Kubernetes 双环境完整 Saga；
-- Kubernetes base/local/test、Ingress/PDB、kind 部署和回滚；
-- Prometheus 应用指标、七 target 抓取、recording/alert rules；
-- Grafana 自动数据源、Dashboard 和可重复 API 验收；
-- OpenTelemetry SDK、W3C HTTP 传播、OTLP Collector、Tempo、日志关联和跨服务 Trace 验收。
-
-尚未完成：
-
-- RabbitMQ 消息级 Trace Context 传播；
-- Alertmanager 通知、生产 SLO/错误预算、tail sampling 和生产 Trace retention；
-- RabbitMQ consumer 细粒度计数与基础设施 exporter；
-- Kubernetes 内可观测性栈、HPA、NetworkPolicy 和多节点故障；
-- GHCR、测试环境持续部署和不可变版本推广；
-- 最小权限账号、mTLS/Workload Identity；
-- 备份恢复、Runbook、压测和故障演练。
-
-> **当前已完成微服务可靠性、Kubernetes 基础交付，以及 Prometheus/Grafana/OpenTelemetry 应用级可观测性；仍未达到生产级云原生交付状态。**
+- [Phase 8 收口验收](docs/verification/phase-08-closure.md)
+- [Operator Runbook](docs/runbooks/operations.md)
+- [有界压测说明](docs/verification/load-test.md)
