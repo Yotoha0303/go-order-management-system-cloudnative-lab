@@ -148,9 +148,22 @@ class LoadAnalysisTest(unittest.TestCase):
         self.assertEqual(boundary["classification"], "throughput_plateau_with_tail_growth")
         self.assertEqual(analysis.best_healthy_successful_throughput(stages, boundary), 40.0)
 
+    def test_healthy_error_count_excludes_boundary_and_later_stages(self) -> None:
+        stages = [
+            stage(1, rps=10, p95=20, errors=1, requests=100),
+            stage(4, rps=40, p95=25),
+            stage(8, rps=50, p95=30, errors=5, requests=100),
+            stage(16, rps=60, p95=40, errors=20, requests=100),
+        ]
+        boundary = analysis.infer_capacity_boundary(stages, {"order-service": {"peak_cpu_percent": 20.0}})
+        self.assertEqual(boundary["classification"], "request_error_boundary")
+        self.assertEqual(boundary["first_observed_at_concurrency"], 8)
+        self.assertEqual(analysis.healthy_error_count(stages, boundary), 1)
+
     def test_markdown_separates_measurement_and_interpretation(self) -> None:
         report = {
-            "load": {"measured_requests": 10, "measured_successes": 10, "measured_errors": 0},
+            "load": {"measured_requests": 10, "measured_successes": 9, "measured_errors": 1},
+            "healthy_measured_errors": 0,
             "healthy_stage_count": 2,
             "best_healthy_successful_throughput_rps": 12.5,
             "highest_healthy_p95_ms": 25.0,
@@ -168,6 +181,8 @@ class LoadAnalysisTest(unittest.TestCase):
         self.assertIn("## Measured result", markdown)
         self.assertIn("Best healthy sustained successful throughput", markdown)
         self.assertIn("Highest healthy sustained P95", markdown)
+        self.assertIn("Errors in healthy sustained stages before boundary", markdown)
+        self.assertIn("Raw all-stage requests and errors", markdown)
         self.assertIn("## Interpretation", markdown)
         self.assertIn("not a production capacity guarantee", markdown)
 
