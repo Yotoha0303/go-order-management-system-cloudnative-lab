@@ -143,7 +143,7 @@ Gateway 恢复
 
 ### Prometheus
 
-五个 HTTP 服务和两个 Worker 提供 `/metrics`，覆盖 HTTP server/client、Order、Saga、Outbox、Reconciliation、Worker、RabbitMQ 和 Migration 信号。
+五个 HTTP 服务和两个 Worker 提供 `/metrics`，覆盖 HTTP server/client、Order、Saga、Outbox、Reconciliation、Worker 和 RabbitMQ 信号。
 
 ### Grafana 与规则
 
