@@ -110,6 +110,8 @@ flowchart LR
     Catalog -. OTLP .-> Collector
     Inventory -. OTLP .-> Collector
     Order -. OTLP .-> Collector
+    TimeoutWorker -. OTLP .-> Collector
+    ReconcileWorker -. OTLP .-> Collector
     Collector --> Tempo
     Grafana --> Tempo
 ```
