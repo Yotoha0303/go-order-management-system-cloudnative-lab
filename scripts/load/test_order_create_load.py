@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -104,13 +105,15 @@ class LoadDriverTest(unittest.TestCase):
             warmup_seconds=1.0,
             stage_seconds=2.0,
             request_timeout_seconds=3.0,
-            max_requests=100,
+            max_requests_per_stage=100,
+            measurement_start_file=None,
+            measurement_complete_file=None,
         )
 
     def test_percentile_interpolates_and_handles_empty(self) -> None:
         self.assertEqual(load.percentile([], 0.95), 0.0)
         self.assertEqual(load.percentile([10.0], 0.95), 10.0)
-        self.assertEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
+        self.assertAlmostEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
         self.assertAlmostEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.95), 3.85)
 
     def test_concurrency_levels_must_be_strict_and_bounded(self) -> None:
@@ -120,17 +123,26 @@ class LoadDriverTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     load.validate_levels(value)
 
-    def test_stage_budget_reserves_requests_for_later_stages(self) -> None:
-        self.assertEqual(load.stage_request_limit(3000, 5), 600)
-        with self.assertRaisesRegex(ValueError, "reserve at least one"):
-            load.stage_request_limit(1, 2)
-
-    def test_validate_args_enforces_runtime_caps(self) -> None:
+    def test_validate_args_enforces_per_stage_request_cap(self) -> None:
         valid = self.base_args()
         self.assertEqual(load.validate_args(valid), (1, 4))
         invalid = argparse.Namespace(**vars(valid))
-        invalid.max_requests = load.MAX_REQUESTS + 1
-        with self.assertRaisesRegex(ValueError, "maximum requests"):
+        invalid.max_requests_per_stage = load.MAX_REQUESTS_PER_STAGE + 1
+        with self.assertRaisesRegex(ValueError, "maximum requests per stage"):
+            load.validate_args(invalid)
+        invalid.max_requests_per_stage = 0
+        with self.assertRaisesRegex(ValueError, "maximum requests per stage"):
+            load.validate_args(invalid)
+
+    def test_validate_args_enforces_total_request_cap(self) -> None:
+        valid = self.base_args()
+        valid.concurrency_levels = "1,2,3,4,5,6"
+        valid.max_requests_per_stage = 2500
+        self.assertEqual(load.validate_args(valid), (1, 2, 3, 4, 5, 6))
+
+        invalid = argparse.Namespace(**vars(valid))
+        invalid.max_requests_per_stage = 3000
+        with self.assertRaisesRegex(ValueError, "maximum total measured requests"):
             load.validate_args(invalid)
 
     def test_fixture_preparation_requires_named_users_and_password_env(self) -> None:
@@ -146,6 +158,14 @@ class LoadDriverTest(unittest.TestCase):
         os.environ["LOAD_ADMIN_PASSWORD"] = "admin-test"
         os.environ["LOAD_BUYER_PASSWORD"] = "buyer-test"
         self.assertEqual(load.validate_args(args), (1, 4))
+
+    def test_measurement_start_marker_creates_parent_and_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            marker = pathlib.Path(temp) / "nested" / "measurement-start"
+            timestamp = load.write_timestamp_marker(marker)
+            self.assertTrue(marker.is_file())
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), timestamp)
+            self.assertIn("+00:00", timestamp)
 
     def test_prepare_fixture_uses_gateway_contract_and_does_not_persist_tokens(self) -> None:
         server = ThreadingHTTPServer(("127.0.0.1", 0), OrderHandler)
@@ -201,6 +221,7 @@ class LoadDriverTest(unittest.TestCase):
         summary = load.summarize_stage("c2", 2, elapsed, samples)
         self.assertEqual(summary["errors"], 0)
         self.assertGreater(summary["throughput_rps"], 0)
+        self.assertEqual(summary["successful_throughput_rps"], summary["throughput_rps"])
         self.assertGreater(summary["latency_ms"]["p95"], 0)
 
     def test_render_markdown_marks_truncated_stage_ineligible(self) -> None:
@@ -208,7 +229,8 @@ class LoadDriverTest(unittest.TestCase):
             "run_id": "unit",
             "product_id": 1,
             "request_timeout_seconds": 2.0,
-            "max_requests": 10,
+            "max_requests_per_stage": 10,
+            "max_total_measured_requests": 20,
             "warmup": {"requests": 1, "elapsed_seconds": 0.1},
             "stages": [
                 {
@@ -219,6 +241,7 @@ class LoadDriverTest(unittest.TestCase):
                     "errors": 0,
                     "error_rate": 0.0,
                     "throughput_rps": 10.0,
+                    "successful_throughput_rps": 10.0,
                     "latency_ms": {"p50": 10.0, "p95": 11.0, "p99": 12.0, "max": 13.0},
                     "stop_reason": "request_limit",
                     "measurement_eligible": False,
@@ -228,6 +251,8 @@ class LoadDriverTest(unittest.TestCase):
         rendered = load.render_markdown(document)
         self.assertIn("request_limit", rendered)
         self.assertIn("not treated as a sustained-duration", rendered)
+        self.assertIn("Maximum requests per measured stage", rendered)
+        self.assertIn("Success RPS", rendered)
         self.assertNotIn("unit-token", rendered)
 
 

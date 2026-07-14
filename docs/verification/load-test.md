@@ -12,7 +12,7 @@ API Gateway
     -> Ordering transaction and Timeout Outbox
 ```
 
-It reports throughput, errors, P50/P95/P99 latency, container CPU/memory, MySQL state, RabbitMQ state and application metrics. The test also identifies the first observed capacity boundary when the evidence supports one.
+It reports attempted throughput, successful throughput, errors, P50/P95/P99 latency, container CPU/memory, MySQL state, RabbitMQ state and application metrics. The test also identifies the first observed capacity boundary when the evidence supports one.
 
 This is a single GitHub-hosted Runner, short-duration, synthetic measurement. It is not a production SLO, benchmark, capacity guarantee or hardware comparison.
 
@@ -42,6 +42,22 @@ The workflow creates:
 
 Tokens remain in the Python process memory. They are not written to command-line arguments, environment artifacts, JSONL samples, Markdown reports or GitHub Issues.
 
+## Readiness boundary
+
+Before baseline capture, the workflow queries Prometheus `/api/v1/targets` and requires the exact nine expected Prometheus targets across seven scrape jobs:
+
+```text
+api-gateway                    x1
+identity-service               x1
+catalog-service                x1
+inventory-service              x1
+order-service                  x1
+order-timeout-worker           x2
+order-reconciliation-worker    x2
+```
+
+Both scaled Worker jobs must expose two active and two healthy targets. A job-name set alone is insufficient because it could hide one unhealthy replica behind one healthy replica. The readiness gate compares exact active and healthy counts for every job; one missing, extra or down target blocks the measurement and leaves the target snapshot in the evidence artifact.
+
 ## Bounded test profile
 
 Default profile:
@@ -51,18 +67,35 @@ Default profile:
 | Warm-up | 5 seconds, maximum 200 requests |
 | Concurrency levels | 1, 4, 8, 16, 32 |
 | Measured duration per level | up to 8 seconds |
-| Measured request ceiling | 3000 |
+| Measured request ceiling per stage | 3000 |
+| Maximum total measured requests | 15000 |
 | Per-request timeout | 10 seconds |
-| Resource sampling | every 2 seconds until driver completion; 180-second safety ceiling |
+| Resource sampling | every 2 seconds during measured stages only |
+| Sampler start wait | 60 seconds |
+| Sampler measured-interval ceiling | 180 seconds |
 | Workflow timeout | 30 minutes |
 
-Hard code limits prevent concurrency above 32, a measured stage above 15 seconds, warm-up above 10 seconds or more than 3000 measured requests.
+Hard code limits prevent concurrency above 32, a measured stage above 15 seconds, warm-up above 10 seconds, more than 3000 requests in one measured stage or more than 15000 requests across the five-stage profile.
 
-The global request ceiling is a safety boundary. Each stage records its configured duration, issuance duration and stop reason. A stage that reaches its request allocation before eight seconds is retained in the artifact, but is marked `measurement_eligible=false`; its burst RPS and latency are not used as sustained-duration capacity evidence.
+Each measured stage receives its own 3000-request safety ceiling. The ceiling is not divided across all stages. This allows lower-concurrency stages to run for the intended eight seconds while retaining a hard bound for higher-concurrency stages. Each stage records its configured duration, issuance duration and stop reason. A stage that reaches its own ceiling before eight seconds remains in the artifact but is marked `measurement_eligible=false`; its burst RPS and latency are excluded from sustained-duration capacity evidence.
 
 Gateway rate-limit values are raised only inside this disposable workflow so the first measured boundary is more likely to be the synchronous business path rather than the default protective token bucket. HTTP 429 remains recorded and is classified explicitly when it occurs.
 
 Order timeout delay is set to 10 minutes, longer than the bounded measurement, so automatic cancellation does not rewrite the test orders during latency measurement. RabbitMQ publication, Outbox and queue state remain observable.
+
+## Measurement interval and resource sampling
+
+Fixture creation and warm-up execute before the measured interval. After warm-up, the load driver writes `measurement-start`; the resource sampler waits for that marker before taking its first `docker stats` snapshot. After all measured stages finish, the workflow writes `load-complete`.
+
+The sampler checks `load-complete` before starting every snapshot and again after `docker stats --no-stream` returns but before persisting its records. Therefore:
+
+- fixture creation is excluded from resource peaks;
+- warm-up is excluded from resource peaks;
+- no new snapshot starts after completion;
+- a snapshot overlapping the completion marker is discarded rather than written;
+- reaching the 180-second safety ceiling before completion fails the workflow instead of accepting incomplete resource evidence.
+
+The load summary also records `measurement_started_at` and `measurement_finished_at`.
 
 ## Measurement output
 
@@ -79,7 +112,8 @@ Each stage reports:
 - successes and errors;
 - error rate;
 - status and outcome counts;
-- throughput in requests/second;
+- attempted throughput in requests/second;
+- successful throughput in requests/second;
 - P50, P95, P99 and maximum latency;
 - configured duration and request-issuance duration;
 - stop reason;
@@ -94,10 +128,18 @@ Before and after the measurement, the workflow captures:
 - `docker stats --no-stream`;
 - MySQL global status, service table counts, order state and Outbox state;
 - RabbitMQ queue names, messages, ready/unacknowledged counts and consumers;
-- Prometheus HTTP request, latency, client attempt and RabbitMQ delivery queries using the emitted label names;
+- Prometheus queries using emitted metric labels;
 - Gateway readiness.
 
-During the measured interval, `resource_sampler.py` writes timestamped container resource samples as JSON Lines. Sampling remains active until the load driver writes a completion marker. Reaching the sampler safety ceiling before that marker fails the workflow instead of accepting incomplete resource peaks.
+The emitted metric labels are preserved as follows:
+
+- HTTP server requests: `service`, `method`, `route_group`, `status_class`;
+- HTTP client attempts: `upstream`, `operation`, `outcome`, `status_class`, `retryable`;
+- RabbitMQ publish and delivery: application `outcome` plus Prometheus target `job`;
+- RabbitMQ session: Prometheus `job` plus application `role`, so publisher and consumer session state remain distinguishable;
+- RabbitMQ queue gauges: `job`, queue role and state where applicable.
+
+During the measured stages only, `resource_sampler.py` writes timestamped container resource samples as JSON Lines.
 
 Failure diagnostics include Compose state, complete container logs, current resource state and Prometheus target status. Cleanup always removes containers, networks and volumes.
 
@@ -108,10 +150,18 @@ Failure diagnostics include Compose state, complete container logs, current reso
 1. **Measured request ceiling before stage duration**: records a measurement-safety boundary and excludes that truncated stage from sustained capacity inference.
 2. **Gateway rate limit**: any HTTP 429 is a hard measured boundary.
 3. **Request error boundary**: error rate reaches at least 2%.
-4. **Throughput plateau with tail growth**: from the previous sustained-duration level to the current level, throughput grows less than 15% while P95 grows more than 30%.
+4. **Throughput plateau with tail growth**: from the previous sustained-duration level to the current level, successful throughput grows less than 15% while P95 grows more than 30%.
 5. **Not reached within bounded range**: none of the above occurs.
 
 Because candidates are checked in chronological order, a plateau first observed at concurrency 8 cannot be hidden by request errors that appear later at concurrency 32.
+
+The reported **best healthy sustained successful throughput** uses only stages before the first observed boundary that:
+
+- completed their configured duration;
+- have error rate below 2%;
+- contain no HTTP 429.
+
+The boundary stage and all later stages are excluded. Fast failed responses therefore cannot inflate the reported useful throughput. The reported highest healthy P95 and healthy stage count use the same pre-boundary set.
 
 For a plateau, the highest sampled container CPU is recorded only as a diagnostic lead. It is not declared the root cause without corroborating MySQL, RabbitMQ, metrics, logs or trace evidence.
 
@@ -123,11 +173,11 @@ Compare two runs only when all of the following match:
 
 - source commit and code path;
 - GitHub Runner class;
-- concurrency levels, stage duration and request ceiling;
-- the same set of sustained-duration eligible stages;
+- concurrency levels, stage duration, per-stage request ceiling and total request ceiling;
+- the same set of healthy sustained pre-boundary stages;
 - Gateway rate-limit overrides;
 - timeout delay;
-- worker replica counts;
+- Worker replica counts;
 - workload body and inventory size.
 
 A single run may identify a regression or diagnostic lead, but stable capacity claims require repeated runs and variance analysis that are outside the project closure scope.

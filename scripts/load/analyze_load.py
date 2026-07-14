@@ -42,6 +42,48 @@ def highest_cpu(resource_peaks: dict[str, dict[str, Any]]) -> tuple[str, dict[st
     )
 
 
+def successful_throughput(stage: dict[str, Any]) -> float:
+    if "successful_throughput_rps" in stage:
+        return float(stage["successful_throughput_rps"])
+    elapsed = max(float(stage.get("elapsed_seconds", 0.0)), 0.001)
+    return float(stage.get("successes", 0)) / elapsed
+
+
+def healthy_stages_before_boundary(
+    stages: list[dict[str, Any]],
+    boundary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    boundary_concurrency = boundary.get("first_observed_at_concurrency")
+    healthy: list[dict[str, Any]] = []
+    for stage in stages:
+        concurrency = stage.get("concurrency")
+        if boundary_concurrency is not None and concurrency == boundary_concurrency:
+            break
+        stop_reason = str(stage.get("stop_reason", "duration"))
+        if not bool(stage.get("measurement_eligible", stop_reason == "duration")):
+            break
+        status_counts = stage.get("status_counts", {})
+        if int(status_counts.get("429", 0)) > 0 or float(stage.get("error_rate", 0.0)) >= 0.02:
+            break
+        healthy.append(stage)
+    return healthy
+
+
+def healthy_error_count(
+    stages: list[dict[str, Any]],
+    boundary: dict[str, Any],
+) -> int:
+    return sum(int(stage.get("errors", 0)) for stage in healthy_stages_before_boundary(stages, boundary))
+
+
+def best_healthy_successful_throughput(
+    stages: list[dict[str, Any]],
+    boundary: dict[str, Any],
+) -> float:
+    healthy = healthy_stages_before_boundary(stages, boundary)
+    return round(max((successful_throughput(stage) for stage in healthy), default=0.0), 3)
+
+
 def infer_capacity_boundary(
     stages: list[dict[str, Any]],
     resource_peaks: dict[str, dict[str, Any]],
@@ -59,7 +101,7 @@ def infer_capacity_boundary(
                 "classification": "request_ceiling_before_stage_duration",
                 "first_observed_at_concurrency": concurrency,
                 "measured_evidence": (
-                    f"The global request ceiling stopped concurrency {concurrency} after "
+                    f"The per-stage request ceiling stopped concurrency {concurrency} after "
                     f"{stage.get('issuance_elapsed_seconds', stage.get('elapsed_seconds', 0))}s, "
                     f"before the configured {stage.get('configured_duration_seconds', 'unknown')}s issuance window."
                 ),
@@ -90,8 +132,8 @@ def infer_capacity_boundary(
             }
 
         if previous is not None:
-            previous_rps = float(previous["throughput_rps"])
-            current_rps = float(stage["throughput_rps"])
+            previous_rps = successful_throughput(previous)
+            current_rps = successful_throughput(stage)
             previous_p95 = float(previous["latency_ms"]["p95"])
             current_p95 = float(stage["latency_ms"]["p95"])
             throughput_gain = (current_rps - previous_rps) / max(previous_rps, 0.001)
@@ -102,7 +144,7 @@ def infer_capacity_boundary(
                     "classification": "throughput_plateau_with_tail_growth",
                     "first_observed_at_concurrency": concurrency,
                     "measured_evidence": (
-                        f"Throughput gain was {throughput_gain:.2%} while P95 latency grew {latency_growth:.2%} "
+                        f"Successful throughput gain was {throughput_gain:.2%} while P95 latency grew {latency_growth:.2%} "
                         f"from concurrency {previous['concurrency']} to {concurrency}"
                     ),
                     "inference": (
@@ -118,7 +160,7 @@ def infer_capacity_boundary(
         "classification": "not_reached_within_bounded_range",
         "first_observed_at_concurrency": None,
         "measured_evidence": (
-            "No sustained-duration stage produced at least 2% errors or the defined throughput-plateau "
+            "No sustained-duration stage produced at least 2% errors or the defined successful-throughput plateau "
             "plus P95-growth signal."
         ),
         "inference": (
@@ -137,9 +179,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         "## Measured result",
         "",
-        f"- Measured requests: {load['measured_requests']}",
-        f"- Successes: {load['measured_successes']}",
-        f"- Errors: {load['measured_errors']}",
+        f"- All bounded measured requests retained in the artifact: {load['measured_requests']}",
+        f"- All bounded successes retained in the artifact: {load['measured_successes']}",
+        f"- All bounded errors retained in the artifact: {load['measured_errors']}",
+        f"- Errors in healthy sustained stages before boundary: {report['healthy_measured_errors']}",
+        f"- Healthy sustained stages before boundary: {report['healthy_stage_count']}",
+        f"- Best healthy sustained successful throughput: {report['best_healthy_successful_throughput_rps']:.3f} requests/second",
+        f"- Highest healthy sustained P95: {report['highest_healthy_p95_ms']:.3f} ms",
         f"- Boundary classification: `{boundary['classification']}`",
         f"- First observed concurrency: `{boundary['first_observed_at_concurrency']}`",
         f"- Measured evidence: {boundary['measured_evidence']}",
@@ -148,7 +194,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "",
         boundary["inference"],
         "",
-        "## Resource peaks",
+        "## Resource peaks during measured stages",
         "",
         "| Container | Peak CPU | Memory at peak sample | Samples |",
         "| --- | ---: | --- | ---: |",
@@ -160,6 +206,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
     lines.extend(
         [
+            "",
+            "> Summary throughput, P95 and healthy error count exclude the boundary stage and any later stage; throughput uses successful rather than attempted requests.",
+            "",
+            "> Raw all-stage requests and errors remain in the artifact for diagnosis and are not presented as healthy capacity evidence.",
             "",
             "> Measured evidence and inference are intentionally separated. "
             "This single-runner synthetic test is not a production capacity guarantee.",
@@ -183,15 +233,26 @@ def main() -> int:
     peaks = load_resource_peaks(args.resource_samples)
     if not peaks:
         raise ValueError("resource sample set is empty")
-    boundary = infer_capacity_boundary(load_summary["stages"], peaks)
+    stages = load_summary["stages"]
+    boundary = infer_capacity_boundary(stages, peaks)
+    healthy = healthy_stages_before_boundary(stages, boundary)
     report = {
         "schema_version": 1,
         "load": load_summary,
         "resource_peaks": peaks,
         "first_observed_boundary": boundary,
+        "healthy_stage_count": len(healthy),
+        "healthy_measured_errors": healthy_error_count(stages, boundary),
+        "best_healthy_successful_throughput_rps": round(
+            max((successful_throughput(stage) for stage in healthy), default=0.0), 3
+        ),
+        "highest_healthy_p95_ms": round(
+            max((float(stage["latency_ms"]["p95"]) for stage in healthy), default=0.0), 3
+        ),
         "measurement_scope": {
             "environment": "single GitHub-hosted runner",
             "traffic": "synthetic order creation",
+            "resource_interval": "measured stages only",
             "production_slo": False,
             "production_capacity_guarantee": False,
         },
