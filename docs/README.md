@@ -70,7 +70,7 @@ load-test.yml
 执行边界：
 
 - PR 合同工作流只读、非破坏；
-- GHCR 发布、真实自动 CD、备份恢复、故障演练和压测只在受信任的 `main` 或手动入口执行；
+- GHCR 发布可由受信任的 `main`、`release-*` 标签或手动入口触发；真实自动 CD、备份恢复、故障演练和压测只在受信任的 `main` 或手动入口执行；
 - 所有一次性环境都在 `if: always()` 清理；
 - 项目与证据仅保存在 GitHub、GitHub Actions、GitHub Issues 和 GHCR。
 
