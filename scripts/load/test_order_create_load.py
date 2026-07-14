@@ -107,12 +107,13 @@ class LoadDriverTest(unittest.TestCase):
             request_timeout_seconds=3.0,
             max_requests_per_stage=100,
             measurement_start_file=None,
+            measurement_complete_file=None,
         )
 
     def test_percentile_interpolates_and_handles_empty(self) -> None:
         self.assertEqual(load.percentile([], 0.95), 0.0)
         self.assertEqual(load.percentile([10.0], 0.95), 10.0)
-        self.assertEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
+        self.assertAlmostEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.5), 2.5)
         self.assertAlmostEqual(load.percentile([1.0, 2.0, 3.0, 4.0], 0.95), 3.85)
 
     def test_concurrency_levels_must_be_strict_and_bounded(self) -> None:
@@ -133,6 +134,17 @@ class LoadDriverTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "maximum requests per stage"):
             load.validate_args(invalid)
 
+    def test_validate_args_enforces_total_request_cap(self) -> None:
+        valid = self.base_args()
+        valid.concurrency_levels = "1,2,3,4,5,6"
+        valid.max_requests_per_stage = 2500
+        self.assertEqual(load.validate_args(valid), (1, 2, 3, 4, 5, 6))
+
+        invalid = argparse.Namespace(**vars(valid))
+        invalid.max_requests_per_stage = 3000
+        with self.assertRaisesRegex(ValueError, "maximum total measured requests"):
+            load.validate_args(invalid)
+
     def test_fixture_preparation_requires_named_users_and_password_env(self) -> None:
         args = self.base_args()
         args.prepare_fixture = True
@@ -150,7 +162,7 @@ class LoadDriverTest(unittest.TestCase):
     def test_measurement_start_marker_creates_parent_and_timestamp(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             marker = pathlib.Path(temp) / "nested" / "measurement-start"
-            timestamp = load.write_measurement_start(marker)
+            timestamp = load.write_timestamp_marker(marker)
             self.assertTrue(marker.is_file())
             self.assertEqual(marker.read_text(encoding="utf-8").strip(), timestamp)
             self.assertIn("+00:00", timestamp)
