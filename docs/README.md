@@ -25,7 +25,7 @@
 | --- | --- |
 | [verification/phase-08-closure.md](verification/phase-08-closure.md) | Phase 8.1–8.5 最终验收总表、运行编号和边界 |
 | [verification/ghcr-release-images.md](verification/ghcr-release-images.md) | 不可变 GHCR 镜像、OCI Digest 和发布清单 |
-| [verification/test-environment-deployment.md](verification/test-environment-deployment.md) | 精确 Digest 测试环境部署、坏版本和回滚 |
+| [verification/test-environment-delivery.md](verification/test-environment-delivery.md) | 精确 Digest 测试环境部署、坏版本和回滚 |
 | [verification/mysql-backup-restore.md](verification/mysql-backup-restore.md) | 四库逻辑备份、SHA-256 与隔离恢复 |
 | [verification/runtime-fault-drills.md](verification/runtime-fault-drills.md) | RabbitMQ、HTTP、Worker 和 Migration 故障演练 |
 | [runbooks/operations.md](runbooks/operations.md) | Operator Runbook：检测、诊断、缓解、恢复和复盘 |
@@ -40,7 +40,7 @@ scripts/smoke/prometheus-metrics.py
 scripts/smoke/grafana-provisioning.py
 scripts/smoke/tempo-trace.py
 scripts/release/manifest.py
-scripts/deployment/deployment.py
+scripts/release/deployment.py
 scripts/backup/manifest.py
 scripts/backup/run-backup-restore.sh
 scripts/fault-drills/migration-failure.sh
@@ -57,7 +57,8 @@ kubernetes-contracts.yml
 observability.yml
 release-contracts.yml
 publish-images.yml
-test-environment-deployment.yml
+delivery-contracts.yml
+deploy-test-release.yml
 backup-contracts.yml
 mysql-backup-restore.yml
 fault-drill-contracts.yml
