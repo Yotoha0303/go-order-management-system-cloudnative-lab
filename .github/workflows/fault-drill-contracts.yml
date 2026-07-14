@@ -53,7 +53,7 @@ jobs:
           go test ./internal/platform/resiliencehttp \
             -run '^Test(FaultDrillHTTPTimeoutCircuitRecovery|WriteFaultDrillEvidenceAnchorsRelativePathToWorkspace)$' -count=1 -v
           go test ./internal/ordersvc \
-            -run '^TestFaultDrillWorkerLease(Process|Configuration)$' -count=1 -v
+            -run '^Test(FaultDrillWorkerLease(Process|Configuration)|ResolveFaultDrillPath(AnchorsRelativePathToWorkspace|PreservesAbsolutePath))$' -count=1 -v
           bash -n scripts/fault-drills/migration-failure.sh
           python3 -m compileall -q scripts/verify/fault-drill-contracts.py
 
