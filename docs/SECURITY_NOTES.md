@@ -3,21 +3,22 @@
 本文记录**无法自动修复、或需要架构调整与人工决策**的安全问题，供决策后再动手。
 可自动修复的问题已直接提交，不在此列。
 
-扫描基线：`b3652b4` 之后的 main，2026-07-26。
-使用工具：`govulncheck`、`gosec`、`staticcheck`、`npm audit`。
+扫描基线：2026-07-26。使用工具：`govulncheck`、`gosec`、`staticcheck`、`npm audit`。
 
 ## 扫描结论快照
 
 | 工具 | 结果 |
 |---|---|
 | govulncheck | **0 漏洞**（修复前 41 条，其中 19 条代码可达） |
-| staticcheck | **0 告警**（默认检查集；非默认的 ST1000/ST1003 已被 `.golangci.yml` 排除，CI 不报） |
-| gosec | 生产代码 1 条低危（见 S-2），其余 16 条均在 `*_test.go` |
+| gosec | **0 issue**（生产代码；测试文件中的 16 条为默认口令、子进程调用等噪音） |
+| staticcheck | **0 告警**（默认检查集；非默认的 ST1000/ST1003 已被 `.golangci.yml` 排除） |
 | npm audit | 9 → **3 条 high**（均为 brace-expansion，见 S-1） |
 
 ---
 
-## S-1 · 前端 brace-expansion 三条 high，修复需破坏性降级
+## 待决策
+
+### S-1 · 前端 brace-expansion 三条 high，修复需破坏性降级
 
 **风险等级**：中（仅影响 lint/format 工具链，不进生产 bundle）
 
@@ -37,21 +38,7 @@ npm 明确标记为 breaking change。AGENT.md 禁止自动执行 `--force`，�
    插件在新版下行为正常
 3. 接受降级到 5.2.2，需要回归验证 `npm run format:check` 与导入排序结果是否变化
 
----
-
-## S-2 · gosec G304：配置文件路径来自变量
-
-**风险等级**：低
-
-`config/config.go:66` 以变量路径调用文件读取，gosec 判定为潜在路径穿越。经核对，全部调用点
-传入的都是硬编码字面量 `"config.yml"`，当前不可利用。
-
-**建议方案**：若确认该函数永远只读项目内配置，加 `// #nosec G304` 并注明理由；
-若未来可能接受外部路径，改为白名单或 `filepath.Clean` + 前缀校验。
-
----
-
-## S-3 · 前端 JWT 存放在 JS 可读 cookie
+### S-3 · 前端 JWT 存放在 JS 可读 cookie
 
 **风险等级**：中（需前后端配合改造）
 
@@ -66,9 +53,7 @@ https 时才加；cookie `Max-Age` 为 7 天，而 JWT 有效期 24 小时，令
 前端不再接触 token。过渡方案是先把 cookie `Max-Age` 与 token 有效期对齐，并引入 refresh token
 缩短 access token 生存期。
 
----
-
-## S-4 · 前端缺少 CSP 与安全响应头
+### S-4 · 前端缺少 CSP 与安全响应头
 
 **风险等级**：低
 
@@ -78,65 +63,31 @@ https 时才加；cookie `Max-Age` 为 7 天，而 JWT 有效期 24 小时，令
 **建议方案**：在 netlify.toml 配置响应头。CSP 需按实际内联 style/script 与 API 域名逐条调试，
 误配会直接白屏，建议先用 `Content-Security-Policy-Report-Only` 观察一段时间再切正式。
 
----
+### S-5 · 扫描步骤已加入 CI，但仍是非阻断，且本机 registry 无法 audit
 
-## S-5 · 依赖漏洞扫描在流程上是失效的
+**风险等级**：低（原为中，已部分解决）
 
-**风险等级**：中（流程问题，会让上述所有依赖漏洞无人发现）
+已解决部分：`ci.yml` 新增 `govulncheck` 步骤与 `frontend-audit` job（`npm audit --audit-level=high`
+加前端构建）。顺带发现前端此前**完全没有 CI** —— `fronted/.github/workflows/` 嵌套在项目目录内，
+而 GitHub 只读取仓库根目录的 `.github/workflows/`，那份 workflow 从未运行过。
 
-两个独立原因叠加：
+**仍需决策**：
 
-1. `.github/workflows/ci.yml` 中没有任何 audit 步骤，前端依赖漏洞不会被流水线拦截；
-   Go 侧同样没有 `govulncheck` 步骤
+1. 两个扫描目前都是 `continue-on-error`，只报告不阻断。观察几轮噪音水平后决定是否比照 lint
+   增加 Enforce 步骤转为阻断。注意 `npm audit` 在 S-1 解决前必然非空
 2. 本机 npm registry 指向 `registry.npmmirror.com`，该镜像未实现 `/-/npm/v1/security/*` 端点，
-   直接运行 `npm audit` 会 404 报错退出。本次扫描是显式加 `--registry=https://registry.npmjs.org`
-   才成功。仓库内无 `.npmrc`，说明该配置来自全局 npm 设置
-
-**建议方案**：CI 增加 `govulncheck ./...` 与 `npm audit --audit-level=high`（后者显式指定官方
-registry）。是否让它们阻断构建需要决策 —— 建议先设为非阻断并观察噪音水平。
-
----
-
-## S-6 · JWT issuer 仍是旧项目名（有意保留）
-
-**风险等级**：无（记录以免被误当作重命名遗漏）
-
-`cmd/{catalog,identity,inventory,order}-service/main.go` 与 `internal/app/deps.go` 中传给
-`auth.NewTokenManager` 的 issuer 字符串仍是 `"go-order-management-system"`。
-
-这不是重命名遗漏。issuer 在解析时由 `jwt.WithIssuer` 校验，一旦修改：所有已签发的 token
-立即失效（24 小时内全部用户被 401），且五处必须严格一致，否则服务间鉴权互相不认。
-
-**建议方案**：如确需改名，配合一次计划内的令牌轮换窗口进行，五处同步修改并提前通知用户重新登录。
+   本地直接跑 `npm audit` 会 404 退出（本次是显式加 `--registry=https://registry.npmjs.org` 才成功）。
+   CI 用默认官方 registry 不受影响。仓库内无 `.npmrc`，该配置来自全局 npm 设置
+3. `fronted/.github/` 整个目录现在是死代码（还包含 lint、prettier、测试步骤），需决定是删除，
+   还是把其中有价值的步骤合并进根目录 workflow
 
 ---
 
-## S-7 · Kubernetes 标签仍是旧项目名（有意保留）
+## 已解决
 
-**风险等级**：无（一致性问题）
-
-`deploy/kubernetes/base/kustomization.yaml:18` 的 `app.kubernetes.io/part-of` 与
-`namespace.yaml:6` 的 `app.kubernetes.io/name` 仍为 `go-order-management-system`。
-
-`part-of` 位于 `commonLabels` 下，kustomize 会把它同时写入 Deployment 与 Service 的
-**selector**，而 selector 在已有集群上不可变，修改后 `kubectl apply` 会直接报错，需要先删除
-再重建。本项目 CI 使用一次性 kind 集群，影响有限，但对长期运行的环境是破坏性变更。
-
-**建议方案**：与下一次需要重建集群的变更合并执行；顺带把已废弃的 `commonLabels` 迁移到
-`labels`（kustomize 已在构建时给出 deprecation 警告）。
-
----
-
-## S-8 · 缺少 .gitattributes，Windows 上格式化门禁不可用
-
-**风险等级**：无（工程效率问题，但会导致门禁被绕过）
-
-仓库 `core.autocrlf=true` 且没有 `.gitattributes`，工作区所有 `.go` 文件都是 CRLF，
-导致 `gofmt -l .` 把**每一个**文件都报为未格式化（本次扫描时是 108 个，其中绝大多数根本没被
-改动过）。AGENT.md 的提交前门禁要求该命令输出为空，在 Windows 上永远无法满足，实际效果是
-这道门禁被跳过。
-
-本次是改用「去掉 CR 后再判断」才得到真实结果：全仓库实际只有 1 个文件需要格式化，已修复。
-
-**建议方案**：新增 `.gitattributes`，至少包含 `*.go text eol=lf`（建议再加 `* text=auto`）。
-落地时会一次性重写行尾，应单独成一个提交，避免与业务改动混在一起。
+| 编号 | 问题 | 处理方式 |
+|---|---|---|
+| S-2 | gosec G304：配置文件路径来自变量 | 核实全部 13 个调用点均传编译期字面量，加 `// #nosec G304` 并注明前提；gosec 生产代码归零 |
+| S-6 | JWT issuer 仍是旧项目名 | 已随项目重命名统一改为新名，并收敛为 `auth.Issuer` 常量，消除五处字面量漂移的风险。**注意**：该变更使部署前签发的所有 token 失效，需一次性发布并提示用户重新登录 |
+| S-7 | K8s 标签仍是旧项目名 | 已改名，同时把废弃的 `commonLabels` 迁移到 `labels`。selector 不再包含 `part-of`，仅保留 `app.kubernetes.io/name`。应用到运行中的命名空间需删除并重建 Deployment 与 Service |
+| S-8 | 缺少 `.gitattributes`，Windows 上格式化门禁不可用 | 已新增，全部文本文件统一 `eol=lf`。`gofmt -l .` 从误报 108 个文件变为输出为空，门禁首次真正可用 |
