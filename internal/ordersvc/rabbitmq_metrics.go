@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	rabbitMQSessionMetric = "go_order_rabbitmq_session_up"
+	rabbitMQSessionMetric  = "go_order_rabbitmq_session_up"
 	rabbitMQDeliveryMetric = "go_order_rabbitmq_delivery_total"
 )
 
