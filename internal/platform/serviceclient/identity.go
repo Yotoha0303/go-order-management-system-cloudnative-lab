@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/internal/platform/internalapi"
-	"go-order-management-system/internal/platform/resiliencehttp"
+	"go-order-management-system-cloudnative-lab/internal/platform/internalapi"
+	"go-order-management-system-cloudnative-lab/internal/platform/resiliencehttp"
 )
 
 type IdentityRoleChecker struct {

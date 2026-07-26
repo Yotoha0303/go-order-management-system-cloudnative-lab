@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/config"
-	"go-order-management-system/internal/ordersvc"
-	"go-order-management-system/internal/platform/servicehost"
-	"go-order-management-system/pkg/database"
+	"go-order-management-system-cloudnative-lab/config"
+	"go-order-management-system-cloudnative-lab/internal/ordersvc"
+	"go-order-management-system-cloudnative-lab/internal/platform/servicehost"
+	"go-order-management-system-cloudnative-lab/pkg/database"
 )
 
 func main() {

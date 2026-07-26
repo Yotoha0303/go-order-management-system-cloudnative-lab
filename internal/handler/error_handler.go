@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"go-order-management-system/internal/apperror"
-	"go-order-management-system/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/apperror"
+	"go-order-management-system-cloudnative-lab/internal/response"
 	"net/http"
 
 	"github.com/gin-gonic/gin"

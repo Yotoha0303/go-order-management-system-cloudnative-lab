@@ -1,6 +1,6 @@
 package response
 
-import "go-order-management-system/internal/model"
+import "go-order-management-system-cloudnative-lab/internal/model"
 
 type OrderDetailResponse struct {
 	Order *model.Order       `json:"order"`

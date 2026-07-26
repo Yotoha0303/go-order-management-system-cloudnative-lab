@@ -3,7 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
-	"go-order-management-system/config"
+	"go-order-management-system-cloudnative-lab/config"
 	"os"
 	"time"
 

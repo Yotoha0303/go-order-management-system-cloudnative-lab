@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"go-order-management-system/internal/platform/internalapi"
+	"go-order-management-system-cloudnative-lab/internal/platform/internalapi"
 )
 
 func TestCatalogClientSendsInternalToken(t *testing.T) {

@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"go-order-management-system/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/response"
 	"log/slog"
 	"net/http"
 	"runtime/debug"

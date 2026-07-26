@@ -2,8 +2,8 @@ package service
 
 import (
 	"context"
-	"go-order-management-system/internal/dao"
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/model"
 )
 
 func (p *StockLogService) CreateStockLog(ctx context.Context, log *model.StockLog) error {

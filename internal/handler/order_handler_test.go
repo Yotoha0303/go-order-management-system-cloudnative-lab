@@ -8,11 +8,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"go-order-management-system/internal/middleware"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
-	"go-order-management-system/internal/response"
-	"go-order-management-system/internal/service"
+	"go-order-management-system-cloudnative-lab/internal/middleware"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/request"
+	"go-order-management-system-cloudnative-lab/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

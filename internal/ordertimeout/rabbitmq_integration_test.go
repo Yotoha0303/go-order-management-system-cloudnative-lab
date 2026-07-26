@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/model"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"

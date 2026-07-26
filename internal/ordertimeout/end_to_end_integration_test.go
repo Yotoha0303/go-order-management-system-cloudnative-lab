@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"go-order-management-system/config"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
-	"go-order-management-system/internal/service"
+	"go-order-management-system-cloudnative-lab/config"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/request"
+	"go-order-management-system-cloudnative-lab/internal/service"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"

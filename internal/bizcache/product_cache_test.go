@@ -2,8 +2,8 @@ package bizcache_test
 
 import (
 	"context"
-	"go-order-management-system/internal/bizcache"
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/bizcache"
+	"go-order-management-system-cloudnative-lab/internal/model"
 	"testing"
 )
 

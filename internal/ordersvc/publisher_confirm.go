@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	platformmetrics "go-order-management-system/internal/platform/metrics"
+	platformmetrics "go-order-management-system-cloudnative-lab/internal/platform/metrics"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )

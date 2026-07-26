@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 )
 
 var ErrInsufficientBudget = errors.New("insufficient request budget for another HTTP attempt")

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	platformmetrics "go-order-management-system/internal/platform/metrics"
+	platformmetrics "go-order-management-system-cloudnative-lab/internal/platform/metrics"
 )
 
 func TestRabbitMQManagementCollectorExportsBoundedQueueRoles(t *testing.T) {

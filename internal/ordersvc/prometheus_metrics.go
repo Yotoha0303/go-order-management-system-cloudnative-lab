@@ -3,7 +3,7 @@ package ordersvc
 import (
 	"context"
 
-	platformmetrics "go-order-management-system/internal/platform/metrics"
+	platformmetrics "go-order-management-system-cloudnative-lab/internal/platform/metrics"
 )
 
 func ReliabilityPrometheusCollector(snapshotter reliabilitySnapshotter) platformmetrics.Collector {

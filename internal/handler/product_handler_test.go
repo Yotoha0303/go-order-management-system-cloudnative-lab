@@ -3,7 +3,7 @@ package handler
 import (
 	"testing"
 
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/model"
 )
 
 func TestParseProductStatus(t *testing.T) {

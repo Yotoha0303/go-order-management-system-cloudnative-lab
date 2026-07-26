@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/config"
-	platformmetrics "go-order-management-system/internal/platform/metrics"
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	"go-order-management-system-cloudnative-lab/config"
+	platformmetrics "go-order-management-system-cloudnative-lab/internal/platform/metrics"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 )
 
 func ObserveHTTP(service string, handler http.Handler, collectors ...platformmetrics.Collector) http.Handler {

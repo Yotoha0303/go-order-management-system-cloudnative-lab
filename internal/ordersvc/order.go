@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/internal/auth"
-	"go-order-management-system/internal/middleware"
-	"go-order-management-system/internal/platform/internalapi"
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	"go-order-management-system-cloudnative-lab/internal/auth"
+	"go-order-management-system-cloudnative-lab/internal/middleware"
+	"go-order-management-system-cloudnative-lab/internal/platform/internalapi"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

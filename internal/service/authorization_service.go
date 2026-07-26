@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 
-	"go-order-management-system/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/dao"
 
 	"gorm.io/gorm"
 )

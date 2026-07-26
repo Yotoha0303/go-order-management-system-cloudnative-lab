@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/config"
-	"go-order-management-system/internal/auth"
-	"go-order-management-system/internal/handler"
-	"go-order-management-system/internal/middleware"
-	"go-order-management-system/internal/ordersvc"
-	"go-order-management-system/internal/platform/resiliencehttp"
-	"go-order-management-system/internal/platform/servicehost"
-	"go-order-management-system/pkg/database"
+	"go-order-management-system-cloudnative-lab/config"
+	"go-order-management-system-cloudnative-lab/internal/auth"
+	"go-order-management-system-cloudnative-lab/internal/handler"
+	"go-order-management-system-cloudnative-lab/internal/middleware"
+	"go-order-management-system-cloudnative-lab/internal/ordersvc"
+	"go-order-management-system-cloudnative-lab/internal/platform/resiliencehttp"
+	"go-order-management-system-cloudnative-lab/internal/platform/servicehost"
+	"go-order-management-system-cloudnative-lab/pkg/database"
 
 	"github.com/gin-gonic/gin"
 )

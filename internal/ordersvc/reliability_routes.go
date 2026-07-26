@@ -3,7 +3,7 @@ package ordersvc
 import (
 	"net/http"
 
-	"go-order-management-system/internal/platform/internalapi"
+	"go-order-management-system-cloudnative-lab/internal/platform/internalapi"
 
 	"github.com/gin-gonic/gin"
 )

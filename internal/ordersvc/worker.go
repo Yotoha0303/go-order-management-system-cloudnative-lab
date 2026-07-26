@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"

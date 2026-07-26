@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/internal/dao"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
+	"go-order-management-system-cloudnative-lab/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/request"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

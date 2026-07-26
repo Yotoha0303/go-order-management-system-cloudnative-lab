@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/internal/dao"
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/model"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 	"gorm.io/gorm"

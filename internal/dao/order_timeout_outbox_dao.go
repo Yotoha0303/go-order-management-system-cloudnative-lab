@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/model"
 
 	"gorm.io/gorm"
 )

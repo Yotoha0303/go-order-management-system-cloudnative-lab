@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	platformmetrics "go-order-management-system/internal/platform/metrics"
+	platformmetrics "go-order-management-system-cloudnative-lab/internal/platform/metrics"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"

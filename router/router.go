@@ -1,9 +1,9 @@
 package router
 
 import (
-	"go-order-management-system/internal/auth"
-	"go-order-management-system/internal/handler"
-	"go-order-management-system/internal/middleware"
+	"go-order-management-system-cloudnative-lab/internal/auth"
+	"go-order-management-system-cloudnative-lab/internal/handler"
+	"go-order-management-system-cloudnative-lab/internal/middleware"
 	"log/slog"
 
 	"github.com/gin-gonic/gin"

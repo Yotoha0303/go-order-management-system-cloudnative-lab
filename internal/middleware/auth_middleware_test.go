@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-order-management-system/internal/auth"
+	"go-order-management-system-cloudnative-lab/internal/auth"
 
 	"github.com/gin-gonic/gin"
 )

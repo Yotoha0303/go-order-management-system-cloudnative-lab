@@ -17,7 +17,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "go-order-management-system/internal/platform/telemetry"
+const instrumentationName = "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 
 type ShutdownFunc func(context.Context) error
 

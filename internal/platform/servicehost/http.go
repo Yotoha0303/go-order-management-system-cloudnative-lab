@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"go-order-management-system/config"
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	"go-order-management-system-cloudnative-lab/config"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 )
 
 func NewLogger(service string) *slog.Logger {

@@ -1,8 +1,8 @@
 package bizcache_test
 
 import (
-	"go-order-management-system/config"
-	"go-order-management-system/pkg/redis"
+	"go-order-management-system-cloudnative-lab/config"
+	"go-order-management-system-cloudnative-lab/pkg/redis"
 	"os"
 	"testing"
 

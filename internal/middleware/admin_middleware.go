@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/response"
 
 	"github.com/gin-gonic/gin"
 )

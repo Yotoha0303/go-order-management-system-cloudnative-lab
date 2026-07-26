@@ -1,7 +1,7 @@
 package main
 
 import (
-	"go-order-management-system/internal/app"
+	"go-order-management-system-cloudnative-lab/internal/app"
 	"log"
 )
 

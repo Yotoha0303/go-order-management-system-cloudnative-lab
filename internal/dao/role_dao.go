@@ -2,7 +2,7 @@ package dao
 
 import (
 	"context"
-	"go-order-management-system/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/model"
 
 	"gorm.io/gorm"
 )

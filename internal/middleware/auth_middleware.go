@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"go-order-management-system/internal/auth"
-	"go-order-management-system/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/auth"
+	"go-order-management-system-cloudnative-lab/internal/response"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

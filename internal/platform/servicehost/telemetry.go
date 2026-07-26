@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	platformtelemetry "go-order-management-system/internal/platform/telemetry"
+	platformtelemetry "go-order-management-system-cloudnative-lab/internal/platform/telemetry"
 )
 
 func SetupTelemetry(service string, logger *slog.Logger) func() {

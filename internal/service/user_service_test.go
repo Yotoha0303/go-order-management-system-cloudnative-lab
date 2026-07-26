@@ -5,10 +5,10 @@ import (
 	"errors"
 	"testing"
 
-	"go-order-management-system/internal/dao"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
-	"go-order-management-system/internal/service"
+	"go-order-management-system-cloudnative-lab/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/request"
+	"go-order-management-system-cloudnative-lab/internal/service"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

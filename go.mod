@@ -1,4 +1,4 @@
-module go-order-management-system
+module go-order-management-system-cloudnative-lab
 
 go 1.25.7
 

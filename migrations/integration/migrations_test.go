@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"go-order-management-system/config"
+	"go-order-management-system-cloudnative-lab/config"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"go-order-management-system/internal/apperror"
-	"go-order-management-system/internal/dao"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/request"
-	"go-order-management-system/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/apperror"
+	"go-order-management-system-cloudnative-lab/internal/dao"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/request"
+	"go-order-management-system-cloudnative-lab/internal/response"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"

@@ -2,9 +2,9 @@ package handler
 
 import (
 	"context"
-	"go-order-management-system/internal/model"
-	"go-order-management-system/internal/response"
-	"go-order-management-system/internal/service"
+	"go-order-management-system-cloudnative-lab/internal/model"
+	"go-order-management-system-cloudnative-lab/internal/response"
+	"go-order-management-system-cloudnative-lab/internal/service"
 	"net/http"
 	"strconv"
 

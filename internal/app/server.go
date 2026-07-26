@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"go-order-management-system/internal/middleware"
+	"go-order-management-system-cloudnative-lab/internal/middleware"
 	"net/http"
 )
 
