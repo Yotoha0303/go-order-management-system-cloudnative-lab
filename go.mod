@@ -1,6 +1,6 @@
 module go-order-management-system-cloudnative-lab
 
-go 1.25.7
+go 1.25.12
 
 require (
 	github.com/gin-gonic/gin v1.12.0
