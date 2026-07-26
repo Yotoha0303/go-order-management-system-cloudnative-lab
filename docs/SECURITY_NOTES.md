@@ -12,7 +12,7 @@
 | govulncheck | **0 漏洞**（修复前 41 条，其中 19 条代码可达） |
 | gosec | **0 issue**（需加 `-exclude-generated`，见下；测试文件中的 16 条为默认口令、子进程调用等噪音） |
 | staticcheck | **0 告警**（默认检查集；非默认的 ST1000/ST1003 已被 `.golangci.yml` 排除） |
-| npm audit | 9 → **3 条 high**（均为 brace-expansion，见 S-1） |
+| npm audit | **0 漏洞**（修复前 9 条：5 critical + 4 high） |
 
 ---
 
@@ -30,26 +30,6 @@ go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude-generated ./...
 ```
 
 ## 待决策
-
-### S-1 · 前端 brace-expansion 三条 high，修复需破坏性降级
-
-**风险等级**：中（仅影响 lint/format 工具链，不进生产 bundle）
-
-`brace-expansion <=5.0.7` 命中 GHSA-mh99-v99m-4gvg（CVSS 7.5，无界展开导致 OOM 崩溃）
-与 GHSA-3jxr-9vmj-r5cp（CVSS 5.3，连续空 `{}` 组指数级展开）。
-
-引入链：`@trivago/prettier-plugin-sort-imports` → `minimatch` → `brace-expansion`。
-
-`npm audit fix --force` 会把 `@trivago/prettier-plugin-sort-imports` 从 6.x **降级**到 5.2.2，
-npm 明确标记为 breaking change。AGENT.md 禁止自动执行 `--force`，故保留。
-
-**建议方案**（三选一）：
-
-1. 等待 `@trivago/prettier-plugin-sort-imports` 6.x 发布依赖修复版 minimatch 的补丁 —— 推荐，
-   风险为零，代价是继续带着这三条告警
-2. 加 `overrides` 强制 `brace-expansion` 到 `>=5.0.8`，跳过降级插件本身。需验证 minimatch 与
-   插件在新版下行为正常
-3. 接受降级到 5.2.2，需要回归验证 `npm run format:check` 与导入排序结果是否变化
 
 ### S-3 · 前端 JWT 存放在 JS 可读 cookie
 
@@ -87,7 +67,7 @@ https 时才加；cookie `Max-Age` 为 7 天，而 JWT 有效期 24 小时，令
 **仍需决策**：
 
 1. 两个扫描目前都是 `continue-on-error`，只报告不阻断。观察几轮噪音水平后决定是否比照 lint
-   增加 Enforce 步骤转为阻断。注意 `npm audit` 在 S-1 解决前必然非空
+   增加 Enforce 步骤转为阻断。S-1 已解决，`npm audit` 目前为空，可以考虑直接转为阻断
 2. 本机 npm registry 指向 `registry.npmmirror.com`，该镜像未实现 `/-/npm/v1/security/*` 端点，
    本地直接跑 `npm audit` 会 404 退出（本次是显式加 `--registry=https://registry.npmjs.org` 才成功）。
    CI 用默认官方 registry 不受影响。仓库内无 `.npmrc`，该配置来自全局 npm 设置
@@ -100,6 +80,7 @@ https 时才加；cookie `Max-Age` 为 7 天，而 JWT 有效期 24 小时，令
 
 | 编号 | 问题 | 处理方式 |
 |---|---|---|
+| S-1 | 前端 brace-expansion 三条 high | 未采用 `--force` 的降级方案。漏洞版 brace-expansion 2.1.2 由 minimatch 9.0.9 引入（后者钉 `^2.0.2`），而 minimatch 10.2.5 依赖 `^5.0.5` 且树中已有。仅在插件子树内 override minimatch，插件保持 6.0.2 不降级，npm 随后把两者去重到单一版本。已验证 `format:check` 通过（能过就说明 sort-imports 插件正常加载），lint 与 build 亦通过 |
 | S-2 | gosec G304：配置文件路径来自变量 | 核实全部 13 个调用点均传编译期字面量，加 `// #nosec G304` 并注明前提；gosec 生产代码归零 |
 | S-6 | JWT issuer 仍是旧项目名 | 已随项目重命名统一改为新名，并收敛为 `auth.Issuer` 常量，消除五处字面量漂移的风险。**注意**：该变更使部署前签发的所有 token 失效，需一次性发布并提示用户重新登录 |
 | S-7 | K8s 标签仍是旧项目名 | 已改名，同时把废弃的 `commonLabels` 迁移到 `labels`。selector 不再包含 `part-of`，仅保留 `app.kubernetes.io/name`。应用到运行中的命名空间需删除并重建 Deployment 与 Service |
