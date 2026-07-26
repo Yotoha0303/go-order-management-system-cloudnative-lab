@@ -62,7 +62,12 @@ func LoadEnv() {
 	_ = godotenv.Load()
 }
 
+// LoadConfig reads and parses the YAML configuration at path. Callers pass a
+// path fixed at build time, never anything derived from a request.
 func LoadConfig(path string) (*Config, error) {
+	// #nosec G304 -- path is a compile-time literal at every call site: the
+	// service binaries pass "config.yml" and the tests a relative path to the
+	// same file. Revisit if this ever accepts an externally supplied path.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file %s failed: %w", path, err)
