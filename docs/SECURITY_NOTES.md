@@ -10,11 +10,24 @@
 | 工具 | 结果 |
 |---|---|
 | govulncheck | **0 漏洞**（修复前 41 条，其中 19 条代码可达） |
-| gosec | **0 issue**（生产代码；测试文件中的 16 条为默认口令、子进程调用等噪音） |
+| gosec | **0 issue**（需加 `-exclude-generated`，见下；测试文件中的 16 条为默认口令、子进程调用等噪音） |
 | staticcheck | **0 告警**（默认检查集；非默认的 ST1000/ST1003 已被 `.golangci.yml` 排除） |
 | npm audit | 9 → **3 条 high**（均为 brace-expansion，见 S-1） |
 
 ---
+
+### 关于 gosec 与生成代码
+
+AGENT.md 任务一给出的命令是 `gosec ./...`，它会在 `internal/platform/grpcapi/` 下报 4 条
+G103（`unsafe.Slice` / `unsafe.StringData`）。这 4 条全部位于 protoc-gen-go **生成**的
+`inventory.pb.go` 中，是 protobuf 运行时读取原始描述符的标准写法，等级 LOW，无法也不应修改。
+
+CI 实际使用的 golangci-lint 因 `.golangci.yml` 的 `exclusions.generated: strict` 已自动跳过
+它们（实测 0 issue）。手工运行独立 gosec 时请加 `-exclude-generated`：
+
+```bash
+go run github.com/securego/gosec/v2/cmd/gosec@latest -exclude-generated ./...
+```
 
 ## 待决策
 

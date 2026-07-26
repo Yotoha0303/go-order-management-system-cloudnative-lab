@@ -7,10 +7,9 @@ the gRPC migration. It defines `inventory.v1.InventoryReservationService`, the
 three calls order-service makes into inventory-service during the order saga,
 and wires up code generation.
 
-Nothing is migrated yet. The services still talk over the existing internal HTTP
-endpoints, and no runtime code imports the generated packages. This commit only
-establishes the contract and the toolchain so the switch can be made against a
-fixed target.
+inventory-service now serves this contract on port 9085 alongside its HTTP
+listener. Nothing calls it yet: order-service still uses the internal HTTP
+endpoints, which remain authoritative until the client is moved and verified.
 
 ## Layout
 
@@ -94,35 +93,57 @@ reports what a reviewer would see rather than what happens to be uncommitted.
 The check needs `origin/main` to already contain the contract, so it only starts
 returning useful results from the commit after this one.
 
+## The server
+
+`internal/inventorysvc/grpc.go` implements the three methods on top of the same
+`Service` the HTTP handlers use, so the two surfaces cannot drift apart. It is
+registered in `cmd/inventory-service/main.go` on `GRPC_PORT`, default 9085, and
+served next to HTTP through `servicehost.StartGRPC`.
+
+Authentication moved to `internalapi.UnaryServerInterceptor`, the gRPC
+counterpart of the existing middleware. It reads the `x-internal-token`
+metadata key - lowercase, because gRPC rejects uppercase keys - keeps the
+constant-time comparison, and still refuses every call when the expected token
+is unset. It is a server-wide interceptor rather than a per-method check so a
+method added later cannot be left unauthenticated by omission.
+
+Error mapping is the reason the move is worth making. The HTTP endpoints answer
+409 for insufficient stock, an unknown product and a malformed request alike,
+and return three mutually incompatible error shapes: `{"error": "..."}` for
+business failures, `{"code": 40101, "msg": "..."}` from the auth middleware, and
+`{"code": "request_deadline_exceeded", ...}` from the budget handler.
+Order-service parses none of them - it stores the raw body in `RemoteError` - so
+it cannot tell a definitive rejection from an unknown-outcome transport failure,
+and every compensation branch treats them alike.
+
+The split that matters is whether a retry could succeed:
+
+| Domain error | Status | Retry could succeed |
+| --- | --- | --- |
+| `ErrInvalidInventoryAmount` | `INVALID_ARGUMENT` | no |
+| `ErrInventoryNotFound`, `ErrReservationNotFound` | `NOT_FOUND` | no |
+| `ErrInsufficientInventory`, `ErrReservationTransition` | `FAILED_PRECONDITION` | no |
+| storage failures | `INTERNAL` | maybe |
+
+`INTERNAL` deliberately drops the underlying message, which can carry SQL
+fragments and constraint names; a test asserts that.
+
 ## Remaining work
 
-The contract exists; nothing uses it. Migrating the call path still requires,
-in order:
+1. The order-service client. Resilience parity is the delicate part: the HTTP
+   client retries at most 3 attempts with 50ms then 100ms backoff and +/-20%
+   jitter, retrying only transport errors and 502, 503 and 504, and its circuit
+   breaker opens after 5 consecutive failures for 5 seconds per upstream and
+   operation. One detail is easy to lose - only retryable outcomes count as
+   circuit failures, so HTTP 409 and 500 are recorded as successes today.
+   Counting every non-OK gRPC status as a failure would make the breaker trip
+   far more readily than it does now.
+2. Compensation branches in `order.go` that could act on the new distinction
+   instead of treating every failure alike.
+3. Health checking. The gRPC port has no probe: Kubernetes still probes
+   `/readyz` over HTTP, which does not prove the gRPC listener is up. The gRPC
+   health checking protocol would close that gap.
+4. The other three internal endpoints - identity's role check, catalog's product
+   snapshot and order's timeout cancel - have no contract yet.
 
-1. A gRPC server in inventory-service serving the three methods against the
-   same `Service` methods the HTTP handlers call.
-2. Authentication moved from the `X-Internal-Token` header to the
-   `x-internal-token` metadata key, keeping the constant-time comparison and
-   the reject-when-unconfigured behaviour.
-3. Error mapping. The HTTP endpoints return three mutually incompatible error
-   shapes: `{"error": "..."}` for business failures, `{"code": 40101, "msg":
-   "..."}` from the auth middleware, and `{"code": "request_deadline_exceeded",
-   ...}` from the budget handler. Order-service parses none of them - it stores
-   the raw body in `RemoteError` - so it currently cannot tell a definitive
-   business rejection from an unknown-outcome transport failure, and every
-   compensation branch treats them alike. Distinct status codes are the point of
-   moving: `FAILED_PRECONDITION` for insufficient stock and invalid
-   transitions, `NOT_FOUND` for missing reservations and products,
-   `INVALID_ARGUMENT` for malformed input, `UNAVAILABLE` for retryable
-   transport failures.
-4. Resilience parity. The HTTP client retries at most 3 attempts with 50ms then
-   100ms backoff and +/-20% jitter, retrying only transport errors and 502, 503
-   and 504. Its circuit breaker opens after 5 consecutive failures for 5
-   seconds, per upstream and operation. One detail is easy to lose: only
-   retryable outcomes count as circuit failures, so HTTP 409 and 500 are
-   currently recorded as successes. Counting every non-OK gRPC status as a
-   failure would make the breaker trip far more readily than it does today.
-5. Kubernetes manifests, which currently expose one HTTP port per service and
-   probe `/readyz` over HTTP.
-
-Until all of that lands, the HTTP endpoints remain the only implementation.
+Until the client moves, the HTTP endpoints remain the path in use.
