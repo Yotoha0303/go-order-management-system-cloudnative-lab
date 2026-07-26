@@ -1,5 +1,8 @@
-# Normalise line endings in the repository regardless of the checkout platform.
-* text=auto
+# Normalise line endings in the repository and check everything out as LF, on
+# every platform. Everything that consumes these files - the Go toolchain,
+# Docker, kubectl, goose, CI - runs on Linux, and a working tree that mixes CRLF
+# and LF is what made the formatting gate unusable in the first place.
+* text=auto eol=lf
 
 # gofmt compares against LF, so a CRLF checkout makes gofmt -l report every Go
 # file in the tree and the pre-commit formatting gate stops being usable.
