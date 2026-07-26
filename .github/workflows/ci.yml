@@ -20,7 +20,7 @@ env:
   RUN_RABBITMQ_TEST: "1"
   MYSQL_PASSWORD: ci-password
   MYSQL_TEST_PASSWORD: ci-password
-  MYSQL_TEST_DATABASE: go_order_management_system_test
+  MYSQL_TEST_DATABASE: go_order_management_system_cloudnative_lab_test
   JWT_SECRET: ci-jwt-secret-must-be-at-least-32-characters
   INTERNAL_SERVICE_TOKEN: ci-internal-service-token-must-be-long-and-random
   ORDER_TIMEOUT_DELAY: 3s
@@ -43,7 +43,7 @@ jobs:
         image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: ci-password
-          MYSQL_DATABASE: go_order_management_system_test
+          MYSQL_DATABASE: go_order_management_system_cloudnative_lab_test
         ports:
           - 3306:3306
         options: >-
