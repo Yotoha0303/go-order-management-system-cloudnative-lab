@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package inventory.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "go-order-management-system-cloudnative-lab/internal/platform/grpcapi/inventory/v1;inventoryv1";
+
+// InventoryReservationService is the contract order-service depends on to hold
+// and settle stock during the order saga. It replaces the internal HTTP
+// endpoints under /internal/v1/reservations and is not exposed through the API
+// gateway.
+//
+// Callers authenticate with the shared internal service token, sent as the
+// "x-internal-token" metadata key. A server configured with an empty expected
+// token rejects every call.
+//
+// Every method is idempotent, and the saga depends on that: order-service and
+// order-reconciliation-worker retry compensation indefinitely and have no way
+// to tell "the call never arrived" from "the reply was lost".
+service InventoryReservationService {
+  // Reserve moves stock from available to reserved for one order.
+  //
+  // Idempotency is keyed on order_id, which is unique per reservation: a repeat
+  // call for an order that already holds a reservation returns the existing one
+  // untouched rather than reserving a second time.
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+
+  // Confirm settles a reservation, consuming the reserved stock permanently.
+  // Calling it on an already confirmed reservation returns that reservation
+  // without decrementing anything again.
+  rpc Confirm(ConfirmRequest) returns (ConfirmResponse);
+
+  // Release returns reserved stock to available. Calling it on an already
+  // released reservation returns that reservation without incrementing again.
+  //
+  // Confirm and Release are terminal and mutually exclusive: a confirmed
+  // reservation cannot be released, and a released one cannot be confirmed.
+  // Either attempt fails with FAILED_PRECONDITION.
+  rpc Release(ReleaseRequest) returns (ReleaseResponse);
+}
+
+// ReservationStatus is the reservation lifecycle. RESERVATION_STATUS_PENDING is
+// the only non-terminal state.
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  // Stock is held but not yet settled. Wire value "pending".
+  RESERVATION_STATUS_PENDING = 1;
+  // Stock was consumed. Wire value "confirmed".
+  RESERVATION_STATUS_CONFIRMED = 2;
+  // Stock was returned to available. Wire value "released".
+  RESERVATION_STATUS_RELEASED = 3;
+}
+
+// ReserveItem is one line of a reservation request. It is deliberately separate
+// from ReservationItem: the request carries only what the caller chooses, while
+// the response also carries server-assigned identity.
+message ReserveItem {
+  // Must be greater than zero.
+  int64 product_id = 1;
+  // Must be greater than zero. Lines repeating a product_id are summed.
+  int64 quantity = 2;
+}
+
+// ReservationItem is one line of a stored reservation.
+message ReservationItem {
+  // Server-assigned row identity.
+  uint64 id = 1;
+  string reservation_id = 2;
+  int64 product_id = 3;
+  int64 quantity = 4;
+}
+
+// Reservation is the stock hold for a single order.
+message Reservation {
+  // Server-assigned when the caller does not supply one. At most 36 characters.
+  string id = 1;
+  int64 order_id = 2;
+  ReservationStatus status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  // Reflects the row as read at the start of the transaction that answered this
+  // call, so a Confirm or Release reply carries the timestamp from before the
+  // status change rather than after it.
+  google.protobuf.Timestamp updated_at = 5;
+  repeated ReservationItem items = 6;
+}
+
+message ReserveRequest {
+  // Must be greater than zero, and is the idempotency key for this call.
+  int64 order_id = 1;
+
+  // Supplied by the caller so a reservation can be released after a request
+  // times out with an unknown outcome. Leave unset to have the server generate
+  // one. At most 36 characters; longer values are rejected by storage, not by
+  // validation.
+  optional string reservation_id = 2;
+
+  // Between 1 and 100 entries. Lines repeating a product_id are summed, and the
+  // result is sorted by product_id before locking rows, which is what keeps
+  // concurrent reservations from deadlocking against each other.
+  repeated ReserveItem items = 3;
+}
+
+message ReserveResponse {
+  Reservation reservation = 1;
+}
+
+message ConfirmRequest {
+  // At most 36 characters. An empty value is reported as NOT_FOUND rather than
+  // INVALID_ARGUMENT, matching the HTTP behaviour this replaces.
+  string reservation_id = 1;
+}
+
+message ConfirmResponse {
+  Reservation reservation = 1;
+}
+
+message ReleaseRequest {
+  // At most 36 characters. An empty value is reported as NOT_FOUND.
+  string reservation_id = 1;
+}
+
+message ReleaseResponse {
+  Reservation reservation = 1;
+}

@@ -6,6 +6,9 @@ GO ?= go
 GOLANGCI_LINT ?= golangci-lint
 GOOSE ?= goose
 COMPOSE ?= docker compose
+# Runs without any prior setup. Override with BUF=buf once it is installed
+# locally, which avoids rebuilding it on every invocation.
+BUF ?= $(GO) run github.com/bufbuild/buf/cmd/buf@v1.58.0
 GO_PACKAGES := ./cmd/... ./config/... ./internal/... ./pkg/... ./router/... ./migrations/integration/...
 TEST_FLAGS ?= -count=1
 LINT_FLAGS ?=
@@ -24,6 +27,7 @@ endif
 
 .PHONY: help run ui-run dev build clean \
 	fmt vet lint tidy mod-download mod-verify \
+	proto-lint proto-gen proto-breaking \
 	test test-verbose test-service test-dao test-migrations test-redis test-order-timeout test-all test-race coverage coverage-html \
 	check compose-config infra-up infra-down infra-ps infra-logs \
 	docker-build docker-up docker-down docker-restart docker-ps docker-logs \
@@ -43,6 +47,9 @@ help:
 	@echo   fmt             Format all Go packages
 	@echo   vet             Run go vet
 	@echo   lint            Run golangci-lint - installation required
+	@echo   proto-lint      Lint the Protobuf contracts
+	@echo   proto-gen       Regenerate Go code from the Protobuf contracts
+	@echo   proto-breaking  Check the contracts for incompatible changes
 	@echo   tidy            Update go.mod and go.sum
 	@echo   mod-download    Download Go modules
 	@echo   mod-verify      Verify downloaded Go modules
@@ -122,6 +129,20 @@ else
 	@command -v "$(GOLANGCI_LINT)" >/dev/null 2>&1 || { echo "golangci-lint is not installed"; exit 1; }
 endif
 	$(GOLANGCI_LINT) run $(LINT_FLAGS) $(GO_PACKAGES)
+
+proto-lint:
+	$(BUF) lint
+
+# Writes into internal/platform/grpcapi/. Run tidy afterwards if the generated
+# code starts importing something new.
+proto-gen:
+	$(BUF) generate
+
+# Compares against origin/main, so it reports what a reviewer would see rather
+# than what is uncommitted locally. Enforces the compatibility rules the project
+# commits to: no reused field numbers, no changed field types.
+proto-breaking:
+	$(BUF) breaking --against '.git#branch=origin/main'
 
 tidy:
 	$(GO) mod tidy

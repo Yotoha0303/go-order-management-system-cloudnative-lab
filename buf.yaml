@@ -1,0 +1,15 @@
+version: v2
+
+modules:
+  - path: api/proto
+
+lint:
+  use:
+    - STANDARD
+
+# Enforces the compatibility rules the project commits to: field numbers are
+# never reused, existing field types never change, and additions stay optional.
+# Run against the last pushed commit with: make proto-breaking
+breaking:
+  use:
+    - FILE
