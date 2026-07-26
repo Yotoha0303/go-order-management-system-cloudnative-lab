@@ -7,6 +7,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [../README.md](../README.md) | 当前项目定位、能力矩阵、运行入口和生产边界 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Kubernetes 资源关系图，以及 `make diagrams` 生成的调用图与包依赖图 |
 | [architecture/microservices-v2-data-ownership.md](architecture/microservices-v2-data-ownership.md) | 四库数据所有权、Inventory Reservation 和 Order Saga |
 | [architecture/migrations-outbox-leasing.md](architecture/migrations-outbox-leasing.md) | Goose migration、Outbox 租约、多 Worker 与 Publisher Confirms |
 | [architecture/http-timeout-retry.md](architecture/http-timeout-retry.md) | Request Deadline、Transport 超时和有限重试 |
