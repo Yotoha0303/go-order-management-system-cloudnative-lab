@@ -3,4 +3,4 @@ kind: Namespace
 metadata:
   name: go-order-system
   labels:
-    app.kubernetes.io/name: go-order-management-system
+    app.kubernetes.io/name: go-order-management-system-cloudnative-lab
