@@ -5,7 +5,7 @@ mysql:
   user: root
   host: 127.0.0.1
   port: "3306"
-  database: go_order_management_system
+  database: go_order_management_system_cloudnative_lab
 
   maxOpenConns: 10
   maxIdleConns: 5

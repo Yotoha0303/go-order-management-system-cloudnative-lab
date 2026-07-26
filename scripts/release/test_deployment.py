@@ -98,7 +98,7 @@ class DeploymentReleaseTest(unittest.TestCase):
             lines = []
             for service in manifest.EXPECTED_SERVICES:
                 for _ in range(deployment.EXPECTED_RENDER_COUNTS[service]):
-                    lines.append(f"image: go-order-management-system/{service}:local")
+                    lines.append(f"image: go-order-management-system-cloudnative-lab/{service}:local")
             source.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
             deployment.render_release(
@@ -111,7 +111,7 @@ class DeploymentReleaseTest(unittest.TestCase):
                 )
             )
             rendered = output.read_text(encoding="utf-8")
-            self.assertNotIn("go-order-management-system/", rendered)
+            self.assertNotIn("go-order-management-system-cloudnative-lab/", rendered)
             for entry in release_document()["images"]:
                 self.assertEqual(
                     rendered.count(entry["reference"]),
@@ -123,7 +123,7 @@ class DeploymentReleaseTest(unittest.TestCase):
             root = pathlib.Path(temp)
             manifest_path = self.write_manifest(root)
             source = root / "rendered-local.yaml"
-            source.write_text("image: go-order-management-system/api-gateway:local\n", encoding="utf-8")
+            source.write_text("image: go-order-management-system-cloudnative-lab/api-gateway:local\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "expected 2 rendered occurrences for identity-service"):
                 deployment.render_release(
                     argparse.Namespace(

@@ -31,7 +31,7 @@ spec:
               mysql -h mysql -P 3306 -uroot -e 'CREATE DATABASE IF NOT EXISTS `go_order_identity` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'
       containers:
         - name: migrate
-          image: go-order-management-system/identity-service:local
+          image: go-order-management-system-cloudnative-lab/identity-service:local
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -85,7 +85,7 @@ spec:
               mysql -h mysql -P 3306 -uroot -e 'CREATE DATABASE IF NOT EXISTS `go_order_catalog` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'
       containers:
         - name: migrate
-          image: go-order-management-system/catalog-service:local
+          image: go-order-management-system-cloudnative-lab/catalog-service:local
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -139,7 +139,7 @@ spec:
               mysql -h mysql -P 3306 -uroot -e 'CREATE DATABASE IF NOT EXISTS `go_order_inventory` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'
       containers:
         - name: migrate
-          image: go-order-management-system/inventory-service:local
+          image: go-order-management-system-cloudnative-lab/inventory-service:local
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -193,7 +193,7 @@ spec:
               mysql -h mysql -P 3306 -uroot -e 'CREATE DATABASE IF NOT EXISTS `go_order_ordering` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;'
       containers:
         - name: migrate
-          image: go-order-management-system/order-service:local
+          image: go-order-management-system-cloudnative-lab/order-service:local
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:

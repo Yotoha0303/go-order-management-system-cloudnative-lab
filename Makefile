@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-APP_NAME := go-order-management-system
+APP_NAME := go-order-management-system-cloudnative-lab
 BIN_DIR := bin
 GO ?= go
 GOLANGCI_LINT ?= golangci-lint
@@ -13,7 +13,7 @@ MIGRATIONS_DIR ?= migrations
 DB_HOST ?= 127.0.0.1
 DB_PORT ?= 3306
 DB_USER ?= root
-DB_NAME ?= go_order_management_system
+DB_NAME ?= go_order_management_system_cloudnative_lab
 MIGRATION_DSN ?= $(DB_USER):$(MYSQL_PASSWORD)@tcp($(DB_HOST):$(DB_PORT))/$(DB_NAME)?parseTime=true
 
 ifeq ($(OS),Windows_NT)

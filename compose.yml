@@ -20,13 +20,13 @@ x-migration-environment: &migration-environment
 
 services:
   api-gateway:
-    image: go-order-management-system/api-gateway:local
+    image: go-order-management-system-cloudnative-lab/api-gateway:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: api-gateway
-    container_name: go-order-management-system-api-gateway
+    container_name: go-order-management-system-cloudnative-lab-api-gateway
     ports:
       - "${GATEWAY_HOST_PORT:-8082}:8082"
     environment:
@@ -60,13 +60,13 @@ services:
     restart: unless-stopped
 
   identity-service:
-    image: go-order-management-system/identity-service:local
+    image: go-order-management-system-cloudnative-lab/identity-service:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: identity-service
-    container_name: go-order-management-system-identity-service
+    container_name: go-order-management-system-cloudnative-lab-identity-service
     expose:
       - "8083"
     environment:
@@ -85,13 +85,13 @@ services:
     restart: unless-stopped
 
   catalog-service:
-    image: go-order-management-system/catalog-service:local
+    image: go-order-management-system-cloudnative-lab/catalog-service:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: catalog-service
-    container_name: go-order-management-system-catalog-service
+    container_name: go-order-management-system-cloudnative-lab-catalog-service
     expose:
       - "8084"
     environment:
@@ -113,13 +113,13 @@ services:
     restart: unless-stopped
 
   inventory-service:
-    image: go-order-management-system/inventory-service:local
+    image: go-order-management-system-cloudnative-lab/inventory-service:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: inventory-service
-    container_name: go-order-management-system-inventory-service
+    container_name: go-order-management-system-cloudnative-lab-inventory-service
     expose:
       - "8085"
     environment:
@@ -141,13 +141,13 @@ services:
     restart: unless-stopped
 
   order-service:
-    image: go-order-management-system/order-service:local
+    image: go-order-management-system-cloudnative-lab/order-service:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
       args:
         SERVICE: order-service
-    container_name: go-order-management-system-order-service
+    container_name: go-order-management-system-cloudnative-lab-order-service
     expose:
       - "8086"
     environment:
@@ -172,7 +172,7 @@ services:
     restart: unless-stopped
 
   order-timeout-worker:
-    image: go-order-management-system/order-timeout-worker:local
+    image: go-order-management-system-cloudnative-lab/order-timeout-worker:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -193,7 +193,7 @@ services:
     restart: unless-stopped
 
   order-reconciliation-worker:
-    image: go-order-management-system/order-reconciliation-worker:local
+    image: go-order-management-system-cloudnative-lab/order-reconciliation-worker:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -217,7 +217,7 @@ services:
     restart: unless-stopped
 
   identity-migrate:
-    image: go-order-management-system/identity-migrate:local
+    image: go-order-management-system-cloudnative-lab/identity-migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -237,7 +237,7 @@ services:
     restart: "no"
 
   catalog-migrate:
-    image: go-order-management-system/catalog-migrate:local
+    image: go-order-management-system-cloudnative-lab/catalog-migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -257,7 +257,7 @@ services:
     restart: "no"
 
   inventory-migrate:
-    image: go-order-management-system/inventory-migrate:local
+    image: go-order-management-system-cloudnative-lab/inventory-migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -277,7 +277,7 @@ services:
     restart: "no"
 
   ordering-migrate:
-    image: go-order-management-system/ordering-migrate:local
+    image: go-order-management-system-cloudnative-lab/ordering-migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
@@ -298,7 +298,7 @@ services:
 
   db-init:
     image: mysql:8.4
-    container_name: go-order-management-system-db-init
+    container_name: go-order-management-system-cloudnative-lab-db-init
     environment:
       MYSQL_PWD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
     depends_on:
@@ -318,7 +318,7 @@ services:
 
   mysql:
     image: mysql:8.4
-    container_name: go-order-management-system-mysql
+    container_name: go-order-management-system-cloudnative-lab-mysql
     ports:
       - "${MYSQL_HOST_PORT:-3306}:3306"
     environment:
@@ -335,7 +335,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:4.1-management-alpine
-    container_name: go-order-management-system-rabbitmq
+    container_name: go-order-management-system-cloudnative-lab-rabbitmq
     ports:
       - "${RABBITMQ_HOST_PORT:-5672}:5672"
       - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"

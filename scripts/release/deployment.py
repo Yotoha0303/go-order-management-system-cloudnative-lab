@@ -12,7 +12,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import manifest as release_manifest
 
-LOCAL_IMAGE_PREFIX = "go-order-management-system/"
+LOCAL_IMAGE_PREFIX = "go-order-management-system-cloudnative-lab/"
 EXPECTED_RENDER_COUNTS = {
     "api-gateway": 1,
     "identity-service": 2,
@@ -83,7 +83,7 @@ def render_release(args: argparse.Namespace) -> None:
         rendered = rendered.replace(local_reference, references[service])
 
     require(
-        not re.search(r"image:\s+go-order-management-system/[a-z0-9-]+:local", rendered),
+        not re.search(r"image:\s+go-order-management-system-cloudnative-lab/[a-z0-9-]+:local", rendered),
         "rendered release still contains a local application image",
     )
     for service, reference in references.items():

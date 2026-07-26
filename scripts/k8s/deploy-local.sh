@@ -59,14 +59,14 @@ for service in $services; do
   docker build \
     --file deploy/docker/Dockerfile.service \
     --build-arg "SERVICE=$service" \
-    --tag "go-order-management-system/$service:local" \
+    --tag "go-order-management-system-cloudnative-lab/$service:local" \
     .
 done
 
 printf '%s\n' 'Loading images into kind...'
 for service in $services; do
   kind load docker-image \
-    "go-order-management-system/$service:local" \
+    "go-order-management-system-cloudnative-lab/$service:local" \
     --name "$CLUSTER_NAME"
 done
 

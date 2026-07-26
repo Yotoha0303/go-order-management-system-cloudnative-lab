@@ -9,7 +9,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o go-order-management-system ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o go-order-management-system-cloudnative-lab ./cmd
 
 FROM golang:1.25.7-alpine AS goose-builder
 
@@ -23,7 +23,7 @@ WORKDIR /app
 
 RUN addgroup -S app && adduser -S app -G app
 
-COPY --from=builder /app/go-order-management-system ./go-order-management-system
+COPY --from=builder /app/go-order-management-system-cloudnative-lab ./go-order-management-system-cloudnative-lab
 COPY --from=goose-builder /go/bin/goose ./goose
 COPY config.yml ./config.yml
 COPY migrations ./migrations
@@ -37,4 +37,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 
 STOPSIGNAL SIGTERM
 
-CMD ["./go-order-management-system"]
+CMD ["./go-order-management-system-cloudnative-lab"]

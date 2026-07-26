@@ -43,7 +43,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.5.0
-    container_name: go-order-management-system-prometheus
+    container_name: go-order-management-system-cloudnative-lab-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -72,7 +72,7 @@ services:
 
   tempo:
     image: grafana/tempo:2.10.7
-    container_name: go-order-management-system-tempo
+    container_name: go-order-management-system-cloudnative-lab-tempo
     command:
       - -config.file=/etc/tempo/tempo.yml
     volumes:
@@ -84,7 +84,7 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.156.0
-    container_name: go-order-management-system-otel-collector
+    container_name: go-order-management-system-cloudnative-lab-otel-collector
     command:
       - --config=/etc/otelcol-contrib/collector.yml
     volumes:
@@ -98,7 +98,7 @@ services:
 
   grafana:
     image: grafana/grafana:12.1.0
-    container_name: go-order-management-system-grafana
+    container_name: go-order-management-system-cloudnative-lab-grafana
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}

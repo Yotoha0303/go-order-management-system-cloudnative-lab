@@ -127,7 +127,7 @@ jobs:
             --commit "${{ steps.source.outputs.release_commit }}" \
             --input release/kubernetes-local.yaml \
             --output release/kubernetes-release.yaml
-          if grep -q 'go-order-management-system/.*:local' release/kubernetes-release.yaml; then
+          if grep -q 'go-order-management-system-cloudnative-lab/.*:local' release/kubernetes-release.yaml; then
             echo "digest release still contains local application tags" >&2
             exit 1
           fi

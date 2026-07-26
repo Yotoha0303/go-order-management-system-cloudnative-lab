@@ -262,7 +262,7 @@ jobs:
         run: |
           kubectl -n "$KUBERNETES_NAMESPACE" set image \
             deployment/api-gateway \
-            api-gateway=go-order-management-system/api-gateway:missing-ci-image
+            api-gateway=go-order-management-system-cloudnative-lab/api-gateway:missing-ci-image
 
           if kubectl -n "$KUBERNETES_NAMESPACE" rollout status \
             deployment/api-gateway \
@@ -275,7 +275,7 @@ jobs:
           kubectl -n "$KUBERNETES_NAMESPACE" rollout status deployment/api-gateway --timeout=180s
 
           current_image="$(kubectl -n "$KUBERNETES_NAMESPACE" get deployment api-gateway -o jsonpath='{.spec.template.spec.containers[0].image}')"
-          test "$current_image" = go-order-management-system/api-gateway:local
+          test "$current_image" = go-order-management-system-cloudnative-lab/api-gateway:local
           curl --fail --silent --show-error "$BASE_URL/readyz"
 
       - name: Verify Kubernetes Order Saga
