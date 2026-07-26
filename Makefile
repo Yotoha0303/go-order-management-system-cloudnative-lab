@@ -9,6 +9,11 @@ COMPOSE ?= docker compose
 # Runs without any prior setup. Override with BUF=buf once it is installed
 # locally, which avoids rebuilding it on every invocation.
 BUF ?= $(GO) run github.com/bufbuild/buf/cmd/buf@v1.58.0
+GO_CALLVIS ?= go-callvis
+DOT ?= dot
+DIAGRAMS_DIR := docs/diagrams
+DIAGRAM_SERVICES := api-gateway identity-service catalog-service inventory-service \
+	order-service order-timeout-worker order-reconciliation-worker
 GO_PACKAGES := ./cmd/... ./config/... ./internal/... ./pkg/... ./router/... ./migrations/integration/...
 TEST_FLAGS ?= -count=1
 LINT_FLAGS ?=
@@ -28,6 +33,7 @@ endif
 .PHONY: help run ui-run dev build clean \
 	fmt vet lint tidy mod-download mod-verify \
 	proto-lint proto-gen proto-breaking \
+	check-diagram-tools diagrams \
 	test test-verbose test-service test-dao test-migrations test-redis test-order-timeout test-all test-race coverage coverage-html \
 	check compose-config infra-up infra-down infra-ps infra-logs \
 	docker-build docker-up docker-down docker-restart docker-ps docker-logs \
@@ -50,6 +56,7 @@ help:
 	@echo   proto-lint      Lint the Protobuf contracts
 	@echo   proto-gen       Regenerate Go code from the Protobuf contracts
 	@echo   proto-breaking  Check the contracts for incompatible changes
+	@echo   diagrams        Regenerate the architecture diagrams - go-callvis and graphviz required
 	@echo   tidy            Update go.mod and go.sum
 	@echo   mod-download    Download Go modules
 	@echo   mod-verify      Verify downloaded Go modules
@@ -129,6 +136,35 @@ else
 	@command -v "$(GOLANGCI_LINT)" >/dev/null 2>&1 || { echo "golangci-lint is not installed"; exit 1; }
 endif
 	$(GOLANGCI_LINT) run $(LINT_FLAGS) $(GO_PACKAGES)
+
+check-diagram-tools:
+ifeq ($(OS),Windows_NT)
+	@where "$(GO_CALLVIS)" || (echo go-callvis is not installed. Run: go install github.com/ondrajz/go-callvis@latest && exit 1)
+	@where "$(DOT)" || (echo graphviz is not installed. Install it and put dot on PATH && exit 1)
+else
+	@command -v "$(GO_CALLVIS)" >/dev/null 2>&1 || { echo "go-callvis is not installed. Run: go install github.com/ondrajz/go-callvis@latest"; exit 1; }
+	@command -v "$(DOT)" >/dev/null 2>&1 || { echo "graphviz is not installed. Install it and put dot on PATH"; exit 1; }
+endif
+
+# One call graph per service entry point, plus a package dependency graph.
+#
+# -limit scopes the graph to this module. The -nostd flag that go-callvis
+# documents for the same purpose produces an empty graph here: combined with the
+# default main focus it prunes every edge, so every diagram comes out blank.
+#
+# .gv files are intermediate dot sources and are removed; only the SVGs are
+# tracked.
+diagrams: check-diagram-tools
+	@mkdir -p $(DIAGRAMS_DIR)
+	@for service in $(DIAGRAM_SERVICES); do \
+		echo "call graph: $$service"; \
+		$(GO_CALLVIS) -group pkg -limit $(APP_NAME) -format svg \
+			-file $(DIAGRAMS_DIR)/$$service ./cmd/$$service >/dev/null 2>&1 || exit 1; \
+	done
+	@echo "package dependencies"
+	@$(GO) run github.com/loov/goda@v0.6.0 graph "./..." 2>/dev/null \
+		| $(DOT) -Tsvg -o $(DIAGRAMS_DIR)/package-dependencies.svg
+	@rm -f $(DIAGRAMS_DIR)/*.gv
 
 proto-lint:
 	$(BUF) lint
