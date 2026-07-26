@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"go-order-management-system-cloudnative-lab/config"
@@ -9,13 +12,18 @@ import (
 	"go-order-management-system-cloudnative-lab/internal/handler"
 	"go-order-management-system-cloudnative-lab/internal/inventorysvc"
 	"go-order-management-system-cloudnative-lab/internal/middleware"
+	inventoryv1 "go-order-management-system-cloudnative-lab/internal/platform/grpcapi/inventory/v1"
+	"go-order-management-system-cloudnative-lab/internal/platform/internalapi"
 	"go-order-management-system-cloudnative-lab/internal/platform/resiliencehttp"
 	"go-order-management-system-cloudnative-lab/internal/platform/serviceclient"
 	"go-order-management-system-cloudnative-lab/internal/platform/servicehost"
 	"go-order-management-system-cloudnative-lab/pkg/database"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
 )
+
+const defaultGRPCPort = 9085
 
 func main() {
 	logger := servicehost.NewLogger("inventory-service")
@@ -62,13 +70,25 @@ func main() {
 	router.GET("/live", healthHandler.LiveHandler)
 	router.GET("/readyz", healthHandler.ReadyzHandler)
 
+	service := inventorysvc.NewService(db)
+
 	inventorysvc.RegisterRoutes(
 		router,
 		tokenManager,
 		roleChecker,
 		os.Getenv("INTERNAL_SERVICE_TOKEN"),
-		inventorysvc.NewService(db),
+		service,
 	)
+
+	// Served alongside HTTP, not instead of it. Nothing calls it yet: the
+	// reservation contract exists in gRPC form so order-service can be moved
+	// over, and until it is, the HTTP endpoints stay authoritative.
+	stopGRPC, err := startReservationGRPC(logger, service)
+	if err != nil {
+		logger.Error("start grpc server", "error", err)
+		os.Exit(1)
+	}
+	defer stopGRPC()
 
 	applicationHandler := middleware.TimeoutHandler(router, cfg.HttpServer.Server.Timeout)
 	budgetedHandler := resiliencehttp.BudgetHandler(applicationHandler, resiliencehttp.BudgetConfig{
@@ -85,4 +105,27 @@ func main() {
 		logger.Error("inventory service stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// startReservationGRPC serves the reservation contract over gRPC on GRPC_PORT.
+//
+// The internal token is checked by an interceptor rather than per method, so a
+// method added later cannot be left unauthenticated by omission - the same
+// reason the HTTP endpoints sit behind a route group.
+func startReservationGRPC(logger *slog.Logger, service *inventorysvc.Service) (func(), error) {
+	port := defaultGRPCPort
+	if v := os.Getenv("GRPC_PORT"); v != "" {
+		parsed, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid GRPC_PORT: %w", err)
+		}
+		port = parsed
+	}
+
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(internalapi.UnaryServerInterceptor(os.Getenv("INTERNAL_SERVICE_TOKEN"))),
+	)
+	inventoryv1.RegisterInventoryReservationServiceServer(server, inventorysvc.NewGRPCServer(service))
+
+	return servicehost.StartGRPC(logger, port, server)
 }
