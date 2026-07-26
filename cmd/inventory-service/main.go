@@ -37,7 +37,7 @@ func main() {
 
 	tokenManager, err := auth.NewTokenManager(
 		os.Getenv("JWT_SECRET"),
-		"go-order-management-system",
+		auth.Issuer,
 		time.Duration(cfg.JWT.ExpireHours)*time.Hour,
 	)
 	if err != nil {

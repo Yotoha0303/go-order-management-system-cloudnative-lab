@@ -10,6 +10,11 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Issuer is the iss claim every service signs and verifies. Tokens are
+// rejected across service boundaries if the values drift, so all callers must
+// share this constant rather than repeating the literal.
+const Issuer = "go-order-management-system-cloudnative-lab"
+
 var (
 	ErrAccessTokenInvalid   = errors.New("invalid access token")
 	ErrJWTSecretTooShort    = errors.New("jwt secret must be at least 32 characters")
