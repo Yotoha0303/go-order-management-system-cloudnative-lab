@@ -1,5 +1,5 @@
 -- seed_day01.sql
--- 适配当前项目：go-order-management-system
+-- 适配当前项目：go-order-management-system-cloudnative-lab
 -- 当前表：products / product_inventories / stock_logs
 
 SET NAMES utf8mb4;

@@ -1,6 +1,6 @@
 # 订单库存管理系统前端
 
-本目录是 `go-order-management-system` 的 React 管理台，基于 Shadcn Admin 模板改造，并已接入项目 Go 后端的认证、用户、商品、库存、库存流水和订单接口。
+本目录是 `go-order-management-system-cloudnative-lab` 的 React 管理台，基于 Shadcn Admin 模板改造，并已接入项目 Go 后端的认证、用户、商品、库存、库存流水和订单接口。
 
 ## 已接入功能
 

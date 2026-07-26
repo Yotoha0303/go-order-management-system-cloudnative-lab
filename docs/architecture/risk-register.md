@@ -37,8 +37,8 @@
 
 完成标准：
 
-- 开发库统一为 `go_order_management_system`；
-- 测试库统一为 `go_order_management_system_test`；
+- 开发库统一为 `go_order_management_system_cloudnative_lab`；
+- 测试库统一为 `go_order_management_system_cloudnative_lab_test`；
 - CI、Compose、Makefile、`.env.example`、测试辅助代码一致；
 - CI 服务实际创建的数据库与测试代码读取的数据库一致；
 - 记录本地和 CI 验证结果。
