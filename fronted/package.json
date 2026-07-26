@@ -83,6 +83,9 @@
     "vitest-browser-react": "^2.2.0"
   },
   "overrides": {
-    "@vitest/browser": "4.1.10"
+    "@vitest/browser": "4.1.10",
+    "@trivago/prettier-plugin-sort-imports": {
+      "minimatch": "^10.2.5"
+    }
   }
 }
