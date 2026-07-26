@@ -119,6 +119,27 @@ jobs:
           cat lint.log
           exit 1
 
+      # Reports only for now. Promote to a blocking step once the noise level
+      # over a few runs is known, the same way lint is enforced above.
+      - name: Scan dependencies for known vulnerabilities
+        id: govulncheck
+        continue-on-error: true
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./... > govulncheck.log 2>&1
+
+      - name: Report vulnerability scan
+        if: always()
+        run: cat govulncheck.log || true
+
+      - name: Upload vulnerability scan
+        if: steps.govulncheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: govulncheck-log
+          path: govulncheck.log
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Run tests
         run: go test ./...
 
@@ -208,6 +229,54 @@ jobs:
       - name: Stop microservices
         if: always()
         run: docker compose down -v --remove-orphans
+
+  # The frontend had no pipeline at all: fronted/.github/workflows is nested
+  # inside the project directory, and GitHub only reads workflows from the
+  # repository root, so nothing there has ever run.
+  frontend-audit:
+    name: Frontend Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: fronted/package-lock.json
+
+      - name: Install dependencies
+        working-directory: fronted
+        run: npm ci
+
+      # Reports only for now, same as govulncheck above. Advisories that need a
+      # breaking upgrade are tracked in docs/SECURITY_NOTES.md rather than being
+      # fixed automatically, so this is expected to be non-empty.
+      - name: Audit dependencies
+        id: audit
+        continue-on-error: true
+        working-directory: fronted
+        run: npm audit --audit-level=high > npm-audit.log 2>&1
+
+      - name: Report audit
+        if: always()
+        working-directory: fronted
+        run: cat npm-audit.log || true
+
+      - name: Upload audit report
+        if: steps.audit.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-log
+          path: fronted/npm-audit.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build the frontend
+        working-directory: fronted
+        run: npm run build
 
   kubernetes-runtime:
     name: kind Deploy, Rollback, Saga
