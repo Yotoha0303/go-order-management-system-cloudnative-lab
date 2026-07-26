@@ -1,0 +1,28 @@
+# Normalise line endings in the repository regardless of the checkout platform.
+* text=auto
+
+# gofmt compares against LF, so a CRLF checkout makes gofmt -l report every Go
+# file in the tree and the pre-commit formatting gate stops being usable.
+*.go text eol=lf
+
+# Interpreted and tab-sensitive files that break outright with CRLF: shell
+# scripts lose their shebang inside containers, and make treats a trailing CR
+# as part of the recipe.
+*.sh text eol=lf
+*.py text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
+
+# Consumed by kubectl, docker compose and goose, all of which run on Linux.
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
