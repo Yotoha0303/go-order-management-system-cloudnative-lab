@@ -122,9 +122,13 @@ services:
     container_name: go-order-management-system-cloudnative-lab-inventory-service
     expose:
       - "8085"
+      # Serves the reservation contract. No caller yet - order-service still
+      # uses the HTTP endpoints - so the healthcheck stays on HTTP.
+      - "9085"
     environment:
       <<: *common-environment
       APP_PORT: 8085
+      GRPC_PORT: 9085
       DB_NAME: ${INVENTORY_DB_NAME:-go_order_inventory}
       IDENTITY_SERVICE_URL: http://identity-service:8083
     depends_on:

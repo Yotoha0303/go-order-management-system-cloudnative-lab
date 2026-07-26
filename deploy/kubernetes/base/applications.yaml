@@ -286,6 +286,11 @@ spec:
     - name: http
       port: 8085
       targetPort: http
+    # Serves the reservation contract. No caller yet - order-service still uses
+    # the HTTP endpoints - so nothing probes this port.
+    - name: grpc
+      port: 9085
+      targetPort: grpc
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -329,6 +334,8 @@ spec:
           ports:
             - name: http
               containerPort: 8085
+            - name: grpc
+              containerPort: 9085
           envFrom:
             - configMapRef:
                 name: app-config
