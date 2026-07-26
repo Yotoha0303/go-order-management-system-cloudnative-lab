@@ -16,6 +16,7 @@
 | [architecture/prometheus-metrics.md](architecture/prometheus-metrics.md) | HTTP、Saga、Outbox、Worker 与 RabbitMQ 指标 |
 | [architecture/grafana-alerts.md](architecture/grafana-alerts.md) | Dashboard、recording rules 和 alert rules |
 | [architecture/opentelemetry-tracing.md](architecture/opentelemetry-tracing.md) | W3C Context、OTLP、Tempo 和日志关联 |
+| [architecture/grpc-inventory-contract.md](architecture/grpc-inventory-contract.md) | 库存预留的 Protobuf 契约、代码生成与迁移前置条件（尚未接入运行时） |
 | [architecture/cloud-native-status.md](architecture/cloud-native-status.md) | Phase 5–8 完成状态与生产级缺口 |
 | [project_evolution.md](project_evolution.md) | 从单体到运行保障闭环的演进记录 |
 
