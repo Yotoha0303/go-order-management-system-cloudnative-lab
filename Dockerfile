@@ -1,4 +1,4 @@
-FROM golang:1.25.7-alpine AS builder
+FROM golang:1.25.12-alpine AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o go-order-management-system-cloudnative-lab ./cmd
 
-FROM golang:1.25.7-alpine AS goose-builder
+FROM golang:1.25.12-alpine AS goose-builder
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
