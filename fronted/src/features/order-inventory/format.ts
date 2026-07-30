@@ -4,17 +4,24 @@ export const PRODUCT_STATUS = {
 } as const
 
 export const ORDER_STATUS = {
-  PENDING: 1,
-  PAID: 2,
-  FINISHED: 3,
-  CANCELLED: 4,
+  RESERVING: 'reserving',
+  PENDING: 'pending',
+  PAYING: 'paying',
+  PAID: 'paid',
+  CANCELLING: 'cancelling',
+  CANCELLED: 'cancelled',
+  FINISHED: 'finished',
+  FAILED: 'failed',
+  RECONCILIATION_REQUIRED: 'reconciliation_required',
 } as const
 
-export const STOCK_BIZ_TYPE = {
-  INIT: 1,
-  MANUAL_ADD: 2,
-  ORDER_DEDUCT: 3,
-  ORDER_ROLLBACK: 4,
+// inventory-service change_type strings (replaces monolith biz_type codes).
+export const STOCK_CHANGE_TYPE = {
+  INITIALIZE: 'initialize',
+  ADD: 'add',
+  RESERVE: 'reserve',
+  CONFIRM: 'confirm',
+  RELEASE: 'release',
 } as const
 
 export function formatFen(fen: number | null | undefined) {
@@ -41,18 +48,29 @@ export function productStatusText(status: number) {
   return `未知状态 ${status}`
 }
 
-export function orderStatusText(status: number) {
+export function orderStatusText(status: string | number) {
   if (status === ORDER_STATUS.PENDING) return '待支付'
+  if (status === ORDER_STATUS.PAYING) return '支付中'
   if (status === ORDER_STATUS.PAID) return '已支付'
   if (status === ORDER_STATUS.FINISHED) return '已完成'
+  if (status === ORDER_STATUS.CANCELLING) return '取消中'
   if (status === ORDER_STATUS.CANCELLED) return '已取消'
+  if (status === ORDER_STATUS.RESERVING) return '预占库存中'
+  if (status === ORDER_STATUS.FAILED) return '失败'
+  if (status === ORDER_STATUS.RECONCILIATION_REQUIRED) return '待对账'
   return `未知状态 ${status}`
 }
 
-export function stockBizTypeText(type: number) {
-  if (type === STOCK_BIZ_TYPE.INIT) return '初始化库存'
-  if (type === STOCK_BIZ_TYPE.MANUAL_ADD) return '手动入库'
-  if (type === STOCK_BIZ_TYPE.ORDER_DEDUCT) return '下单扣减'
-  if (type === STOCK_BIZ_TYPE.ORDER_ROLLBACK) return '取消回滚'
+export function stockChangeTypeText(type: string | number) {
+  if (type === STOCK_CHANGE_TYPE.INITIALIZE) return '初始化库存'
+  if (type === STOCK_CHANGE_TYPE.ADD) return '手动入库'
+  if (type === STOCK_CHANGE_TYPE.RESERVE) return '预占库存'
+  if (type === STOCK_CHANGE_TYPE.CONFIRM) return '确认扣减'
+  if (type === STOCK_CHANGE_TYPE.RELEASE) return '释放回滚'
   return `未知类型 ${type}`
+}
+
+/** @deprecated use stockChangeTypeText — kept for any leftover imports */
+export function stockBizTypeText(type: string | number) {
+  return stockChangeTypeText(type)
 }

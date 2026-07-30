@@ -8,10 +8,15 @@ export type Product = {
   updated_at: string
 }
 
-export type ProductListStatus = 1 | 2 | 'all'
+/**
+ * Omit the status entirely to list every product. The catalog service parses
+ * this value as an integer, so the literal 'all' the monolith accepted is now
+ * rejected with a 400.
+ */
+export type ProductListStatus = 1 | 2
 
 export type ProductList = {
-  products: Product[]
+  list: Product[]
   total: number
   page: number
   page_size: number
@@ -25,48 +30,69 @@ export type Inventory = {
   updated_at: string
 }
 
+// inventory-service stock logs (inventory_stock_logs), not the monolith shape.
+export type StockChangeType =
+  | 'initialize'
+  | 'add'
+  | 'reserve'
+  | 'confirm'
+  | 'release'
+  | string
+
 export type StockLog = {
   id: number
   product_id: number
-  change_quantity: number
-  before_quantity: number
-  after_quantity: number
-  biz_type: number
-  biz_id?: number | null
-  remark: string
+  change_type: StockChangeType
+  quantity: number
+  reference_id?: string
   created_at: string
 }
 
-export type Order = {
-  id: number
-  order_no: string
-  total_amount_fen: number
-  status: number
-  paid_at?: string | null
-  completed_at?: string | null
-  cancelled_at?: string | null
-  created_at: string
-  updated_at: string
+// inventory-service listLogs returns a page envelope, not a bare array.
+export type StockLogList = {
+  list: StockLog[]
+  total: number
+  page: number
+  page_size: number
 }
 
-type OrderItem = {
+// order-service statuses are strings (orders_v2), not the monolith's tinyint codes.
+export type OrderStatus =
+  | 'reserving'
+  | 'pending'
+  | 'paying'
+  | 'paid'
+  | 'cancelling'
+  | 'cancelled'
+  | 'finished'
+  | 'failed'
+  | 'reconciliation_required'
+
+export type OrderItem = {
   id: number
   order_id: number
   product_id: number
   product_name: string
-  product_price_fen: number
+  price_fen: number
   quantity: number
-  subtotal_fen: number
-  created_at: string
 }
 
-export type OrderDetail = {
-  order: Order
-  items: OrderItem[]
+// create/get return the order itself (items nested). There is no order_no field.
+export type Order = {
+  id: number
+  user_id: number
+  status: OrderStatus | string
+  total_fen: number
+  reservation_id: string
+  idempotency_key: string
+  failure_reason?: string
+  created_at: string
+  updated_at: string
+  items?: OrderItem[]
 }
 
 export type OrderList = {
-  orders: Order[]
+  list: Order[]
   total: number
   page: number
   page_size: number

@@ -1,5 +1,6 @@
 import { AxiosError } from 'axios'
 import { toast } from 'sonner'
+import { apiMessage } from '@/lib/api-client'
 
 export function handleServerError(error: unknown) {
   if (import.meta.env.DEV) {
@@ -21,20 +22,18 @@ export function handleServerError(error: unknown) {
   if (error instanceof AxiosError) {
     const data = error.response?.data
 
-    if (data && typeof data === 'object') {
-      if (
-        'message' in data &&
-        typeof data.message === 'string' &&
-        data.message.trim()
-      ) {
-        errMsg = data.message
-      } else if (
-        'title' in data &&
-        typeof data.title === 'string' &&
-        data.title.trim()
-      ) {
-        errMsg = data.title
-      }
+    const message = apiMessage(data)
+
+    if (message?.trim()) {
+      errMsg = message
+    } else if (
+      data &&
+      typeof data === 'object' &&
+      'title' in data &&
+      typeof data.title === 'string' &&
+      data.title.trim()
+    ) {
+      errMsg = data.title
     }
   }
 

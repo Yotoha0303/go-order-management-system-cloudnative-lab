@@ -42,8 +42,8 @@ export function ProductsPage() {
   const pageSize = 10
 
   const productsQuery = useQuery({
-    queryKey: queryKeys.products('all', page, pageSize),
-    queryFn: () => productApi.list('all', page, pageSize),
+    queryKey: queryKeys.products(undefined, page, pageSize),
+    queryFn: () => productApi.list(undefined, page, pageSize),
     placeholderData: (previousData) => previousData,
   })
 
@@ -112,7 +112,7 @@ export function ProductsPage() {
     })
   }
 
-  const products = productsQuery.data?.products ?? []
+  const products = productsQuery.data?.list ?? []
   const total = productsQuery.data?.total ?? 0
   const totalPages = Math.ceil(total / pageSize)
 

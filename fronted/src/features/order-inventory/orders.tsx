@@ -100,7 +100,7 @@ export function OrdersPage() {
       idempotencyKey: string
     }) => orderApi.create(payload, idempotencyKey),
     onSuccess: async (order) => {
-      toast.success(`订单创建成功：${order.order_no}`)
+      toast.success(`订单创建成功：#${order.id}`)
       setItems([{ product_id: '', quantity: '1' }])
       setPendingSubmission(null)
       setSelectedOrderId(order.id)
@@ -194,11 +194,11 @@ export function OrdersPage() {
     })
   }
 
-  const orders = ordersQuery.data?.orders ?? []
+  const orders = ordersQuery.data?.list ?? []
   const total = ordersQuery.data?.total ?? 0
   const totalPages = Math.ceil(total / orderPageSize)
   const orderDetail = orderDetailQuery.data
-  const onSaleProducts = productsQuery.data?.products ?? []
+  const onSaleProducts = productsQuery.data?.list ?? []
   const estimatedAmountFen = items.reduce((total, item) => {
     const product = onSaleProducts.find(
       (candidate) => candidate.id === Number(item.product_id)
@@ -322,13 +322,13 @@ export function OrdersPage() {
                   <div className='flex items-start justify-between gap-3'>
                     <div className='min-w-0'>
                       <p className='truncate font-medium'>
-                        #{orderDetail.order.id} {orderDetail.order.order_no}
+                        订单 #{orderDetail.id}
                       </p>
                       <p className='mt-1 text-sm text-muted-foreground'>
-                        {formatFen(orderDetail.order.total_amount_fen)}
+                        {formatFen(orderDetail.total_fen)}
                       </p>
                     </div>
-                    <OrderStatusBadge status={orderDetail.order.status} />
+                    <OrderStatusBadge status={orderDetail.status} />
                   </div>
 
                   <Table>
@@ -341,31 +341,31 @@ export function OrdersPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {orderDetail.items.map((item) => (
+                      {(orderDetail.items ?? []).map((item) => (
                         <TableRow key={item.id}>
                           <TableCell className='max-w-[180px] whitespace-normal'>
                             #{item.product_id} {item.product_name}
                           </TableCell>
-                          <TableCell>
-                            {formatFen(item.product_price_fen)}
-                          </TableCell>
+                          <TableCell>{formatFen(item.price_fen)}</TableCell>
                           <TableCell>{item.quantity}</TableCell>
-                          <TableCell>{formatFen(item.subtotal_fen)}</TableCell>
+                          <TableCell>
+                            {formatFen(item.price_fen * item.quantity)}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
 
                   <OrderActions
-                    order={orderDetail.order}
+                    order={orderDetail}
                     pendingAction={
                       orderActionMutation.isPending &&
-                      orderActionMutation.variables?.id === orderDetail.order.id
+                      orderActionMutation.variables?.id === orderDetail.id
                         ? orderActionMutation.variables.action
                         : undefined
                     }
                     onAction={(action) =>
-                      requestOrderAction(orderDetail.order, action)
+                      requestOrderAction(orderDetail, action)
                     }
                   />
                 </div>
@@ -408,9 +408,9 @@ export function OrdersPage() {
                     <TableRow key={order.id}>
                       <TableCell>#{order.id}</TableCell>
                       <TableCell className='font-medium'>
-                        {order.order_no}
+                        订单 #{order.id}
                       </TableCell>
-                      <TableCell>{formatFen(order.total_amount_fen)}</TableCell>
+                      <TableCell>{formatFen(order.total_fen)}</TableCell>
                       <TableCell>
                         <OrderStatusBadge status={order.status} />
                       </TableCell>
@@ -486,8 +486,8 @@ export function OrdersPage() {
         }
         desc={
           actionConfirmation?.action === 'cancel'
-            ? `取消订单 ${actionConfirmation.order.order_no} 后将回滚对应库存。`
-            : `订单 ${actionConfirmation?.order.order_no ?? ''} 完成后不能再变更状态。`
+            ? `取消订单 #${actionConfirmation.order.id} 后将回滚对应库存。`
+            : `订单 #${actionConfirmation?.order.id ?? ''} 完成后不能再变更状态。`
         }
         cancelBtnText='返回'
         confirmText={

@@ -56,14 +56,14 @@ export function OrderInventoryDashboard() {
   })
   const stockLogsQuery = useQuery({
     queryKey: queryKeys.stockLogs(),
-    queryFn: () => stockLogApi.list(),
+    queryFn: () => stockLogApi.list(undefined, 1, 100),
     enabled: isAdmin,
   })
 
-  const products = productsQuery.data?.products ?? []
-  const orders = ordersQuery.data?.orders ?? []
+  const products = productsQuery.data?.list ?? []
+  const orders = ordersQuery.data?.list ?? []
   const orderTotal = ordersQuery.data?.total ?? 0
-  const stockLogs = stockLogsQuery.data ?? []
+  const stockLogs = stockLogsQuery.data?.list ?? []
   const pendingOrders = orders.filter(
     (order) => order.status === ORDER_STATUS.PENDING
   )
@@ -73,7 +73,7 @@ export function OrderInventoryDashboard() {
       order.status === ORDER_STATUS.FINISHED
   )
   const paidAmountFen = paidOrders.reduce(
-    (total, order) => total + order.total_amount_fen,
+    (total, order) => total + order.total_fen,
     0
   )
 
@@ -103,8 +103,8 @@ export function OrderInventoryDashboard() {
           }
           description={
             healthQuery.isError
-              ? '请确认 Go 服务是否运行在 8082'
-              : '来自 /ping 接口'
+              ? '请确认网关是否运行在 8082，或 Vite 代理是否生效'
+              : '来自网关 /ping'
           }
           icon={Activity}
         />
@@ -155,9 +155,9 @@ export function OrderInventoryDashboard() {
                 {orders.slice(0, 5).map((order) => (
                   <TableRow key={order.id}>
                     <TableCell className='font-medium'>
-                      {order.order_no}
+                      订单 #{order.id}
                     </TableCell>
-                    <TableCell>{formatFen(order.total_amount_fen)}</TableCell>
+                    <TableCell>{formatFen(order.total_fen)}</TableCell>
                     <TableCell>
                       <OrderStatusBadge status={order.status} />
                     </TableCell>
@@ -198,17 +198,17 @@ export function OrderInventoryDashboard() {
                     <TableRow key={log.id}>
                       <TableCell>#{log.product_id}</TableCell>
                       <TableCell>
-                        <StockBizTypeBadge type={log.biz_type} />
+                        <StockBizTypeBadge type={log.change_type} />
                       </TableCell>
                       <TableCell
                         className={
-                          log.change_quantity < 0
+                          log.quantity < 0
                             ? 'text-destructive'
                             : 'text-emerald-600 dark:text-emerald-400'
                         }
                       >
-                        {log.change_quantity > 0 ? '+' : ''}
-                        {log.change_quantity}
+                        {log.quantity > 0 ? '+' : ''}
+                        {log.quantity}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -120,8 +120,14 @@ def validate_dockerfile() -> None:
     require("ARG SERVICE" in dockerfile, "shared service Dockerfile must retain the SERVICE build argument")
     require('"./cmd/${SERVICE}"' in dockerfile, "shared service Dockerfile must build the selected cmd target")
     require("CGO_ENABLED=0 GOOS=linux" in dockerfile, "release binary must remain a static Linux build")
+    require('-ldflags="-s -w"' in dockerfile, "release binary must strip debug symbols for a smaller image")
     require("USER app" in dockerfile, "release image must run as the non-root app user")
     require('CMD ["./service"]' in dockerfile, "release image entrypoint contract drifted")
+    require("AS service" in dockerfile, "Dockerfile must expose a minimal service runtime stage")
+    require("AS migrate" in dockerfile, "Dockerfile must expose a migrate-only stage without the app binary")
+    require("AS release" in dockerfile, "Dockerfile must keep a release stage with migration tools for GHCR/kind")
+    require("alpine:" in dockerfile, "runtime base must stay on minimal Alpine")
+    require("ca-certificates" in dockerfile, "runtime base must include CA certificates for outbound TLS")
 
 
 def validate_release_files() -> None:

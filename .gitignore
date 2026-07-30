@@ -12,3 +12,5 @@ docs/evidence
 *.log
 *.dump
 erl_crash.dump
+.claude
+.agents

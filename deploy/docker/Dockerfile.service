@@ -1,30 +1,104 @@
-FROM golang:1.25.12-alpine AS builder
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build for Go services:
+#   builder       — compile a static, stripped service binary
+#   goose-builder — compile a static goose CLI (migration jobs / release image only)
+#   runtime-base  — minimal Alpine with CA certs + non-root user
+#   service       — runtime process only (binary + config.yml)
+#   migrate       — goose + SQL migrations only (no app binary)
+#   release       — default final stage: service + migration tools
+#                   (GHCR publish / kind jobs reuse service digests for migrate)
+#
+# Compose local: prefer `target: service` / `target: migrate`.
+# GHCR publish: default last stage is `release` (keeps migration tools).
+
+ARG GO_VERSION=1.25.12
+ARG ALPINE_VERSION=3.22
+
+# -----------------------------------------------------------------------------
+# Build stages (discarded from the final image)
+# -----------------------------------------------------------------------------
+
+FROM golang:${GO_VERSION}-alpine AS builder
 
 ARG SERVICE
-WORKDIR /app
+WORKDIR /src
 
+RUN test -n "$SERVICE"
+
+# Dependency layer first for better cache hits.
+# Windows + Docker Desktop + slow proxy.golang.org 常卡死
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
 COPY . .
-RUN test -n "$SERVICE" && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/service "./cmd/${SERVICE}"
 
-FROM golang:1.25.12-alpine AS goose-builder
+# Static binary: no CGO, strip symbol table/debug info for smaller size.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+    CGO_ENABLED=0 GOOS=linux go build \
+      -trimpath \
+      -ldflags="-s -w" \
+      -o /out/service \
+      "./cmd/${SERVICE}"
 
-FROM alpine:3.22
+FROM golang:${GO_VERSION}-alpine AS goose-builder
+
+# Static goose binary only — never ship the Go toolchain in runtime images.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
+
+# -----------------------------------------------------------------------------
+# Minimal shared runtime base
+# -----------------------------------------------------------------------------
+
+FROM alpine:${ALPINE_VERSION} AS runtime-base
+
+# ca-certificates: outbound TLS (OTLP, HTTPS). BusyBox provides wget for Compose healthchecks.
+# No shell extras, no build tools, no package manager cache left behind.
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S app \
+    && adduser -S -G app -H -D app \
+    && rm -rf /var/cache/apk/*
 
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
+
+# -----------------------------------------------------------------------------
+# service — long-running process only
+# -----------------------------------------------------------------------------
+
+FROM runtime-base AS service
 
 COPY --from=builder /out/service ./service
-COPY --from=goose-builder /go/bin/goose ./goose
-COPY config.yml ./config.yml
-COPY migrations ./migrations
+COPY --chown=app:app config.yml ./config.yml
 
 USER app
 STOPSIGNAL SIGTERM
 CMD ["./service"]
+
+# -----------------------------------------------------------------------------
+# migrate — one-shot migration jobs (no app binary)
+# -----------------------------------------------------------------------------
+
+FROM runtime-base AS migrate
+
+COPY --from=goose-builder /go/bin/goose ./goose
+COPY --chown=app:app migrations ./migrations
+
+USER app
+# Command is supplied by Compose / Kubernetes Job.
+
+# -----------------------------------------------------------------------------
+# release — default final stage (GHCR + kind migrate-job image reuse)
+# -----------------------------------------------------------------------------
+
+FROM service AS release
+
+USER root
+COPY --from=goose-builder /go/bin/goose ./goose
+COPY --chown=app:app migrations ./migrations
+USER app

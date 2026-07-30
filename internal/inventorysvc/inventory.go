@@ -298,19 +298,32 @@ func (s *Service) transition(ctx context.Context, reservationID, target string) 
 	return &result, nil
 }
 
-func (s *Service) ListLogs(ctx context.Context, page, pageSize int) ([]StockLog, int64, error) {
+// ListLogs returns stock movements newest first. A nil or non-positive
+// productID lists every product, matching what the monolith did.
+func (s *Service) ListLogs(ctx context.Context, productID *int64, page, pageSize int) ([]StockLog, int64, error) {
 	if page <= 0 {
 		page = 1
 	}
 	if pageSize <= 0 || pageSize > 100 {
 		pageSize = 20
 	}
+
+	// Built fresh for each query rather than shared: reusing a *gorm.DB that
+	// already carries conditions leaks them into the next statement.
+	scoped := func() *gorm.DB {
+		query := s.db.WithContext(ctx).Model(&StockLog{})
+		if productID != nil && *productID > 0 {
+			query = query.Where("product_id = ?", *productID)
+		}
+		return query
+	}
+
 	var total int64
-	if err := s.db.WithContext(ctx).Model(&StockLog{}).Count(&total).Error; err != nil {
+	if err := scoped().Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var logs []StockLog
-	if err := s.db.WithContext(ctx).Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
+	if err := scoped().Order("id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&logs).Error; err != nil {
 		return nil, 0, err
 	}
 	return logs, total, nil
@@ -414,7 +427,23 @@ func (h *Handler) change(c *gin.Context, initialize bool) {
 func (h *Handler) listLogs(c *gin.Context) {
 	page := parsePositiveInt(c.Query("page"), 1)
 	pageSize := parsePositiveInt(c.Query("page_size"), 20)
-	logs, total, err := h.service.ListLogs(c.Request.Context(), page, pageSize)
+
+	// Restores the filter the monolith exposed. The admin console has always
+	// sent product_id; until now this handler ignored it and answered with every
+	// product's movements, which looks like data rather than like an error.
+	var productID *int64
+	if raw := strings.TrimSpace(c.Query("product_id")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			fail(c, http.StatusBadRequest, 40014, "invalid product_id")
+			return
+		}
+		if parsed > 0 {
+			productID = &parsed
+		}
+	}
+
+	logs, total, err := h.service.ListLogs(c.Request.Context(), productID, page, pageSize)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, 50012, "list stock logs failed")
 		return

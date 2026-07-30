@@ -12,10 +12,10 @@ import { getErrorMessage } from './api'
 import {
   ORDER_STATUS,
   PRODUCT_STATUS,
-  STOCK_BIZ_TYPE,
+  STOCK_CHANGE_TYPE,
   orderStatusText,
   productStatusText,
-  stockBizTypeText,
+  stockChangeTypeText,
 } from './format'
 
 type BusinessPageProps = {
@@ -125,8 +125,12 @@ export function ProductStatusBadge({ status }: { status: number }) {
   )
 }
 
-export function OrderStatusBadge({ status }: { status: number }) {
-  if (status === ORDER_STATUS.CANCELLED) {
+export function OrderStatusBadge({ status }: { status: string | number }) {
+  if (
+    status === ORDER_STATUS.CANCELLED ||
+    status === ORDER_STATUS.FAILED ||
+    status === ORDER_STATUS.RECONCILIATION_REQUIRED
+  ) {
     return <Badge variant='destructive'>{orderStatusText(status)}</Badge>
   }
 
@@ -141,18 +145,21 @@ export function OrderStatusBadge({ status }: { status: number }) {
   return <Badge variant='outline'>{orderStatusText(status)}</Badge>
 }
 
-export function StockBizTypeBadge({ type }: { type: number }) {
-  if (type === STOCK_BIZ_TYPE.ORDER_DEDUCT) {
-    return <Badge variant='destructive'>{stockBizTypeText(type)}</Badge>
+export function StockBizTypeBadge({ type }: { type: string | number }) {
+  if (
+    type === STOCK_CHANGE_TYPE.RESERVE ||
+    type === STOCK_CHANGE_TYPE.CONFIRM
+  ) {
+    return <Badge variant='destructive'>{stockChangeTypeText(type)}</Badge>
   }
 
-  if (type === STOCK_BIZ_TYPE.ORDER_ROLLBACK) {
-    return <Badge variant='secondary'>{stockBizTypeText(type)}</Badge>
+  if (type === STOCK_CHANGE_TYPE.RELEASE) {
+    return <Badge variant='secondary'>{stockChangeTypeText(type)}</Badge>
   }
 
-  if (type === STOCK_BIZ_TYPE.MANUAL_ADD) {
-    return <Badge>{stockBizTypeText(type)}</Badge>
+  if (type === STOCK_CHANGE_TYPE.ADD) {
+    return <Badge>{stockChangeTypeText(type)}</Badge>
   }
 
-  return <Badge variant='outline'>{stockBizTypeText(type)}</Badge>
+  return <Badge variant='outline'>{stockChangeTypeText(type)}</Badge>
 }

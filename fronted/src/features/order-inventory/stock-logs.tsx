@@ -36,16 +36,16 @@ export function StockLogsPage() {
   const [activeProductId, setActiveProductId] = useState<number | undefined>()
 
   const productsQuery = useQuery({
-    queryKey: queryKeys.products('all'),
-    queryFn: () => productApi.list('all'),
+    queryKey: queryKeys.products(),
+    queryFn: () => productApi.list(),
   })
 
   const stockLogsQuery = useQuery({
     queryKey: queryKeys.stockLogs(activeProductId),
-    queryFn: () => stockLogApi.list(activeProductId),
+    queryFn: () => stockLogApi.list(activeProductId, 1, 100),
   })
 
-  const stockLogs = stockLogsQuery.data ?? []
+  const stockLogs = stockLogsQuery.data?.list ?? []
 
   return (
     <BusinessPage
@@ -55,7 +55,12 @@ export function StockLogsPage() {
       <Card>
         <CardHeader>
           <CardTitle>流水列表</CardTitle>
-          <CardDescription>不输入商品 ID 时查询全部库存流水。</CardDescription>
+          <CardDescription>
+            不选择商品时查询全部流水；当前最多展示最近 100 条。
+            {stockLogsQuery.data
+              ? ` 共 ${stockLogsQuery.data.total} 条，本页 ${stockLogs.length} 条。`
+              : ''}
+          </CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           <Select
@@ -72,7 +77,7 @@ export function StockLogsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value='all'>全部商品</SelectItem>
-              {(productsQuery.data?.products ?? []).map((product) => (
+              {(productsQuery.data?.list ?? []).map((product) => (
                 <SelectItem key={product.id} value={String(product.id)}>
                   #{product.id} {product.name}
                 </SelectItem>
@@ -87,45 +92,39 @@ export function StockLogsPage() {
                 <TableHead>ID</TableHead>
                 <TableHead>商品 ID</TableHead>
                 <TableHead>类型</TableHead>
-                <TableHead>变化</TableHead>
-                <TableHead>变更前</TableHead>
-                <TableHead>变更后</TableHead>
-                <TableHead>业务 ID</TableHead>
-                <TableHead>备注</TableHead>
+                <TableHead>数量变化</TableHead>
+                <TableHead>关联 ID</TableHead>
                 <TableHead>时间</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stockLogsQuery.isLoading && <LoadingRow colSpan={9} />}
+              {stockLogsQuery.isLoading && <LoadingRow colSpan={6} />}
               {!stockLogsQuery.isLoading &&
                 stockLogs.map((log) => (
                   <TableRow key={log.id}>
                     <TableCell>#{log.id}</TableCell>
                     <TableCell>#{log.product_id}</TableCell>
                     <TableCell>
-                      <StockBizTypeBadge type={log.biz_type} />
+                      <StockBizTypeBadge type={log.change_type} />
                     </TableCell>
                     <TableCell
                       className={
-                        log.change_quantity < 0
+                        log.quantity < 0
                           ? 'text-destructive'
                           : 'text-emerald-600 dark:text-emerald-400'
                       }
                     >
-                      {log.change_quantity > 0 ? '+' : ''}
-                      {log.change_quantity}
+                      {log.quantity > 0 ? '+' : ''}
+                      {log.quantity}
                     </TableCell>
-                    <TableCell>{log.before_quantity}</TableCell>
-                    <TableCell>{log.after_quantity}</TableCell>
-                    <TableCell>{log.biz_id ? `#${log.biz_id}` : '-'}</TableCell>
-                    <TableCell className='max-w-[280px] whitespace-normal'>
-                      {log.remark || '-'}
+                    <TableCell className='max-w-[220px] truncate font-mono text-xs'>
+                      {log.reference_id || '-'}
                     </TableCell>
                     <TableCell>{formatDateTime(log.created_at)}</TableCell>
                   </TableRow>
                 ))}
               {!stockLogsQuery.isLoading && stockLogs.length === 0 && (
-                <EmptyRow colSpan={9} message='暂无库存流水' />
+                <EmptyRow colSpan={6} message='暂无库存流水' />
               )}
             </TableBody>
           </Table>

@@ -31,8 +31,8 @@ export function InventoryPage() {
   const [inventory, setInventory] = useState<Inventory | null>(null)
 
   const productsQuery = useQuery({
-    queryKey: queryKeys.products('all'),
-    queryFn: () => productApi.list('all'),
+    queryKey: queryKeys.products(),
+    queryFn: () => productApi.list(),
   })
 
   const lookupMutation = useMutation({
@@ -144,7 +144,7 @@ export function InventoryPage() {
               <form className='space-y-4' onSubmit={handleInitInventory}>
                 <Field label='商品 ID'>
                   <ProductSelect
-                    products={productsQuery.data?.products ?? []}
+                    products={productsQuery.data?.list ?? []}
                     value={selectedProductId}
                     onValueChange={selectProduct}
                   />
@@ -173,7 +173,7 @@ export function InventoryPage() {
               <form className='space-y-4' onSubmit={handleAddInventory}>
                 <Field label='商品 ID'>
                   <ProductSelect
-                    products={productsQuery.data?.products ?? []}
+                    products={productsQuery.data?.list ?? []}
                     value={selectedProductId}
                     onValueChange={selectProduct}
                   />
@@ -202,7 +202,7 @@ export function InventoryPage() {
           <CardContent className='space-y-4'>
             <form className='flex gap-2' onSubmit={handleLookupInventory}>
               <ProductSelect
-                products={productsQuery.data?.products ?? []}
+                products={productsQuery.data?.list ?? []}
                 value={selectedProductId}
                 onValueChange={selectProduct}
               />

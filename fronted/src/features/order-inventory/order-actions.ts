@@ -2,7 +2,10 @@ import { ORDER_STATUS } from './format'
 
 export type OrderAction = 'pay' | 'finish' | 'cancel'
 
-export function isOrderActionAllowed(status: number, action: OrderAction) {
+export function isOrderActionAllowed(
+  status: string | number,
+  action: OrderAction
+) {
   if (action === 'pay' || action === 'cancel') {
     return status === ORDER_STATUS.PENDING
   }

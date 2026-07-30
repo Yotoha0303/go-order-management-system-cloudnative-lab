@@ -1,10 +1,27 @@
 import axios, { AxiosError, type AxiosResponse } from 'axios'
 import { useAuthStore } from '@/stores/auth-store'
 
+/**
+ * The backend does not speak one envelope. identity-service returns `message`,
+ * while catalog, inventory and order-service return `msg`, and the gateway
+ * returns `message` alongside a string `code`. Both message keys are optional
+ * here so callers have to go through `apiMessage` rather than picking one and
+ * silently getting undefined from the other half of the services.
+ */
 export type ApiResponse<T> = {
-  code: number
-  message: string
+  code: number | string
+  message?: string
+  msg?: string
   data?: T
+}
+
+/** Reads whichever message key the responding service used. */
+export function apiMessage(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined
+  const body = payload as { message?: unknown; msg?: unknown }
+  if (typeof body.message === 'string' && body.message) return body.message
+  if (typeof body.msg === 'string' && body.msg) return body.msg
+  return undefined
 }
 
 const apiBaseURL =
@@ -45,9 +62,10 @@ api.interceptors.response.use(
 )
 
 export class BusinessApiError extends Error {
-  code: number
+  /** Numeric for the business services, a string for gateway-level failures. */
+  code: number | string
 
-  constructor(message: string, code: number) {
+  constructor(message: string, code: number | string) {
     super(message)
     this.name = 'BusinessApiError'
     this.code = code
@@ -59,7 +77,7 @@ export async function unwrap<T>(
 ): Promise<T> {
   const { data } = await promise
   if (data.code !== 0) {
-    throw new BusinessApiError(data.message || '请求失败', data.code)
+    throw new BusinessApiError(apiMessage(data) ?? '请求失败', data.code)
   }
   return data.data as T
 }
@@ -68,10 +86,9 @@ export function getErrorMessage(error: unknown) {
   if (error instanceof BusinessApiError) return error.message
   if (error instanceof AxiosError) {
     const data = error.response?.data
+    const message = apiMessage(data)
+    if (message) return message
     if (data && typeof data === 'object') {
-      if ('message' in data && typeof data.message === 'string') {
-        return data.message
-      }
       if ('title' in data && typeof data.title === 'string') return data.title
     }
     if (error.message) return error.message

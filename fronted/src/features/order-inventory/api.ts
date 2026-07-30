@@ -12,12 +12,11 @@ import type {
   InitInventoryPayload,
   Inventory,
   Order,
-  OrderDetail,
   OrderList,
   Product,
   ProductList,
   ProductListStatus,
-  StockLog,
+  StockLogList,
 } from './types'
 
 export { getErrorMessage }
@@ -25,8 +24,10 @@ export { getErrorMessage }
 export const queryKeys = {
   health: ['health'] as const,
   productsRoot: ['products'] as const,
+  // null rather than a status value: an absent status means every status, so
+  // defaulting it to 2 here would collide with an explicit off-sale query.
   products: (status?: ProductListStatus, page = 1, pageSize = 100) =>
-    ['products', { status: status ?? 2, page, pageSize }] as const,
+    ['products', { status: status ?? null, page, pageSize }] as const,
   product: (id: number) => ['products', id] as const,
   inventory: (productId: number) => ['inventory', productId] as const,
   stockLogsRoot: ['stock-logs'] as const,
@@ -39,10 +40,15 @@ export const queryKeys = {
 }
 
 export const healthApi = {
-  ping: () =>
-    unwrap<{ message: string }>(
-      rootApi.get<ApiResponse<{ message: string }>>('/ping')
-    ),
+  // Gateway /ping returns a plain body {"message":"success"} without the
+  // business envelope {code,msg,data} that unwrap() expects.
+  ping: async () => {
+    const { data, status } = await rootApi.get<{ message?: string }>('/ping')
+    if (status >= 200 && status < 300) {
+      return { message: data?.message ?? 'success' }
+    }
+    throw new Error('health check failed')
+  },
 }
 
 export const productApi = {
@@ -78,10 +84,14 @@ export const inventoryApi = {
 }
 
 export const stockLogApi = {
-  list: (productId?: number) =>
-    unwrap<StockLog[]>(
-      api.get<ApiResponse<StockLog[]>>('/stock-logs', {
-        params: productId ? { product_id: productId } : undefined,
+  list: (productId?: number, page = 1, pageSize = 100) =>
+    unwrap<StockLogList>(
+      api.get<ApiResponse<StockLogList>>('/stock-logs', {
+        params: {
+          ...(productId ? { product_id: productId } : {}),
+          page,
+          page_size: pageSize,
+        },
       })
     ),
 }
@@ -101,11 +111,11 @@ export const orderApi = {
       })
     ),
   detail: (id: number) =>
-    unwrap<OrderDetail>(api.get<ApiResponse<OrderDetail>>(`/orders/${id}`)),
+    unwrap<Order>(api.get<ApiResponse<Order>>(`/orders/${id}`)),
   pay: (id: number) =>
-    unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/pay`)),
+    unwrap<Order>(api.patch<ApiResponse<Order>>(`/orders/${id}/pay`)),
   finish: (id: number) =>
-    unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/finish`)),
+    unwrap<Order>(api.patch<ApiResponse<Order>>(`/orders/${id}/finish`)),
   cancel: (id: number) =>
-    unwrap<void>(api.patch<ApiResponse<void>>(`/orders/${id}/cancel`)),
+    unwrap<Order>(api.patch<ApiResponse<Order>>(`/orders/${id}/cancel`)),
 }

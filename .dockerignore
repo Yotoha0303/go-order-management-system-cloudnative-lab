@@ -1,7 +1,53 @@
+# VCS / CI / local env
 .git
 .github
+.agents
+.claude
 .env
+.env.*
+!.env.example
+**/*.log
+
+# Frontend (not part of Go service images)
 fronted/node_modules
 fronted/dist
 fronted/coverage
-**/*.log
+fronted/.vite
+fronted
+
+# Docs, diagrams, HTTP samples — not needed to compile or run services
+docs
+**/*.md
+!go.mod
+!go.sum
+
+# Tests and test fixtures (not linked into production binaries)
+**/*_test.go
+**/testdata
+**/coverage.*
+coverage.out
+coverage.html
+
+# Local build artifacts
+bin
+dist
+*.exe
+
+# IDE / OS noise
+.idea
+.vscode
+**/.DS_Store
+**/Thumbs.db
+
+# Compose / k8s / scripts are not compile inputs for cmd/*
+compose.yml
+compose.observability.yml
+deploy/kubernetes
+deploy/grafana
+deploy/prometheus
+deploy/tempo
+deploy/otel
+scripts
+
+# Generated / intermediate diagram sources
+**/*.gv

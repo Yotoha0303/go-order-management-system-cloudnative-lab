@@ -24,6 +24,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: api-gateway
     container_name: go-order-management-system-cloudnative-lab-api-gateway
@@ -64,6 +65,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: identity-service
     container_name: go-order-management-system-cloudnative-lab-identity-service
@@ -89,6 +91,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: catalog-service
     container_name: go-order-management-system-cloudnative-lab-catalog-service
@@ -117,6 +120,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: inventory-service
     container_name: go-order-management-system-cloudnative-lab-inventory-service
@@ -149,6 +153,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: order-service
     container_name: go-order-management-system-cloudnative-lab-order-service
@@ -180,6 +185,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: order-timeout-worker
     environment:
@@ -201,6 +207,7 @@ services:
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
+      target: service
       args:
         SERVICE: order-reconciliation-worker
     environment:
@@ -220,13 +227,13 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Shared migrate image: goose + SQL only (no Go service binary / toolchain).
   identity-migrate:
-    image: go-order-management-system-cloudnative-lab/identity-migrate:local
+    image: go-order-management-system-cloudnative-lab/migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
-      args:
-        SERVICE: identity-service
+      target: migrate
     environment:
       <<: *migration-environment
       DB_NAME: ${IDENTITY_DB_NAME:-go_order_identity}
@@ -241,12 +248,11 @@ services:
     restart: "no"
 
   catalog-migrate:
-    image: go-order-management-system-cloudnative-lab/catalog-migrate:local
+    image: go-order-management-system-cloudnative-lab/migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
-      args:
-        SERVICE: catalog-service
+      target: migrate
     environment:
       <<: *migration-environment
       DB_NAME: ${CATALOG_DB_NAME:-go_order_catalog}
@@ -261,12 +267,11 @@ services:
     restart: "no"
 
   inventory-migrate:
-    image: go-order-management-system-cloudnative-lab/inventory-migrate:local
+    image: go-order-management-system-cloudnative-lab/migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
-      args:
-        SERVICE: inventory-service
+      target: migrate
     environment:
       <<: *migration-environment
       DB_NAME: ${INVENTORY_DB_NAME:-go_order_inventory}
@@ -281,12 +286,11 @@ services:
     restart: "no"
 
   ordering-migrate:
-    image: go-order-management-system-cloudnative-lab/ordering-migrate:local
+    image: go-order-management-system-cloudnative-lab/migrate:local
     build:
       context: .
       dockerfile: deploy/docker/Dockerfile.service
-      args:
-        SERVICE: order-service
+      target: migrate
     environment:
       <<: *migration-environment
       DB_NAME: ${ORDER_DB_NAME:-go_order_ordering}
@@ -310,9 +314,9 @@ services:
         condition: service_healthy
     command:
       - sh
-      - -ec
+      - -c
       - |
-        mysql -h mysql -uroot -e "
+        mysql --password="${MYSQL_PASSWORD}" -h mysql -uroot -e "
           CREATE DATABASE IF NOT EXISTS \`${IDENTITY_DB_NAME:-go_order_identity}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
           CREATE DATABASE IF NOT EXISTS \`${CATALOG_DB_NAME:-go_order_catalog}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
           CREATE DATABASE IF NOT EXISTS \`${INVENTORY_DB_NAME:-go_order_inventory}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
@@ -327,6 +331,7 @@ services:
       - "${MYSQL_HOST_PORT:-3308}:3306"
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_ROOT_HOST: '%'
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:

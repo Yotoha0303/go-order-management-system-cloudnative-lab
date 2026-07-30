@@ -30,13 +30,13 @@ else
 BINARY := $(BIN_DIR)/$(APP_NAME)
 endif
 
-.PHONY: help run ui-run dev build clean \
+.PHONY: help run run-direct ui-run dev build clean stop \
 	fmt vet lint tidy mod-download mod-verify \
 	proto-lint proto-gen proto-breaking \
 	check-diagram-tools diagrams \
 	test test-verbose test-service test-dao test-migrations test-redis test-order-timeout test-all test-race coverage coverage-html \
 	check compose-config infra-up infra-down infra-ps infra-logs \
-	docker-build docker-up docker-down docker-restart docker-ps docker-logs \
+	docker-build docker-up docker-up-debug docker-down docker-restart docker-ps docker-logs \
 	check-goose check-migration-env migrate-validate migrate-status migrate-up \
 	migrate-up-one migrate-up-to migrate-down migrate-down-to migrate-redo \
 	migrate-version migrate-create ci
@@ -44,9 +44,9 @@ endif
 help:
 	@echo Usage: make target
 	@echo Development:
-	@echo   run             Run the API locally
-	@echo   ui-run          Run the front locally
-	@echo   dev             Start MySQL/Redis/RabbitMQ, then run the API
+	@echo   run             Build & start full stack in Docker (recommended)
+	@echo   ui-run          Run the front locally (needs backend running)
+	@echo   dev             Start MySQL/Redis/RabbitMQ, then run the API directly
 	@echo   build           Build the API binary into $(BIN_DIR)/
 	@echo   clean           Remove generated build and coverage files
 	@echo Quality:
@@ -81,8 +81,9 @@ help:
 	@echo   infra-logs      Follow MySQL and Redis logs
 	@echo Docker:
 	@echo   docker-build    Build the application image
-	@echo   docker-up       Build and start the complete stack
+	@echo   docker-up       Build and start the complete stack (make run)
 	@echo   docker-down     Stop and remove the complete stack
+	@echo   stop            Stop and remove the full stack (incl. observability)
 	@echo   docker-restart  Restart all services
 	@echo   docker-ps       Show all service status
 	@echo   docker-logs     Follow all service logs
@@ -98,13 +99,47 @@ help:
 	@echo   migrate-version        Show the current database version
 	@echo   migrate-create         Create a SQL migration, e.g. make migrate-create NAME=add_sku
 
-run:
+# Docker-based run (recommended for local development).
+# Starts the full application stack from compose.yml (build + wait until healthy).
+run: docker-up
+
+# Quick debug for Docker Desktop engine issues (common on Windows).
+docker-run-debug:
+	@echo "=== Checking Docker engine ==="
+	@docker info >/dev/null && echo "Docker engine: OK" || echo "Docker engine is NOT ready. Start Docker Desktop and wait until it is fully running, then try 'make run' again."
+	@echo ""
+	@echo "=== Trying to run compose directly ==="
+	$(COMPOSE) -f compose.yml -f compose.observability.yml config --quiet && echo "Compose config OK" || echo "Compose config failed"
+
+# Host process run (needs MySQL/RabbitMQ already available, e.g. make infra-up).
+run-direct:
 	$(GO) run ./cmd
 
 ui-run:
 	cd fronted && npm run dev
 
-dev: infra-up run
+dev: infra-up run-direct
+
+# Diagnose Docker Desktop / Compose before make run.
+# A 500 on //./pipe/dockerDesktopLinuxEngine means the engine is unhealthy — restart Docker Desktop.
+docker-up-debug:
+	@echo "=== Docker CLI ==="
+	@docker version
+	@echo ""
+	@echo "=== Docker engine (must succeed) ==="
+	@docker info >/dev/null && echo "engine: OK" || (echo "engine: FAILED — restart Docker Desktop, wait until it is fully started, then retry"; exit 1)
+	@echo ""
+	@echo "=== Compose version ==="
+	@$(COMPOSE) version
+	@echo ""
+	@echo "=== Compose config (compose.yml + observability) ==="
+	@$(COMPOSE) -f compose.yml -f compose.observability.yml config --quiet && echo "config: OK"
+	@echo ""
+	@echo "=== Images already present for this project ==="
+	@docker images "go-order-management-system-cloudnative-lab/*" --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}" || true
+	@echo ""
+	@echo "If engine: OK, try: make run"
+	@echo "If engine fails with pipe dockerDesktopLinuxEngine 500: Quit Docker Desktop fully and start it again."
 
 build:
 ifeq ($(OS),Windows_NT)
@@ -245,12 +280,19 @@ infra-logs:
 	$(COMPOSE) logs --follow mysql redis rabbitmq
 
 docker-build: compose-config
-	$(COMPOSE) build app
+	$(COMPOSE) build
 
 docker-up: compose-config
+	@docker info >/dev/null 2>&1 || (echo "Docker engine is not ready. Start Docker Desktop and wait until it is healthy, then retry make run."; exit 1)
 	$(COMPOSE) up -d --build --wait
 
 docker-down:
+	$(COMPOSE) down --remove-orphans
+
+# Shut down the full project stack, including the observability overlay when present.
+# Volumes are kept so MySQL data survives a restart.
+stop:
+	$(COMPOSE) -f compose.yml -f compose.observability.yml down --remove-orphans
 	$(COMPOSE) down --remove-orphans
 
 docker-restart: compose-config

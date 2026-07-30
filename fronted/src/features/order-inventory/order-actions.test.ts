@@ -7,7 +7,7 @@ import {
 } from './order-actions'
 
 describe('order action rules', () => {
-  it.each<[{ status: number; action: OrderAction; allowed: boolean }]>([
+  it.each<[{ status: string; action: OrderAction; allowed: boolean }]>([
     [{ status: ORDER_STATUS.PENDING, action: 'pay', allowed: true }],
     [{ status: ORDER_STATUS.PENDING, action: 'cancel', allowed: true }],
     [{ status: ORDER_STATUS.PENDING, action: 'finish', allowed: false }],
