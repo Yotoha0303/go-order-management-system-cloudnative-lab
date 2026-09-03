@@ -1,4 +1,4 @@
-# Go Order Management Cloud-Native Lab
+# Go 订单管理云原生实验室
 
 > 一个从 Go 分层单体演进而来的云原生工程实验项目，重点展示微服务数据边界、订单与库存一致性、消息可靠性、应用韧性、Kubernetes 交付、可观测性和可重复运行保障。
 
@@ -25,13 +25,13 @@ go_order_inventory
 go_order_ordering
 ```
 
-项目已经完成既定的 Phase 5–8 工程路线，但仍是**可执行验证的云原生实验系统**，不宣称是生产级平台。
+项目已经完成既定的第 5–8 阶段（Phase 5–8）工程路线，但仍是**可执行验证的云原生实验系统**，不宣称是生产级平台。
 
 ## 已完成能力
 
 | 能力域 | 当前实现 |
 | --- | --- |
-| 业务一致性 | Inventory Reservation、Order Saga、补偿、自动对账 |
+| 业务一致性 | 库存预留（Inventory Reservation）、Order Saga、补偿、自动对账 |
 | 消息可靠性 | Transactional Outbox、RabbitMQ TTL/DLX、Publisher Confirms、手动 ACK、at-least-once |
 | Worker 并发 | 两类 Worker 多副本、租约、`FOR UPDATE SKIP LOCKED`、崩溃后回收 |
 | HTTP 韧性 | Request ID、绝对 Deadline、细分超时、有限重试、指数退避、操作级熔断 |
@@ -39,32 +39,32 @@ go_order_ordering
 | 数据库迁移 | 四套 Goose migration；Compose/Kubernetes 一次性 Migration Job |
 | Compose 验收 | 四库、RabbitMQ、双类 Worker 各 2 副本、完整订单 Saga |
 | Kubernetes | Kustomize base/local/test、StatefulSet、Deployment、Service、Probe、resources、Ingress、PDB |
-| Kubernetes 运行验收 | disposable kind、失败 revision、`rollout undo`、恢复后完整 Saga |
+| Kubernetes 运行验收 | 一次性 kind、失败版本、`rollout undo`、恢复后完整 Saga |
 | 可观测性 | Prometheus、Grafana、recording/alert rules、OpenTelemetry、Collector、Tempo |
 | 镜像发布 | 七个 GHCR 不可变镜像、完整 Commit SHA 标签、OCI Digest、发布清单 |
-| 自动 CD | 精确 Digest 部署到一次性 kind；Smoke Test；坏版本检测；完整 Digest 回滚 |
+| 自动 CD | 精确 Digest 部署到一次性 kind；冒烟测试（Smoke Test）；坏版本检测；完整 Digest 回滚 |
 | 备份恢复 | 四库逻辑备份、SHA-256 清单、独立 MySQL 8.4 恢复、源库不可变证明 |
 | 故障演练 | RabbitMQ、HTTP 熔断、Worker 租约、Migration 失败四类可重复演练 |
-| 运行手册 | Operator Runbook、诊断/缓解/恢复步骤、事故复盘模板 |
+| 运行手册 | 运维手册（Runbook）、诊断/缓解/恢复步骤、事故复盘模板 |
 | 有界压测 | 并发 1/4/8/16/32、P50/P95/P99、资源证据、容量边界分析 |
 
-## Phase 8 最终验收
+## 第 8 阶段最终验收
 
 | 阶段 | 结果 | 主要证据 |
 | --- | --- | --- |
 | 8.1 不可变镜像 | 完成 | 七个 GHCR Digest 镜像与发布清单，Issue #43 |
-| 8.2 自动测试环境 CD | 完成 | 精确 Digest 部署、双 Smoke、坏版本与回滚，Issue #48 |
+| 8.2 自动测试环境 CD | 完成 | 精确 Digest 部署、双重冒烟测试、坏版本与回滚，Issue #48 |
 | 8.3 备份恢复 | 完成 | 四库备份、隔离恢复、损坏输入拒绝，Issue #50 |
 | 8.4 故障演练 | 完成 | 主分支运行 `29323288284`，Issue #51 |
-| 8.5 Runbook 与压测 | 完成 | 主分支运行 `29321080192`，Issue #52 |
+| 8.5 运维手册与压测 | 完成 | 主分支运行 `29321080192`，Issue #52 |
 
 压测的已接受结果：
 
 ```text
-健康持续阶段最佳成功吞吐：177.989 requests/second
+健康持续阶段最佳成功吞吐：177.989 请求/秒
 健康持续阶段最高 P95：31.812 ms
 健康阶段错误数：0
-首个观测边界：concurrency 8 的吞吐平台与尾延迟增长
+首个观测边界：并发 8 时出现吞吐平台与尾延迟增长
 ```
 
 这是单个 GitHub-hosted Runner 上的合成有界测试，不是生产容量承诺或 SLO。
@@ -116,7 +116,7 @@ flowchart LR
     Grafana --> Tempo
 ```
 
-只有 API Gateway 提供业务入口。Prometheus、Grafana、Collector 和 Tempo 不参与业务 readiness。
+只有 API Gateway 提供业务入口。Prometheus、Grafana、Collector 和 Tempo 不参与业务就绪判断（readiness）。
 
 ## 本地 Compose 验证
 
@@ -157,6 +157,8 @@ OTLP/HTTP   http://127.0.0.1:14318
 
 ## 主要自动化工作流
 
+以下名称对应仓库中的实际 GitHub Actions 工作流，因此保留英文：
+
 ```text
 CI
 Kubernetes Contracts
@@ -193,6 +195,6 @@ PR 工作流保持只读和非破坏性；镜像发布可由受信任的 `main`�
 - [项目文档导航](docs/README.md)
 - [云原生完成度与生产边界](docs/architecture/cloud-native-status.md)
 - [项目演进记录](docs/project_evolution.md)
-- [Phase 8 收口验收](docs/verification/phase-08-closure.md)
-- [Operator Runbook](docs/runbooks/operations.md)
+- [第 8 阶段收口验收](docs/verification/phase-08-closure.md)
+- [运维手册（Runbook）](docs/runbooks/operations.md)
 - [有界压测说明](docs/verification/load-test.md)
